@@ -1,3 +1,7 @@
 __pycache__/ 
 .idea/
 *.qgz
+360viewer/sample_videos/*
+!360viewer/sample_videos/abc.mp4
+!360viewer/sample_videos/abc_matched_frames.csv
+360viewer/static/vendor/krpano/krpano.js
