@@ -1,0 +1,10 @@
+[general]
+name=GPXVideoProcessor
+version=0.1
+qgisMinimumVersion=3.40
+description=Processes GPX data with MP4 video and creates GPS points layer
+author=Nakasha Creative co.,Ltd
+email=rdcenter@nakasha.co.jp
+homepage=https://www.nakasha.co.jp
+license=Apache License 2.0
+about=Processes GPX data with MP4 video and creates GPS points layer
