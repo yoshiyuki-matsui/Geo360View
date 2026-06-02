@@ -1,0 +1,10 @@
+.idea
+.DS_Store
+__pycache__
+
+sample_videos/*
+!sample_videos/abc.mp4
+!sample_videos/abc_matched_frames.csv
+
+static/vendor/krpano/krpano.js
+

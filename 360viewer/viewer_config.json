@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 8181,
+  "video_dir": "sample_videos",
+  "session_json_path": "session.json",
+  "viewer_jpeg_quality": 70,
+  "viewer_progressive_jpeg": true,
+  "viewer_max_width": 3072,
+  "viewer_cache_dir": "viewer_cache"
+}

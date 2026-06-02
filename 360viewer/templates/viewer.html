@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>360 Viewer PoC</title>
+  <link rel="stylesheet" href="/static/viewer.css">
+  <script src="/static/vendor/krpano/krpano.js"></script>
+</head>
+<body>
+  <main class="viewer-shell">
+    <section class="toolbar" aria-label="Viewer controls">
+      <button id="prevButton" type="button">Prev</button>
+      <button id="nextButton" type="button">Next</button>
+      <div class="readout">
+        <span id="videoLabel"></span>
+        <span id="frameLabel"></span>
+        <span id="viewLabel"></span>
+      </div>
+    </section>
+
+    <section class="notice" id="notice" hidden></section>
+    <section class="debug-log" id="debugLog" hidden></section>
+
+    <section class="pano-stage">
+      <div id="pano"></div>
+      <img id="fallbackFrame" src="" alt="Extracted 360 frame">
+    </section>
+  </main>
+
+  <script>
+    window.VIEWER_BOOTSTRAP = {};
+  </script>
+  <script src="/static/viewer.js"></script>
+</body>
+</html>

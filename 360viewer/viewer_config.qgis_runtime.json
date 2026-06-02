@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 8181,
+  "video_dir": "W:\\workshop\\nexco",
+  "session_json_path": "W:/workshop/nexco\\360view_output\\viewer_session.json",
+  "viewer_jpeg_quality": 70,
+  "viewer_progressive_jpeg": true,
+  "viewer_max_width": 3072,
+  "viewer_cache_dir": "W:/workshop/nexco\\360view_output\\viewer_cache"
+}

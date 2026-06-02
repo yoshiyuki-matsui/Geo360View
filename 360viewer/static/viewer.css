@@ -1,0 +1,101 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #111;
+  color: #f7f7f7;
+  font-family: Arial, sans-serif;
+}
+
+.viewer-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100%;
+}
+
+.toolbar {
+  align-items: center;
+  background: #202020;
+  border-bottom: 1px solid #333;
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+button {
+  background: #f7f7f7;
+  border: 0;
+  border-radius: 4px;
+  color: #111;
+  cursor: pointer;
+  font-size: 14px;
+  min-width: 72px;
+  padding: 8px 10px;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+
+.readout span {
+  color: #ddd;
+  font-size: 13px;
+}
+
+.notice {
+  background: #3b2c00;
+  border-bottom: 1px solid #8a6b14;
+  color: #ffe6a3;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+.debug-log {
+  background: #101820;
+  border-bottom: 1px solid #2c4257;
+  color: #b8d7f3;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.pano-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+#pano,
+#fallbackFrame {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+#pano {
+  background: #000;
+}
+
+#fallbackFrame {
+  object-fit: contain;
+}
