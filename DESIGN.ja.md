@@ -1,6 +1,6 @@
 # GPXVideoProcessor 設計メモ
 
-更新日: 2026-06-02
+更新日: 2026-06-03
 
 ## 目的
 
@@ -37,6 +37,21 @@ GPXVideoProcessor/
 ```
 
 QGISプラグインとWEBビューアは疎結合です。QGIS側はローカルHTTPサーバを起動し、フレーム移動をHTTP APIで通知します。WEBビューア側は現在のフレームや視線方向をJSONへ書き出します。
+
+## 現在の実装・確認状況
+
+2026-06-03時点で、以下を実装・動作確認済みです。
+
+- 非標準GPXの時刻を読み取り、MP4フレームへ位置情報を補間できる。
+- フレーム番号を不変キーとして扱い、指定フレーム数のシフトを反映できる。
+- KP CSVを指定した場合、許容距離内の最近接KPへマッチングし、結果CSVを出力できる。
+- `360ViewerOpen` でQGISからローカルWEBビューアを起動できる。
+- QGIS地図上の撮影点クリックにより、該当フレームの360画像をブラウザへ表示できる。
+- ブラウザ側はフレーム切替時にページ全体を再読み込みせず、krpanoの `loadpano()` で画像を差し替える。
+- フレーム切替後も、直前の `yaw_to_camera_heading`, `pitch`, `zoom` を継承できる。
+- WEBビューアの視点状態を `viewer_session.json` へ書き出し、QGIS側が500ms間隔でポーリングできる。
+- QGIS地図上に、半径円、視野角の扇形、direction線、direction線先端の垂線を一時レーダとして表示できる。
+- レーダ表示は `QgsRubberBand` による一時描画であり、地物登録プラグイン側の選択レイヤやmap toolを奪わない。
 
 ## 実行環境
 
@@ -102,6 +117,40 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 - プレビューや進捗などの状態をリセット
 
 削除対象は、このプラグインが生成してIDを記録しているレイヤだけです。同名の手作業レイヤは削除しません。
+
+## フレームナビゲーション
+
+プラグインパネルには、現在フレームを基準に前後へ移動するナビゲーションUIがあります。
+
+ボタン:
+
+- `<<`: 大きく戻る
+- `<`: 戻る
+- `>`: 送る
+- `>>`: 大きく進む
+
+設定:
+
+- `Navigation mode`
+- `Step`
+- `Fast`
+
+`Step` は通常移動量、`Fast` は大きく戻る/進む時の移動量です。既定では `Step=1`, `Fast=30` です。30フレーム動画では、`Fast=30` が約1秒移動に相当します。
+
+ナビゲーションモード:
+
+- `Frame step`: 現在フレーム番号に対して `±Step` / `±Fast` する。
+- `Layer point`: 選択中またはクリックモード中の `Video GPX Points` レイヤを `frame` 順に移動する。
+- `KP matched CSV`: `<video_stem>_matched_frames.csv` の `frame_index` 順に移動する。
+
+クリックモード中はキーボードでも操作できます。
+
+- `←` / `→`: 通常移動
+- `Shift + ←` / `Shift + →`: 大きく戻る/進む
+- `Space`: 現在フレームを再表示
+- `Esc`: クリックモード解除
+
+ナビゲーションはQGIS地図側を主導にしています。WEBビューアのPrev/Nextは補助機能であり、通常運用ではQGIS地図クリックまたはQGIS側ナビゲーションからフレームを指定します。
 
 ## 基本操作フロー
 
@@ -274,7 +323,36 @@ WEBビューアの現在状態です。
 - `zoom`
 - `updated_at`
 
-将来的にQGIS側でこのJSONを監視し、地図上に視線方向レーダを描画する想定です。
+QGIS側はこのJSONを500ms間隔でポーリングし、地図上に視線方向レーダを描画します。
+
+レーダ表示:
+
+- 撮影点を中心にした半径円
+- WEBビューアの視野角に対応する扇形
+- direction線
+- direction線の先端に置く垂線
+
+レーダ半径はプラグインパネルの `Radar radius` で指定します。既定値は20mです。
+
+視野角はWEBビューアの `zoom` から算出します。
+
+```text
+fov = 90 / zoom
+```
+
+画像を別フレームへ切り替える場合、WEBビューアは切替直前の `yaw_to_camera_heading`, `pitch`, `zoom` を新しいフレームへ継承します。
+
+`yaw_to_camera_heading` は、現時点では地図上の方位角として扱います。クリック対象地物に `camera_heading`, `heading`, `direction`, `bearing`, `azimuth`, `yaw` のいずれかの属性がある場合は、その値をカメラ基準方位として加算します。
+
+```text
+map_bearing = camera_heading + yaw_to_camera_heading
+```
+
+対象属性がない場合は以下として扱います。
+
+```text
+map_bearing = yaw_to_camera_heading
+```
 
 ### `images/frames_******.jpg`
 
@@ -318,7 +396,7 @@ POST /api/session/viewer-state
 POST /api/session/navigate
 ```
 
-ブラウザ側は初回表示後、QGISクリックのたびにページ全体を再読み込みしません。`session.json` をポーリングし、krpanoの `loadpano()` でシーンだけ差し替えます。
+ブラウザ側は初回表示後、QGISクリックのたびにページ全体を再読み込みしません。セッション状態をポーリングし、krpanoの `loadpano()` でシーンだけ差し替えます。
 
 ## パフォーマンス調整
 
@@ -355,9 +433,10 @@ POST /api/session/navigate
 
 ## 次の実装候補
 
-- QGIS側で `viewer_session.json` を監視する。
-- 現在フレーム位置と `yaw_to_camera_heading` から地図上にレーダ表示する。
-- レーダ表示は地物登録プラグインの選択レイヤ・map toolを奪わない方式にする。
+- `direction` を属性値ではなく、前後フレームまたは移動軌跡から算出する。
+- レーダ半径、WEBビューアの `zoom`、視野角、地図上距離の関係をより現実的に調整する。
+- `camera_heading` / `direction` の取得元を実データに合わせて調整する。
+- レーダ表示のON/OFFや色・透過率を設定できるようにする。
 - 証跡用Exporterを別途実装する。
 - OpenCV/ffmpegのフレーム一致検証をraw pixel hashで行う。
 - QGIS Python向け固定wheel配布手順を整備する。

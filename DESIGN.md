@@ -1,6 +1,6 @@
 # GPXVideoProcessor Design Notes
 
-Last updated: 2026-06-02
+Last updated: 2026-06-03
 
 ## Purpose
 
@@ -35,7 +35,22 @@ GPXVideoProcessor/
 └── DESIGN.md
 ```
 
-The QGIS plugin and the browser viewer are loosely coupled. The QGIS plugin starts the viewer process and sends frame navigation requests through HTTP. The viewer writes its current view state to JSON so QGIS can later draw direction/radar overlays without taking over editing tools.
+The QGIS plugin and the browser viewer are loosely coupled. The QGIS plugin starts the viewer process and sends frame navigation requests through HTTP. The viewer writes its current view state to JSON, and QGIS polls that file to draw a temporary direction/radar overlay without taking over editing tools.
+
+## Current Status
+
+As of 2026-06-03, the following behavior has been implemented and checked:
+
+- Non-standard GPX timestamps can be parsed and interpolated to MP4 frame positions.
+- The video frame number remains the immutable key while a user-defined frame shift is applied.
+- When KP CSV is provided, nearest KP points within tolerance are matched and written to CSV.
+- `360ViewerOpen` starts the local WEB viewer from QGIS.
+- Clicking a camera point on the QGIS map displays the corresponding 360 frame in the browser.
+- The browser swaps frames through krpano `loadpano()` instead of reloading the whole page after the initial load.
+- Frame changes preserve the latest `yaw_to_camera_heading`, `pitch`, and `zoom`.
+- The WEB viewer writes view state to `viewer_session.json`, and QGIS polls it every 500 ms.
+- QGIS draws a temporary radar overlay with a radius circle, field-of-view sector, direction line, and perpendicular line.
+- The radar overlay uses `QgsRubberBand`, so it does not take over layer selection or map tools used by feature-registration plugins.
 
 ## Runtime Environment
 
@@ -101,6 +116,32 @@ Ends the current plugin session:
 - Closes the panel and resets plugin state.
 
 Only layers whose IDs were created by this plugin are removed. Other layers with the same name are not targeted.
+
+## Frame Navigation
+
+The plugin panel provides frame navigation controls based on the current frame:
+
+- `<<`: move backward by the fast step
+- `<`: move backward by the normal step
+- `>`: move forward by the normal step
+- `>>`: move forward by the fast step
+
+Navigation settings:
+
+- `Frame step`: move by frame number.
+- `Layer point`: move through the active or click-mode `Video GPX Points` layer sorted by `frame`.
+- `KP matched CSV`: move through `<video_stem>_matched_frames.csv` sorted by `frame_index`.
+
+The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.
+
+When click mode is active, keyboard navigation is also available:
+
+- `Left` / `Right`: normal step
+- `Shift + Left` / `Shift + Right`: fast step
+- `Space`: redisplay the current frame
+- `Esc`: stop click mode
+
+QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path.
 
 ## Processing Flow
 
@@ -277,7 +318,36 @@ Stores the browser viewer state:
 - `zoom`
 - `updated_at`
 
-This is intended for future QGIS-side radar/direction display.
+QGIS polls this file every 500 ms and draws a temporary radar overlay on the map.
+
+The overlay includes:
+
+- A radius circle centered on the camera point.
+- A sector that represents the viewer field of view.
+- A direction line.
+- A perpendicular line at the end of the direction line.
+
+The radius is controlled by the plugin panel's `Radar radius` setting. The default is 20 m.
+
+The field of view is derived from viewer `zoom`:
+
+```text
+fov = 90 / zoom
+```
+
+When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
+
+`yaw_to_camera_heading` is currently treated as a map bearing. If the clicked feature has one of `camera_heading`, `heading`, `direction`, `bearing`, `azimuth`, or `yaw`, that value is used as the camera heading offset:
+
+```text
+map_bearing = camera_heading + yaw_to_camera_heading
+```
+
+If no heading attribute exists:
+
+```text
+map_bearing = yaw_to_camera_heading
+```
 
 ### `images/frames_******.jpg`
 
@@ -367,9 +437,10 @@ Further tuning options:
 
 Planned or likely next steps:
 
-- QGIS-side monitoring of `viewer_session.json`.
-- Draw a radar/direction overlay in QGIS from `yaw_to_camera_heading`, `pitch`, and current frame position.
-- Keep this overlay independent from layer selection and map tools used by feature-registration plugins.
+- Derive `direction` from neighboring frames or the movement trajectory instead of relying only on attributes.
+- Make the relationship between radar radius, viewer `zoom`, field of view, and map distance more realistic.
+- Tune `camera_heading` / `direction` source fields against real operation data.
+- Add radar overlay visibility, color, and opacity settings.
 - Add a dedicated Exporter for full-resolution evidence image export.
 - Add OpenCV/ffmpeg frame identity tests using raw pixel hashes.
 - Add dependency packaging with fixed wheels for QGIS Python deployment.

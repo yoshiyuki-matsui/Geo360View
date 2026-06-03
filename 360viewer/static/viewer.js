@@ -31,6 +31,30 @@
     return ((numeric % 360) + 360) % 360;
   }
 
+  function normalizePitch(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.max(-90, Math.min(90, numeric));
+  }
+
+  function normalizeZoom(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return 1;
+    }
+    return numeric;
+  }
+
+  function normalizedView(source) {
+    return {
+      yaw_to_camera_heading: normalizeYaw(source && source.yaw_to_camera_heading),
+      pitch: normalizePitch(source && source.pitch),
+      zoom: normalizeZoom(source && source.zoom)
+    };
+  }
+
   function readKrpanoView() {
     if (!krpano || typeof krpano.get !== "function") {
       return null;
@@ -45,8 +69,8 @@
       video: state.video,
       frame_index: Number(state.frame_index),
       yaw_to_camera_heading: yaw,
-      pitch,
-      zoom
+      pitch: normalizePitch(pitch),
+      zoom: normalizeZoom(zoom)
     };
   }
 
@@ -126,10 +150,16 @@
     return a.video === b.video && Number(a.frame_index) === Number(b.frame_index);
   }
 
-  function viewerUrl(video, frameIndex) {
+  function viewerUrl(video, frameIndex, viewState) {
     const params = new URLSearchParams();
     params.set("video", video);
     params.set("frame_index", String(frameIndex));
+    if (viewState) {
+      const view = normalizedView(viewState);
+      params.set("yaw_to_camera_heading", String(view.yaw_to_camera_heading));
+      params.set("pitch", String(view.pitch));
+      params.set("zoom", String(view.zoom));
+    }
     return `/viewer?${params.toString()}`;
   }
 
@@ -137,10 +167,16 @@
     return `/frames/${encodeURIComponent(video)}/${frameIndex}.jpg`;
   }
 
-  function krpanoSceneUrl(video, frameIndex) {
+  function krpanoSceneUrl(video, frameIndex, viewState) {
     const params = new URLSearchParams();
     params.set("video", video);
     params.set("frame_index", String(frameIndex));
+    if (viewState) {
+      const view = normalizedView(viewState);
+      params.set("yaw_to_camera_heading", String(view.yaw_to_camera_heading));
+      params.set("pitch", String(view.pitch));
+      params.set("zoom", String(view.zoom));
+    }
     return `${window.location.origin}/krpano-scene.xml?${params.toString()}`;
   }
 
@@ -158,12 +194,16 @@
       return false;
     }
 
-    Object.assign(state, nextState, {
+    const currentView = readKrpanoView() || state;
+    const inheritedView = normalizedView(currentView);
+
+    Object.assign(state, nextState, inheritedView, {
       video: nextVideo,
       frame_index: nextFrame
     });
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
+    postViewerState(true);
 
     const nextFrameUrl = frameImageUrl(nextVideo, nextFrame);
     fallbackFrame.hidden = true;
@@ -175,9 +215,9 @@
     }
 
     krpanoImageLoaded = false;
-    const sceneUrl = krpanoSceneUrl(nextVideo, nextFrame);
+    const sceneUrl = krpanoSceneUrl(nextVideo, nextFrame, inheritedView);
     logDebug(`krpano loadpano ${sceneUrl}`);
-    krpano.call(`loadpano("${sceneUrl}", null, MERGE, BLEND(0.2));`);
+    krpano.call(`loadpano("${sceneUrl}", null, MERGE|KEEPVIEW, BLEND(0.2));`);
     return true;
   }
 
@@ -212,8 +252,9 @@
     if (frameIndex === null || frameIndex === undefined) {
       return;
     }
+    const currentView = readKrpanoView() || state;
     await postViewerState(true);
-    window.location.href = viewerUrl(state.video, frameIndex);
+    window.location.href = viewerUrl(state.video, frameIndex, currentView);
   }
 
   async function pollExternalNavigation() {
@@ -231,7 +272,7 @@
 
     if (!sameFrame(session, state)) {
       if (!loadFrameInPlace(session)) {
-        window.location.href = viewerUrl(session.video, session.frame_index);
+        window.location.href = viewerUrl(session.video, session.frame_index, readKrpanoView() || state);
       }
     }
   }

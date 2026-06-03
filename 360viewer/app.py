@@ -124,6 +124,24 @@ def normalize_yaw(value: float) -> float:
     return value % 360.0
 
 
+def view_state_from_query(query: dict[str, list[str]], session: dict[str, Any] | None = None) -> dict[str, float]:
+    session = session if session is not None else read_session()
+
+    def value_for(name: str) -> Any:
+        value = query_value(query, name)
+        if value is None or value == "":
+            value = session.get(name, DEFAULT_VIEW[name])
+        return value
+
+    return {
+        "yaw_to_camera_heading": normalize_yaw(
+            parse_float(value_for("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"])
+        ),
+        "pitch": parse_float(value_for("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
+        "zoom": parse_float(value_for("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
+    }
+
+
 def safe_cache_stem(video: str) -> str:
     stem = Path(video).stem
     stem = re.sub(r"[^0-9A-Za-z_.-]+", "_", stem).strip("_")
@@ -213,21 +231,14 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
 
 def state_from_request_args(query: dict[str, list[str]], video: str, frame_index: int) -> dict[str, Any]:
     session = read_session()
-    if "yaw_to_camera_heading" in query:
-        yaw = normalize_yaw(parse_float(query_value(query, "yaw_to_camera_heading"), "yaw_to_camera_heading"))
-        pitch = 0.0
-        zoom = 1.0
-    else:
-        yaw = normalize_yaw(parse_float(session.get("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"]))
-        pitch = parse_float(session.get("pitch"), "pitch", DEFAULT_VIEW["pitch"])
-        zoom = parse_float(session.get("zoom"), "zoom", DEFAULT_VIEW["zoom"])
+    view = view_state_from_query(query, session)
 
     return {
         "video": video,
         "frame_index": frame_index,
-        "yaw_to_camera_heading": yaw,
-        "pitch": pitch,
-        "zoom": zoom,
+        "yaw_to_camera_heading": view["yaw_to_camera_heading"],
+        "pitch": view["pitch"],
+        "zoom": view["zoom"],
     }
 
 
@@ -337,11 +348,17 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     return html.encode("utf-8")
 
 
-def build_krpano_xml(handler: BaseHTTPRequestHandler, video: str, frame_index: int) -> str:
-    session = read_session()
-    yaw = normalize_yaw(parse_float(session.get("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"]))
-    pitch = parse_float(session.get("pitch"), "pitch", DEFAULT_VIEW["pitch"])
-    zoom = parse_float(session.get("zoom"), "zoom", DEFAULT_VIEW["zoom"])
+def build_krpano_xml(
+    handler: BaseHTTPRequestHandler,
+    video: str,
+    frame_index: int,
+    view: dict[str, Any] | None = None,
+) -> str:
+    if view is None:
+        view = view_state_from_query({})
+    yaw = normalize_yaw(parse_float(view.get("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"]))
+    pitch = parse_float(view.get("pitch"), "pitch", DEFAULT_VIEW["pitch"])
+    zoom = parse_float(view.get("zoom"), "zoom", DEFAULT_VIEW["zoom"])
     fov = max(1.0, min(179.0, 90.0 / max(zoom, 0.01)))
     image_url = xml_escape(absolute_url(handler, frame_image_url(video, frame_index)))
 
@@ -516,7 +533,13 @@ class ViewerHandler(BaseHTTPRequestHandler):
         matched_csv_exists = matched_frames_path(video).is_file()
         krpano_available = KRPANO_JS_PATH.is_file()
         frame_url = frame_image_url(video, frame_index)
-        scene_query = f"/krpano-scene.xml?video={quote(video)}&frame_index={frame_index}"
+        scene_query_params = (
+            f"video={quote(video)}&frame_index={frame_index}"
+            f"&yaw_to_camera_heading={state['yaw_to_camera_heading']}"
+            f"&pitch={state['pitch']}"
+            f"&zoom={state['zoom']}"
+        )
+        scene_query = f"/krpano-scene.xml?{scene_query_params}"
         scene_url = absolute_url(self, scene_query)
 
         bootstrap = {
@@ -540,7 +563,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def handle_krpano_scene(self, query: dict[str, list[str]]) -> None:
         video = safe_video_name(query_value(query, "video", ""))
         frame_index = parse_frame_index(query_value(query, "frame_index"))
-        xml = build_krpano_xml(self, video, frame_index)
+        xml = build_krpano_xml(self, video, frame_index, view_state_from_query(query))
         self.send_bytes(xml.encode("utf-8"), "application/xml; charset=utf-8")
 
     def handle_frame_image(self, path: str) -> None:

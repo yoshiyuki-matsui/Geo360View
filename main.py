@@ -3,6 +3,7 @@ import csv
 from datetime import datetime, timezone
 import importlib
 import json
+import math
 import os
 import re
 import struct
@@ -15,8 +16,8 @@ from urllib.request import Request, urlopen
 
 from qgis.PyQt import QtGui, QtWidgets
 from qgis.PyQt.QtWidgets import (
-    QWidget, QPushButton, QFileDialog, QVBoxLayout, QLabel, QProgressBar,
-    QDoubleSpinBox, QSpinBox
+    QWidget, QPushButton, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
+    QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
     QDate, QDateTime, QProcess, QProcessEnvironment, QThread, QTime, QTimer,
@@ -25,7 +26,7 @@ from qgis.PyQt.QtCore import (
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
     QgsProject, QgsField, QgsSpatialIndex, QgsDistanceArea,
-    QgsCoordinateReferenceSystem, QgsWkbTypes, QgsVectorFileWriter
+    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsWkbTypes, QgsVectorFileWriter
 )
 from qgis.gui import QgsMapToolIdentifyFeature, QgsRubberBand
 
@@ -412,14 +413,23 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
 
             self.highlightFeature(feature)
             frame_num = int(frame)
-            self.plugin.showFrameInViewer(frame_num)
-            QTimer.singleShot(150, lambda: self.plugin.extractFrame(frame_num, feature=feature))
+            self.plugin.displayFrame(frame_num, feature=feature)
         except Exception as e:
             self.plugin.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Frame click failed: {e}")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.plugin.deactivateClickMode()
+            return
+        if event.key() == Qt.Key_Left:
+            self.plugin.navigateRelative(-1, fast=bool(event.modifiers() & Qt.ShiftModifier))
+            return
+        if event.key() == Qt.Key_Right:
+            self.plugin.navigateRelative(1, fast=bool(event.modifiers() & Qt.ShiftModifier))
+            return
+        if event.key() == Qt.Key_Space:
+            self.plugin.displayCurrentFrame()
+            return
 
     def highlightFeature(self, feature):
         self.clearHighlight()
@@ -464,6 +474,13 @@ class GPXVideoPlugin(QWidget):
         self.viewer_max_width = 3072
         self.created_layer_ids = []
         self.session_closing = False
+        self.current_frame = None
+        self.viewer_session_timer = None
+        self.last_viewer_session_signature = None
+        self.radar_circle_band = None
+        self.radar_sector_band = None
+        self.radar_direction_band = None
+        self.radar_perpendicular_band = None
         self.toolbar = None
         self._gui_initialized = False
 
@@ -521,6 +538,51 @@ class GPXVideoPlugin(QWidget):
         self.extract_button = QPushButton("Extract Frame")
         self.extract_button.clicked.connect(self.extractTestFrame)
 
+        self.nav_label = QLabel("Frame navigation:")
+        self.current_frame_label = QLabel("Current frame: -")
+        self.nav_mode = QComboBox()
+        self.nav_mode.addItem("Frame step", "frame")
+        self.nav_mode.addItem("Layer point", "layer")
+        self.nav_mode.addItem("KP matched CSV", "kp")
+        self.nav_mode.setToolTip(
+            "Frame step moves by frame number. Layer point moves through the selected frame layer. "
+            "KP matched CSV moves through matched frame_index values."
+        )
+        self.nav_step = QSpinBox()
+        self.nav_step.setRange(1, 1000000)
+        self.nav_step.setValue(1)
+        self.nav_step.setSuffix(" step")
+        self.nav_fast_step = QSpinBox()
+        self.nav_fast_step.setRange(1, 1000000)
+        self.nav_fast_step.setValue(30)
+        self.nav_fast_step.setSuffix(" fast")
+
+        self.nav_back_fast_button = QPushButton("<<")
+        self.nav_back_button = QPushButton("<")
+        self.nav_forward_button = QPushButton(">")
+        self.nav_forward_fast_button = QPushButton(">>")
+        self.nav_back_fast_button.clicked.connect(lambda _checked=False: self.navigateRelative(-1, fast=True))
+        self.nav_back_button.clicked.connect(lambda _checked=False: self.navigateRelative(-1, fast=False))
+        self.nav_forward_button.clicked.connect(lambda _checked=False: self.navigateRelative(1, fast=False))
+        self.nav_forward_fast_button.clicked.connect(lambda _checked=False: self.navigateRelative(1, fast=True))
+
+        self.nav_button_layout = QHBoxLayout()
+        self.nav_button_layout.addWidget(self.nav_back_fast_button)
+        self.nav_button_layout.addWidget(self.nav_back_button)
+        self.nav_button_layout.addWidget(self.nav_forward_button)
+        self.nav_button_layout.addWidget(self.nav_forward_fast_button)
+
+        self.radar_radius_label = QLabel("Radar radius:")
+        self.radar_radius = QDoubleSpinBox()
+        self.radar_radius.setRange(1.0, 500.0)
+        self.radar_radius.setDecimals(1)
+        self.radar_radius.setSingleStep(1.0)
+        self.radar_radius.setValue(20.0)
+        self.radar_radius.setSuffix(" m")
+        self.radar_radius.setToolTip(
+            "Radius for the map radar overlay drawn from viewer_session.json."
+        )
+
         self.click_mode_button = QPushButton("Click Current Layer")
         self.click_mode_button.clicked.connect(self.activateClickMode)
         self.stop_click_mode_button = QPushButton("Stop Click Mode")
@@ -557,6 +619,14 @@ class GPXVideoPlugin(QWidget):
         layout.addWidget(self.extract_frame_label)
         layout.addWidget(self.extract_frame)
         layout.addWidget(self.extract_button)
+        layout.addWidget(self.nav_label)
+        layout.addWidget(self.current_frame_label)
+        layout.addWidget(self.nav_mode)
+        layout.addWidget(self.nav_step)
+        layout.addWidget(self.nav_fast_step)
+        layout.addLayout(self.nav_button_layout)
+        layout.addWidget(self.radar_radius_label)
+        layout.addWidget(self.radar_radius)
         layout.addWidget(self.click_mode_button)
         layout.addWidget(self.stop_click_mode_button)
         layout.addWidget(self.preview_info)
@@ -584,6 +654,7 @@ class GPXVideoPlugin(QWidget):
         self.toolbar.addAction(self.viewer_action)
         self.toolbar.addAction(self.action)
         self.toolbar.addAction(self.exit_action)
+        self.startViewerSessionPolling()
         self._gui_initialized = True
 
     def showWindow(self):
@@ -593,6 +664,7 @@ class GPXVideoPlugin(QWidget):
 
     def run(self):
         self.showWindow()
+        self.startViewerSessionPolling()
         self.reportViewerStatus()
 
     def selectGPX(self):
@@ -607,6 +679,7 @@ class GPXVideoPlugin(QWidget):
             self.video_file = file_path  # ここを確認
             self.video_path.setText(file_path)  # ユーザーに表示用のラベルを更新
             self.viewer_browser_opened = False
+            self.setCurrentFrame(None)
             if not self.output_dir_user_selected:
                 self.output_path.setText(self.defaultOutputDir())
             self.writeViewerRuntimeConfig(show_error=False)
@@ -903,6 +976,7 @@ class GPXVideoPlugin(QWidget):
         print(f"360Viewer process error: {error}")
 
     def openViewer(self):
+        self.startViewerSessionPolling()
         frame_num = self.extract_frame.value() if self.video_file else None
         if not self.ensureViewerStarted():
             return
@@ -953,6 +1027,7 @@ class GPXVideoPlugin(QWidget):
     def showFrameInViewer(self, frame_num):
         if not self.video_file:
             return
+        self.startViewerSessionPolling()
         if not self.ensureViewerStarted():
             return
 
@@ -968,6 +1043,423 @@ class GPXVideoPlugin(QWidget):
             return
 
         self.openViewerWhenReady(frame_num)
+
+    def setCurrentFrame(self, frame_num):
+        if frame_num is None:
+            self.current_frame = None
+            self.current_frame_label.setText("Current frame: -")
+            return
+
+        self.current_frame = int(frame_num)
+        self.extract_frame.setValue(max(0, self.current_frame))
+        self.current_frame_label.setText(f"Current frame: {self.current_frame}")
+
+    def currentFrameValue(self):
+        if self.current_frame is not None:
+            return int(self.current_frame)
+        return int(self.extract_frame.value())
+
+    def displayFrame(self, frame_num, feature=None):
+        frame_num = int(frame_num)
+        if frame_num < 0:
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Frame number must be greater than or equal to 0.")
+            return
+
+        self.setCurrentFrame(frame_num)
+        if feature is not None and self.frame_click_tool is not None:
+            try:
+                self.frame_click_tool.highlightFeature(feature)
+            except Exception:
+                pass
+        self.showFrameInViewer(frame_num)
+        QTimer.singleShot(150, lambda: self.extractFrame(frame_num, feature=feature))
+
+    def displayCurrentFrame(self):
+        frame_num = self.currentFrameValue()
+        self.displayFrame(frame_num, feature=self.findFeatureByFrame(frame_num))
+
+    def activeFrameLayer(self):
+        if self.frame_click_tool is not None and self.frame_click_tool.layer is not None:
+            return self.frame_click_tool.layer
+
+        layer = self.iface.activeLayer()
+        if layer is None:
+            return None
+        if layer.fields().indexFromName("frame") < 0:
+            return None
+        return layer
+
+    def layerFrames(self, layer):
+        frames = []
+        if layer is None:
+            return frames
+
+        for feature in layer.getFeatures():
+            try:
+                value = feature["frame"]
+                if value is None:
+                    continue
+                frames.append(int(value))
+            except Exception:
+                continue
+        return sorted(set(frames))
+
+    def findFeatureByFrame(self, frame_num):
+        layer = self.activeFrameLayer()
+        if layer is None:
+            return None
+
+        target = int(frame_num)
+        for feature in layer.getFeatures():
+            try:
+                if int(feature["frame"]) == target:
+                    return feature
+            except Exception:
+                continue
+        return None
+
+    def matchedFrameCsvPaths(self):
+        if not self.video_file:
+            return []
+
+        base_name = _base_output_name(self.video_file, self.gpx_file)
+        paths = [
+            os.path.join(os.path.dirname(self.video_file), base_name + MATCHED_FRAMES_CSV_SUFFIX),
+            os.path.join(self.resolvedOutputDir(), base_name + MATCHED_FRAMES_CSV_SUFFIX),
+        ]
+
+        unique_paths = []
+        seen = set()
+        for path in paths:
+            key = os.path.normcase(os.path.abspath(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_paths.append(path)
+        return unique_paths
+
+    def matchedFrames(self):
+        for path in self.matchedFrameCsvPaths():
+            if not os.path.isfile(path):
+                continue
+
+            handle, reader = _open_csv_dict_reader(path)
+            with handle:
+                if not reader.fieldnames or "frame_index" not in reader.fieldnames:
+                    continue
+                frames = []
+                for row in reader:
+                    value = _parse_float(row.get("frame_index"))
+                    if value is None:
+                        continue
+                    frames.append(int(value))
+                if frames:
+                    return sorted(set(frames)), path
+
+        return [], None
+
+    def steppedFrame(self, frames, current_frame, direction, step_count):
+        if not frames:
+            return None
+
+        current_frame = int(current_frame)
+        step_count = max(1, int(step_count))
+
+        if direction > 0:
+            greater = [frame for frame in frames if frame > current_frame]
+            if not greater:
+                return None
+            if current_frame in frames:
+                index = frames.index(current_frame) + step_count
+            else:
+                index = frames.index(greater[0]) + step_count - 1
+            return frames[min(index, len(frames) - 1)]
+
+        smaller = [frame for frame in frames if frame < current_frame]
+        if not smaller:
+            return None
+        if current_frame in frames:
+            index = frames.index(current_frame) - step_count
+        else:
+            index = frames.index(smaller[-1]) - step_count + 1
+        return frames[max(index, 0)]
+
+    def navigationTargetFrame(self, direction, fast=False):
+        current_frame = self.currentFrameValue()
+        step_count = self.nav_fast_step.value() if fast else self.nav_step.value()
+        mode = self.nav_mode.currentData()
+
+        if mode == "frame":
+            target = max(0, current_frame + direction * step_count)
+            return target, self.findFeatureByFrame(target)
+
+        if mode == "kp":
+            frames, path = self.matchedFrames()
+            if not frames:
+                self.iface.messageBar().pushWarning(
+                    PLUGIN_TITLE,
+                    "Matched frame CSV was not found. Run Process with KP CSV or choose another navigation mode."
+                )
+                return None, None
+            target = self.steppedFrame(frames, current_frame, direction, step_count)
+            if target is None:
+                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"No {'next' if direction > 0 else 'previous'} KP frame.")
+                return None, None
+            return target, self.findFeatureByFrame(target)
+
+        layer = self.activeFrameLayer()
+        if layer is None:
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select or activate a Video GPX Points layer first.")
+            return None, None
+
+        frames = self.layerFrames(layer)
+        target = self.steppedFrame(frames, current_frame, direction, step_count)
+        if target is None:
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"No {'next' if direction > 0 else 'previous'} layer frame.")
+            return None, None
+        return target, self.findFeatureByFrame(target)
+
+    def navigateRelative(self, direction, fast=False):
+        target, feature = self.navigationTargetFrame(direction, fast=fast)
+        if target is None:
+            return
+        self.displayFrame(target, feature=feature)
+
+    def startViewerSessionPolling(self):
+        if self.viewer_session_timer is None:
+            self.viewer_session_timer = QTimer(self)
+            self.viewer_session_timer.timeout.connect(self.pollViewerSession)
+        if not self.viewer_session_timer.isActive():
+            self.viewer_session_timer.start(500)
+
+    def stopViewerSessionPolling(self):
+        if self.viewer_session_timer is not None and self.viewer_session_timer.isActive():
+            self.viewer_session_timer.stop()
+
+    def pollViewerSession(self):
+        path = self.viewerSessionPath()
+        if not os.path.isfile(path):
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not isinstance(state, dict):
+            return
+
+        frame_index = self.sessionFrameIndex(state)
+        if frame_index is None:
+            return
+
+        yaw = _parse_float(state.get("yaw_to_camera_heading"))
+        pitch = _parse_float(state.get("pitch"))
+        zoom = _parse_float(state.get("zoom"))
+        signature = (
+            state.get("video"),
+            frame_index,
+            round(yaw or 0.0, 3),
+            round(pitch or 0.0, 3),
+            round(zoom or 1.0, 3),
+            state.get("updated_at"),
+        )
+        if signature == self.last_viewer_session_signature:
+            return
+
+        self.last_viewer_session_signature = signature
+        try:
+            self.renderViewerRadar(state)
+        except Exception as e:
+            print(f"Viewer radar update failed: {e}")
+
+    def sessionFrameIndex(self, state):
+        value = _parse_float(state.get("frame_index"))
+        if value is None:
+            return None
+        return int(value)
+
+    def framePosition(self, frame_num):
+        feature = self.findFeatureByFrame(frame_num)
+        if feature is not None:
+            gps = self.featureGps(feature)
+            if gps:
+                return gps["lat"], gps["lon"], feature
+
+        target = int(frame_num)
+        for row in self.last_rows:
+            try:
+                frame_value, _source_frame, _time_value, lat, lon = row
+            except ValueError:
+                continue
+            if int(frame_value) == target:
+                return float(lat), float(lon), None
+
+        return None, None, None
+
+    def cameraHeadingForFeature(self, feature):
+        if feature is None:
+            return None
+
+        for field_name in ("camera_heading", "heading", "direction", "bearing", "azimuth", "yaw"):
+            if feature.fields().indexFromName(field_name) < 0:
+                continue
+            value = _parse_float(feature[field_name])
+            if value is not None:
+                return value % 360.0
+        return None
+
+    def viewerBearing(self, state, feature=None):
+        yaw = _parse_float(state.get("yaw_to_camera_heading"))
+        yaw = (yaw or 0.0) % 360.0
+        camera_heading = self.cameraHeadingForFeature(feature)
+        if camera_heading is None:
+            return yaw
+        return (camera_heading + yaw) % 360.0
+
+    def viewerFov(self, state):
+        zoom = _parse_float(state.get("zoom"))
+        zoom = max(zoom or 1.0, 0.01)
+        return max(1.0, min(179.0, 90.0 / zoom))
+
+    def destinationPoint(self, lat, lon, bearing_deg, distance_m):
+        earth_radius_m = 6378137.0
+        bearing = math.radians(float(bearing_deg))
+        angular_distance = float(distance_m) / earth_radius_m
+        lat1 = math.radians(float(lat))
+        lon1 = math.radians(float(lon))
+
+        lat2 = math.asin(
+            math.sin(lat1) * math.cos(angular_distance)
+            + math.cos(lat1) * math.sin(angular_distance) * math.cos(bearing)
+        )
+        lon2 = lon1 + math.atan2(
+            math.sin(bearing) * math.sin(angular_distance) * math.cos(lat1),
+            math.cos(angular_distance) - math.sin(lat1) * math.sin(lat2)
+        )
+        return QgsPointXY(math.degrees(lon2), math.degrees(lat2))
+
+    def canvasPoint(self, lon, lat):
+        canvas = self.iface.mapCanvas()
+        source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+        dest_crs = canvas.mapSettings().destinationCrs()
+        point = QgsPointXY(float(lon), float(lat))
+        if dest_crs.authid() == source_crs.authid():
+            return point
+
+        transform = QgsCoordinateTransform(
+            source_crs,
+            dest_crs,
+            QgsProject.instance().transformContext()
+        )
+        return transform.transform(point)
+
+    def ensureRadarBands(self):
+        canvas = self.iface.mapCanvas()
+        if self.radar_sector_band is None:
+            self.radar_sector_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_sector_band.setColor(QtGui.QColor(255, 180, 0, 180))
+            if hasattr(self.radar_sector_band, "setFillColor"):
+                self.radar_sector_band.setFillColor(QtGui.QColor(255, 200, 0, 70))
+            self.radar_sector_band.setWidth(2)
+
+        if self.radar_circle_band is None:
+            self.radar_circle_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_circle_band.setColor(QtGui.QColor(0, 190, 255, 190))
+            if hasattr(self.radar_circle_band, "setFillColor"):
+                self.radar_circle_band.setFillColor(QtGui.QColor(0, 190, 255, 20))
+            self.radar_circle_band.setWidth(1)
+
+        if self.radar_direction_band is None:
+            self.radar_direction_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_direction_band.setColor(QtGui.QColor(255, 70, 40, 230))
+            self.radar_direction_band.setWidth(3)
+
+        if self.radar_perpendicular_band is None:
+            self.radar_perpendicular_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_perpendicular_band.setColor(QtGui.QColor(255, 255, 255, 230))
+            self.radar_perpendicular_band.setWidth(2)
+
+    def setRadarPolygon(self, rubber_band, points):
+        transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
+        rubber_band.setToGeometry(QgsGeometry.fromPolygonXY([transformed]), None)
+        rubber_band.show()
+
+    def setRadarLine(self, rubber_band, points):
+        transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
+        rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(transformed), None)
+        rubber_band.show()
+
+    def renderViewerRadar(self, state):
+        frame_index = self.sessionFrameIndex(state)
+        if frame_index is None:
+            return
+
+        lat, lon, feature = self.framePosition(frame_index)
+        if lat is None or lon is None:
+            self.clearRadar()
+            return
+
+        self.setCurrentFrame(frame_index)
+        radius_m = float(self.radar_radius.value())
+        bearing = self.viewerBearing(state, feature=feature)
+        fov = self.viewerFov(state)
+        center = QgsPointXY(float(lon), float(lat))
+
+        circle_points = [
+            self.destinationPoint(lat, lon, angle, radius_m)
+            for angle in range(0, 361, 8)
+        ]
+
+        start_angle = bearing - (fov / 2.0)
+        end_angle = bearing + (fov / 2.0)
+        segment_count = max(8, int(fov / 4.0))
+        sector_points = [center]
+        for index in range(segment_count + 1):
+            ratio = index / float(segment_count)
+            angle = start_angle + (end_angle - start_angle) * ratio
+            sector_points.append(self.destinationPoint(lat, lon, angle, radius_m))
+        sector_points.append(center)
+
+        direction_end = self.destinationPoint(lat, lon, bearing, radius_m)
+        perpendicular_center = self.destinationPoint(lat, lon, bearing, radius_m)
+        perpendicular_half_m = radius_m * 0.3
+        perpendicular_start = self.destinationPoint(
+            perpendicular_center.y(),
+            perpendicular_center.x(),
+            bearing - 90.0,
+            perpendicular_half_m
+        )
+        perpendicular_end = self.destinationPoint(
+            perpendicular_center.y(),
+            perpendicular_center.x(),
+            bearing + 90.0,
+            perpendicular_half_m
+        )
+
+        self.ensureRadarBands()
+        self.setRadarPolygon(self.radar_circle_band, circle_points)
+        self.setRadarPolygon(self.radar_sector_band, sector_points)
+        self.setRadarLine(self.radar_direction_band, [center, direction_end])
+        self.setRadarLine(self.radar_perpendicular_band, [perpendicular_start, perpendicular_end])
+
+    def clearRadar(self):
+        canvas = self.iface.mapCanvas()
+        for attr_name in (
+            "radar_circle_band",
+            "radar_sector_band",
+            "radar_direction_band",
+            "radar_perpendicular_band",
+        ):
+            rubber_band = getattr(self, attr_name, None)
+            if rubber_band is not None:
+                try:
+                    canvas.scene().removeItem(rubber_band)
+                except Exception:
+                    pass
+                setattr(self, attr_name, None)
+        self.last_viewer_session_signature = None
 
     def stopViewerProcess(self):
         if not self.viewerProcessRunning():
@@ -1099,6 +1591,7 @@ class GPXVideoPlugin(QWidget):
 
     def resetPanelState(self):
         self.last_rows = []
+        self.setCurrentFrame(None)
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
         self.preview_info.setText("No frame extracted")
@@ -1110,6 +1603,8 @@ class GPXVideoPlugin(QWidget):
         self.deactivateClickMode(show_message=False)
         worker_stopped = self.stopWorker(show_message=show_message)
         self.stopViewerProcess()
+        self.stopViewerSessionPolling()
+        self.clearRadar()
 
         saved_path = None
         saved_count = 0
@@ -1228,7 +1723,7 @@ class GPXVideoPlugin(QWidget):
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select a video file first.")
             return
 
-        self.extract_frame.setValue(frame_num)
+        self.setCurrentFrame(frame_num)
         image_dir = self.imagesDir()
         image_path = self.frameImagePath(frame_num)
 

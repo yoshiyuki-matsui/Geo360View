@@ -11,5 +11,7 @@ The current implementation focuses on:
 - Exporting frame-position CSV files and optional KP-matched navigation files.
 - Launching a local 360 viewer from QGIS without Flask.
 - Showing the selected frame in a browser-based krpano viewer when a map point is clicked.
+- Preserving browser viewer yaw/pitch/zoom when switching frames.
+- Drawing a temporary QGIS radar overlay from `viewer_session.json` with a radius circle, field-of-view sector, direction line, and perpendicular line.
 
 See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version.

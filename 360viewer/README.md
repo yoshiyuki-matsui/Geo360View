@@ -1,6 +1,6 @@
 # 360 Viewer PoC
 
-OpenCV + Python standard-library HTTP server + krpano based proof of concept for the NEXCO 360 viewer.
+OpenCV + Python standard-library HTTP server + krpano based proof of concept for 360 viewer.
 
 ## Layout
 
@@ -22,10 +22,12 @@ OpenCV + Python standard-library HTTP server + krpano based proof of concept for
     └── viewer.html   # kept for reference; app.py renders HTML directly
 ```
 
-### session.json
-`session.json` stores the last viewer state so the page can restore it when `yaw_to_camera_heading` is omitted. It records the current `video`, `frame_index`, `yaw_to_camera_heading`, `pitch`, `zoom`, and `updated_at` timestamp.
+### session.json / viewer_session.json
+The configured session file stores the last viewer state so the page and QGIS plugin can restore or monitor it. In standalone mode this defaults to `session.json`; when started from QGIS it is written as `viewer_session.json` under the plugin output directory.
 
-`session.json` is also intended to be referenced by other apps, such as the QGIS plugin.
+It records the current `video`, `frame_index`, `yaw_to_camera_heading`, `pitch`, `zoom`, and `updated_at` timestamp.
+
+The QGIS plugin polls this file to draw the map radar overlay.
 
 ## Setup
 
@@ -102,19 +104,20 @@ python app.py
 Open:
 
 ```text
-http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90
+http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90&pitch=0&zoom=1
 ```
 
-When `yaw_to_camera_heading` is specified, `pitch` is reset to `0` and `zoom` is reset to `1`.
-When `yaw_to_camera_heading` is omitted, the viewer restores `yaw_to_camera_heading`, `pitch`, and `zoom` from `session.json`.
+When view parameters are specified, the viewer uses them for the initial krpano view. When they are omitted, the viewer restores `yaw_to_camera_heading`, `pitch`, and `zoom` from the session file.
+
+When another frame is loaded through browser navigation or QGIS navigation, the viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` into the new frame.
 
 ## Endpoints
 
 ```text
-GET /viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90
+GET /viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90&pitch=0&zoom=1
 ```
 
-Displays the viewer and writes the initial state to `session.json`.
+Displays the viewer and writes the initial state to the configured session file.
 
 ```text
 GET /frames/<video>/<frame_index>.jpg
@@ -126,7 +129,7 @@ Extracts `frame_index` from the configured video with OpenCV and returns a viewe
 POST /api/session/viewer-state
 ```
 
-Updates `session.json`.
+Updates the configured session file.
 
 Example:
 
@@ -144,6 +147,6 @@ Example:
 
 - `frame_index` is zero-based.
 - `video` must be a file name under `video_dir`. Paths, `../`, and non-MP4 files are rejected.
-- `session.json` is written atomically via a temporary file and rename.
+- The configured session file is written atomically via a temporary file and rename.
 - Prev/Next moves only to frames listed in `<video_stem>_matched_frames.csv`.
 - If krpano is missing, the page reports the missing file and shows a non-interactive extracted image fallback if the video exists.
