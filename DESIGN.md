@@ -20,7 +20,16 @@ This plugin is not intended to export all final evidence images. Full export is 
 
 ```text
 GPXVideoProcessor/
-├── main.py                      QGIS plugin UI, processing, layer creation, viewer process control
+├── main.py                      QGIS plugin UI and top-level controller
+├── constants.py                 Shared plugin constants
+├── common.py                    CSV, string, timestamp, and naming helpers
+├── processor.py                 QThread that generates frame positions from GPX and MP4
+├── viewer_controller.py         360Viewer process control and HTTP integration
+├── frame_extract.py             Frame extraction, EXIF writing, and QGIS preview display
+├── map_tools.py                 QGIS map-click tool
+├── radar.py                     viewer_session.json polling and radar overlay drawing
+├── kp.py                        KP CSV reader and nearest-neighbor matching
+├── exif_utils.py                JPEG EXIF helpers
 ├── TenkakuNinja/
 │   └── geo_util.py              GPX parsing and frame interpolation helpers
 ├── 360viewer/
@@ -37,6 +46,24 @@ GPXVideoProcessor/
 
 The QGIS plugin and the browser viewer are loosely coupled. The QGIS plugin starts the viewer process and sends frame navigation requests through HTTP. The viewer writes its current view state to JSON, and QGIS polls that file to draw a temporary direction/radar overlay without taking over editing tools.
 
+## Python Module Split
+
+`main.py` remains the QGIS plugin entry point and owns menu actions, panel UI wiring, and top-level state. Larger functional areas have been split into focused modules to keep the main file readable while preserving the visible processing flow.
+
+Current responsibilities:
+
+- `processor.py`: background GPX/video frame-position generation.
+- `kp.py`: KP CSV column detection, spatial indexing, and tolerance-based nearest-neighbor matching.
+- `viewer_controller.py`: 360Viewer runtime config, QProcess lifecycle, HTTP health checks, and browser launch.
+- `frame_extract.py`: single-frame OpenCV extraction, JPEG/EXIF writing, and QGIS panel preview.
+- `radar.py`: `viewer_session.json` polling, bearing/FOV calculation, and temporary QGIS radar drawing.
+- `map_tools.py`: `Video GPX Points` map-click handling, feature highlighting, and keyboard navigation.
+- `common.py`: shared file naming, CSV, numeric, and timestamp helpers.
+- `constants.py`: shared plugin constants.
+- `exif_utils.py`: JPEG EXIF segment construction and insertion.
+
+The split intentionally avoids excessive fragmentation. QGIS GUI layout and signal wiring stay in `main.py`; process control, image extraction, radar drawing, KP matching, and other clear functional units live in separate mixins/helpers.
+
 ## Current Status
 
 As of 2026-06-03, the following behavior has been implemented and checked:
@@ -51,6 +78,8 @@ As of 2026-06-03, the following behavior has been implemented and checked:
 - The WEB viewer writes view state to `viewer_session.json`, and QGIS polls it every 500 ms.
 - QGIS draws a temporary radar overlay with a radius circle, field-of-view sector, direction line, and perpendicular line.
 - The radar overlay uses `QgsRubberBand`, so it does not take over layer selection or map tools used by feature-registration plugins.
+- Python responsibilities have been split out of `main.py` into processing, viewer control, frame extraction, radar, KP, and helper modules.
+- The plugin panel now uses tabs to separate load/process settings from control/preview operations.
 
 ## Runtime Environment
 
@@ -117,6 +146,36 @@ Ends the current plugin session:
 
 Only layers whose IDs were created by this plugin are removed. Other layers with the same name are not targeted.
 
+## Plugin Panel UI
+
+The panel uses two tabs to reduce vertical height and make the operation order easier to follow.
+
+### `Load / Process`
+
+This tab follows the full-processing setup order:
+
+- GPX file selection
+- MP4 video selection
+- KP CSV selection
+- Output directory selection
+- `Shift` and `KP tol`
+- `Process` and progress bar
+
+Each file selector is laid out as one row: label, compact file name, and `Browse` button. The display shows only the basename; the full path is available as a tooltip. Long names are kept on one line and clipped so they do not force the panel wider.
+
+### `Control / Preview`
+
+This tab groups interactive checking and navigation:
+
+- `Frame` number and `Extract`
+- `Click Layer` / `Stop Click`
+- Current frame, navigation mode, normal step, fast step, and radar radius
+- QGIS preview information
+- QGIS preview image
+- `<<`, `<`, `>`, `>>` navigation buttons
+
+The earlier single vertical panel became too tall in QGIS. The current UI separates load settings from controls, keeps related operations on one row, and shortens button labels where the surrounding label already provides context.
+
 ## Frame Navigation
 
 The plugin panel provides frame navigation controls based on the current frame:
@@ -145,15 +204,15 @@ QGIS remains the primary navigation source. Browser-side Prev/Next is a suppleme
 
 ## Processing Flow
 
-1. Select a GPX file.
+1. In the `Load / Process` tab, select a GPX file.
 2. Select an MP4 video.
 3. Optionally select a KP CSV.
-4. Set KP tolerance and frame shift.
+4. Set the output directory, frame shift, and KP tolerance.
 5. Run `Process`.
 6. The plugin reads GPX points and interpolates positions to video frames.
 7. A `Video GPX Points` memory layer is added to QGIS.
 8. CSV/JSON outputs are written.
-9. Enable `Click Current Layer`.
+9. In the `Control / Preview` tab, enable `Click Layer`.
 10. Click a point on the `Video GPX Points` layer.
 11. The browser viewer displays the corresponding frame.
 12. QGIS also creates/loads a local preview JPEG.

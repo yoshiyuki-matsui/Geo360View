@@ -20,7 +20,16 @@ GPXVideoProcessor は、360度MP4動画のフレーム番号と、GPXから得�
 
 ```text
 GPXVideoProcessor/
-├── main.py                      QGISプラグイン本体
+├── main.py                      QGISプラグインUI/全体制御
+├── constants.py                 プラグイン共通定数
+├── common.py                    CSV/文字列/日時などの共通ヘルパー
+├── processor.py                 GPXとMP4からフレーム位置を生成するQThread
+├── viewer_controller.py         360Viewer起動・HTTP連携・QProcess制御
+├── frame_extract.py             静止画抽出・EXIF付与・QGISプレビュー表示
+├── map_tools.py                 地図クリック用MapTool
+├── radar.py                     viewer_session.json監視とレーダ描画
+├── kp.py                        KP CSV読込・最近接マッチング
+├── exif_utils.py                JPEG EXIF生成
 ├── TenkakuNinja/
 │   └── geo_util.py              GPX読込・補間処理
 ├── 360viewer/
@@ -38,6 +47,24 @@ GPXVideoProcessor/
 
 QGISプラグインとWEBビューアは疎結合です。QGIS側はローカルHTTPサーバを起動し、フレーム移動をHTTP APIで通知します。WEBビューア側は現在のフレームや視線方向をJSONへ書き出します。
 
+## Pythonモジュール分割方針
+
+`main.py` はQGISプラグインのエントリポイント、メニュー、パネルUI、全体の状態管理を担当します。肥大化を避けるため、機能単位で比較的大きなまとまりを別モジュールへ分離しています。
+
+現在の主な責務分担:
+
+- `processor.py`: GPXと動画FPSから全フレーム位置を生成するバックグラウンド処理。
+- `kp.py`: KP CSVの列自動判定、空間インデックス、許容距離内の最近接マッチング。
+- `viewer_controller.py`: 360Viewerの設定ファイル生成、QProcess起動/停止、HTTPヘルスチェック、ブラウザ起動。
+- `frame_extract.py`: OpenCVによる単一フレーム抽出、JPEG/EXIF保存、QGISパネル内プレビュー表示。
+- `radar.py`: `viewer_session.json` のポーリング、視線方向の計算、QGIS地図上の一時レーダ描画。
+- `map_tools.py`: `Video GPX Points` の地図クリック待ち受け、ハイライト、キーボードナビゲーション。
+- `common.py`: ファイル名、CSV、数値、日時などの共通ヘルパー。
+- `constants.py`: プラグイン名や出力ファイル接尾辞などの共通定数。
+- `exif_utils.py`: JPEG EXIFセグメント生成と挿入。
+
+細かすぎる分割は避け、処理の流れを `main.py` から追える状態を維持します。QGIS GUIに強く依存する配置やボタン接続は `main.py` 側に残し、外部プロセス制御、画像生成、レーダ描画のように機能境界が明確なものだけをMixin/補助モジュールへ分けています。
+
 ## 現在の実装・確認状況
 
 2026-06-03時点で、以下を実装・動作確認済みです。
@@ -52,6 +79,8 @@ QGISプラグインとWEBビューアは疎結合です。QGIS側はローカル
 - WEBビューアの視点状態を `viewer_session.json` へ書き出し、QGIS側が500ms間隔でポーリングできる。
 - QGIS地図上に、半径円、視野角の扇形、direction線、direction線先端の垂線を一時レーダとして表示できる。
 - レーダ表示は `QgsRubberBand` による一時描画であり、地物登録プラグイン側の選択レイヤやmap toolを奪わない。
+- `main.py` から処理系、ビューア制御、フレーム抽出、レーダ描画、KP処理を分離し、Pythonファイルの責務を整理した。
+- プラグインパネルをタブUIへ変更し、ロード/全件処理と制御/プレビューを分離した。
 
 ## 実行環境
 
@@ -118,6 +147,36 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 
 削除対象は、このプラグインが生成してIDを記録しているレイヤだけです。同名の手作業レイヤは削除しません。
 
+## プラグインパネルUI
+
+縦方向に大きくなりすぎないよう、パネルは2タブ構成にしています。
+
+### `Load / Process`
+
+上から順に、全件処理までの実行順に並べています。
+
+- GPXファイル選択
+- MP4動画ファイル選択
+- KP CSV選択
+- 出力先ディレクトリ選択
+- `Shift` と `KP tol`
+- `Process` と進捗バー
+
+ファイル選択は、ラベル、現在のファイル名、`Browse` ボタンを1行に収めます。表示はファイル名だけにし、フルパスはツールチップで確認します。長いファイル名でパネル幅が広がりすぎないよう、ラベルは1行表示でクリップされます。
+
+### `Control / Preview`
+
+単一フレーム確認、地図クリック、ナビゲーション、プレビューをまとめています。
+
+- `Frame` 番号指定と `Extract`
+- `Click Layer` / `Stop Click`
+- 現在フレーム、ナビゲーションモード、通常移動量、早送り/早戻し量、レーダ半径
+- QGIS側プレビュー情報
+- QGIS側プレビュー画像
+- `<<`, `<`, `>`, `>>` の移動ボタン
+
+当初は1画面内に全UIを縦積みしていましたが、QGIS上でパネルが画面をはみ出すため、ロード設定と制御系を分けました。意味的に一連の操作は同一行にまとめ、ボタン文言も短くしています。
+
 ## フレームナビゲーション
 
 プラグインパネルには、現在フレームを基準に前後へ移動するナビゲーションUIがあります。
@@ -154,14 +213,14 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 
 ## 基本操作フロー
 
-1. GPXファイルを選択する。
+1. `Load / Process` タブでGPXファイルを選択する。
 2. MP4動画を選択する。
 3. 必要に応じてKP CSVを選択する。
-4. KP許容距離とフレームシフト量を指定する。
+4. 出力先、フレームシフト量、KP許容距離を指定する。
 5. `Process` を実行する。
 6. `Video GPX Points` レイヤがQGISに追加される。
 7. CSV/JSONが出力される。
-8. `Click Current Layer` を有効にする。
+8. `Control / Preview` タブで `Click Layer` を有効にする。
 9. `Video GPX Points` 上の点をクリックする。
 10. ブラウザ側360Viewerが該当フレームを表示する。
 11. QGIS側にもプレビューJPEGが保存/表示される。
