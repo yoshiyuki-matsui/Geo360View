@@ -47,6 +47,7 @@ GPXVideoProcessor/
 ├── docs/
 │   ├── exporter_spec.md         Frame image exporter specification
 │   ├── rader_spec.md            Real-scale radar overlay specification
+│   ├── tenkaku_ninja_operations.md TenkakuNinja-derived large JPEG operation notes
 │   └── yolo_georeference_spec.md Future YOLO-to-georeference specification notes
 ├── metadata.txt                 QGIS plugin metadata
 ├── README.md

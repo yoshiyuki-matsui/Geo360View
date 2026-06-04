@@ -4,6 +4,8 @@
 
 この文書は、GPXVideoProcessorで同期済みのGeoPackage/動画から、証跡用静止画を一括抽出するExporterの仕様をまとめるものです。
 
+大量JPEG運用のベンチ結果、失敗例、禁止事項、NAS/Docker運用ノウハウは `docs/tenkaku_ninja_operations.md` にまとめます。
+
 ## 目的
 
 QGISプラグイン本体は、目視確認のために必要なフレームをオンザフライ抽出します。

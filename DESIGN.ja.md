@@ -47,6 +47,7 @@ GPXVideoProcessor/
 ├── docs/
 │   ├── exporter_spec.md         フレーム画像Exporter仕様
 │   ├── rader_spec.md            レーダ表示の実寸準拠仕様
+│   ├── tenkaku_ninja_operations.md TenkakuNinja由来の大量JPEG運用ノウハウ
 │   └── yolo_georeference_spec.md YOLO検出結果の緯度経度化 将来仕様メモ
 ├── metadata.txt                 QGISプラグイン定義
 ├── README.md
