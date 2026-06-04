@@ -1,3 +1,5 @@
+"""QGIS側のオンザフライ静止画抽出とプレビュー表示。"""
+
 import os
 import time
 from datetime import datetime
@@ -11,12 +13,16 @@ from .exif_utils import _insert_exif, _minimal_exif_payload
 
 
 class FrameExtractMixin:
+    """選択フレームをOpenCVで抽出し、QGISパネルへ表示するMixin。"""
+
     def compactPreviewInfo(self, info):
+        """長い抽出ログをパネル幅に収まる短縮表示へ変換する。"""
         if len(info) <= 160:
             return info
         return f"{info[:112]} ... {info[-44:]}"
 
     def loadPreview(self, image_path, info):
+        """保存済みJPEGをプレビュー領域へ読み込み、抽出ログを更新する。"""
         pixmap = QtGui.QPixmap(image_path)
         if pixmap.isNull():
             self.preview_label.setText("Preview unavailable")
@@ -28,9 +34,11 @@ class FrameExtractMixin:
         self.preview_info.setToolTip(info)
 
     def featureGps(self, feature):
+        """クリックされたQGIS地物からJPEG EXIF用の緯度経度を取り出す。"""
         lat = None
         lon = None
 
+        # KPマッチ後の座標を優先し、なければ元の撮影点座標を使う。
         for lat_name, lon_name in (("aligned_latitude", "aligned_longitude"), ("latitude", "longitude")):
             if feature.fields().indexFromName(lat_name) >= 0 and feature.fields().indexFromName(lon_name) >= 0:
                 lat = _parse_float(feature[lat_name])
@@ -48,6 +56,7 @@ class FrameExtractMixin:
         return None
 
     def saveFrameImage(self, frame, frame_num, image_path, elapsed, gps=None):
+        """OpenCVフレームをJPEG化し、最小EXIFを付けて保存する。"""
         try:
             import cv2
         except ImportError as e:
@@ -85,9 +94,11 @@ class FrameExtractMixin:
             handle.write(jpeg_bytes)
 
     def extractTestFrame(self):
+        """UIのFrame入力値を使って単体抽出を実行する。"""
         self.extractFrame(self.extract_frame.value())
 
     def extractFrame(self, frame_num, feature=None):
+        """指定フレームを動画から抽出し、キャッシュ保存とプレビュー更新を行う。"""
         if not self.video_file:
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select a video file first.")
             return
@@ -104,6 +115,7 @@ class FrameExtractMixin:
 
         start = time.perf_counter()
         if os.path.exists(image_path):
+            # クリックのたびに再エンコードしない。フレーム番号は不変キーなのでキャッシュ可能。
             elapsed = time.perf_counter() - start
             info = f"Frame {frame_num} cached: {image_path} ({elapsed:.3f}s)"
             self.loadPreview(image_path, info)

@@ -104,6 +104,12 @@ def analyze_beat(wavpath, verbose=False):
 #1秒窓ベースの語り検出
 @timed("[解析] ビート検出（統計評価付き）")
 def analyze_beat2(wavpath, verbose=False):
+    """
+    1秒窓ごとのエネルギー立ち上がりから、同期に使えそうな最初のビートを推定する。
+
+    単純なピーク検出だけではノイズを拾う場合があるため、1秒間隔で続く候補を優先する。
+    現在のGPXVideoProcessor本体では未使用だが、音声同期方式を戻す場合の候補処理として残す。
+    """
     import numpy as np
     import soundfile as sf
 
@@ -135,6 +141,7 @@ def analyze_beat2(wavpath, verbose=False):
         if rise_indices.size > 0:
             idx = rise_indices[0]
             strength = delta[idx]
+            # 経験的な強度しきい値。小さな環境音ではなく同期音らしい立ち上がりを拾う。
             if strength >= 10.0:  # ← 語る資格の閾値
                 beat_time = (start + idx * hop_size) / sr
                 beat_candidates.append((beat_time, strength))
@@ -214,7 +221,7 @@ def detect_first_beat(wavpath, verbose=False) -> float:
     result = analyze_beat2(wavpath, verbose=verbose)
     if result["first_beat_time"] is None:
         raise ValueError("ビートが検出できませんでした")
-    print(f"first_beat_time:{result["first_beat_time"]}")
+    print(f"first_beat_time:{result['first_beat_time']}")
     return result["first_beat_time"]   
 
 #ドロップフレームを処理すべきFPSかどうか
@@ -265,4 +272,3 @@ def time_to_frame(seconds, fps, drop_frame=None, rounding="round"):
         return int(total_frames.to_integral_value(rounding="ROUND_CEILING"))
     else:
         raise ValueError("Invalid rounding mode")
-

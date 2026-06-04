@@ -1,3 +1,5 @@
+"""QGIS地図クリックでフレームを選択するMapTool。"""
+
 from qgis.PyQt import QtGui
 from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsWkbTypes
@@ -7,7 +9,10 @@ from .constants import PLUGIN_TITLE
 
 
 class FrameIdentifyTool(QgsMapToolIdentifyFeature):
+    """`Video GPX Points` をクリックし、対応フレームをプラグインへ通知する。"""
+
     def __init__(self, canvas, layer, plugin):
+        """対象canvas/layerと呼び戻し先pluginを保持する。"""
         super().__init__(canvas)
         self.canvas = canvas
         self.layer = layer
@@ -16,6 +21,7 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
         self.rubber_band = None
 
     def canvasReleaseEvent(self, event):
+        """クリック位置の最前面フレーム点を検索し、ビューア表示を更新する。"""
         try:
             results = self.identify(
                 event.x(),
@@ -40,6 +46,7 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
             self.plugin.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Frame click failed: {e}")
 
     def keyPressEvent(self, event):
+        """クリックモード中のキーボードナビゲーションを処理する。"""
         if event.key() == Qt.Key_Escape:
             self.plugin.deactivateClickMode()
             return
@@ -54,6 +61,7 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
             return
 
     def highlightFeature(self, feature):
+        """クリックまたはナビゲーションで選ばれた点を一時強調表示する。"""
         self.clearHighlight()
         geom_type = QgsWkbTypes.geometryType(self.layer.wkbType())
         self.rubber_band = QgsRubberBand(self.canvas, geom_type)
@@ -63,10 +71,12 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
         self.rubber_band.show()
 
     def clearHighlight(self):
+        """既存の一時強調表示を削除する。"""
         if self.rubber_band:
             self.canvas.scene().removeItem(self.rubber_band)
             self.rubber_band = None
 
     def deactivate(self):
+        """QGISのmap tool解除時に強調表示も確実に消す。"""
         self.clearHighlight()
         super().deactivate()

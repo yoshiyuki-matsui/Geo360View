@@ -1,13 +1,17 @@
+"""外部EXIFライブラリに依存せず、JPEGへ最小EXIFを埋め込むヘルパー。"""
+
 import struct
 
 from .constants import PLUGIN_TITLE
 
 
 def _exif_ascii(value):
+    """EXIF ASCII型のNULL終端バイト列へ変換する。"""
     return str(value or "").encode("ascii", "replace") + b"\x00"
 
 
 def _decimal_to_dms_rationals(value):
+    """十進緯度経度をGPS EXIFの度分秒RATIONAL配列へ変換する。"""
     value = abs(float(value))
     degrees = int(value)
     minutes_float = (value - degrees) * 60
@@ -21,14 +25,17 @@ def _decimal_to_dms_rationals(value):
 
 
 def _minimal_exif_payload(tags, gps=None):
+    """ImageDescription/Software/DateTime/GPSだけを持つEXIF payloadを作る。"""
     entries = []
     data = bytearray()
 
     def add_ascii(tag, value):
+        """IFD0へASCIIタグを追加する。"""
         value_bytes = _exif_ascii(value)
         entries.append((tag, 2, len(value_bytes), value_bytes))
 
     def add_long(tag, value):
+        """IFD0へLONGタグを追加する。"""
         entries.append((tag, 4, 1, struct.pack("<I", value)))
 
     add_ascii(0x010E, tags.get("description", ""))  # ImageDescription
@@ -38,6 +45,7 @@ def _minimal_exif_payload(tags, gps=None):
         add_long(0x8825, 0)  # GPSInfoIFDPointer; offset is filled after IFD0 sizing.
     entries.sort(key=lambda item: item[0])
 
+    # TIFFヘッダから見たoffsetを手計算する。GPS IFDがある場合はIFD0直後へ置く。
     ifd_offset = 8
     data_offset = ifd_offset + 2 + len(entries) * 12 + 4
     gps_entries = _gps_ifd_entries(gps) if gps else []
@@ -69,6 +77,7 @@ def _minimal_exif_payload(tags, gps=None):
 
 
 def _gps_ifd_entries(gps):
+    """GPS EXIF IFDに入れる緯度経度・測地系タグを作る。"""
     lat = float(gps["lat"])
     lon = float(gps["lon"])
     return [
@@ -81,6 +90,7 @@ def _gps_ifd_entries(gps):
 
 
 def _pack_gps_ifd(entries, data_offset, data):
+    """GPS IFDをTIFF形式でpackし、可変長データを共有dataへ追加する。"""
     gps_ifd = bytearray()
     gps_ifd.extend(struct.pack("<H", len(entries)))
 
@@ -103,6 +113,7 @@ def _pack_gps_ifd(entries, data_offset, data):
 
 
 def _insert_exif(jpeg_bytes, exif_payload):
+    """JPEG先頭のSOI直後へAPP1 EXIFセグメントを挿入する。"""
     if not jpeg_bytes.startswith(b"\xff\xd8"):
         return jpeg_bytes
     segment_length = len(exif_payload) + 2

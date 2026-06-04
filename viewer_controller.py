@@ -1,3 +1,5 @@
+"""QGISプラグインからローカル360Viewerを起動・制御するMixin。"""
+
 import importlib
 import json
 import os
@@ -14,27 +16,36 @@ from .constants import PLUGIN_TITLE
 
 
 class ViewerControllerMixin:
+    """360Viewerプロセス、HTTP API、外部ブラウザ起動をまとめて扱う。"""
+
     def viewerDir(self):
+        """360Viewerアプリケーションディレクトリを返す。"""
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "360viewer")
 
     def viewerAppPath(self):
+        """360ViewerのHTTPサーバ実装ファイルを返す。"""
         return os.path.join(self.viewerDir(), "app.py")
 
     def viewerRuntimeConfigPath(self):
+        """QGIS実行時に生成するビューア設定JSONのパスを返す。"""
         return os.path.join(self.viewerDir(), "viewer_config.qgis_runtime.json")
 
     def viewerSessionPath(self):
+        """WEBビューアとQGISが共有する視点状態JSONのパスを返す。"""
         return os.path.join(self.resolvedOutputDir(), "viewer_session.json")
 
     def viewerCacheDir(self):
+        """WEBビューア専用の軽量JPEGキャッシュディレクトリを返す。"""
         return os.path.join(self.resolvedOutputDir(), "viewer_cache")
 
     def viewerVideoDir(self):
+        """ビューアが参照できる動画ディレクトリを返す。"""
         if self.video_file:
             return os.path.dirname(os.path.abspath(self.video_file))
         return os.path.join(self.viewerDir(), "sample_videos")
 
     def loadViewerDefaults(self):
+        """静的設定JSONからビューア既定値を読み込み、plugin状態へ反映する。"""
         config_path = os.path.join(self.viewerDir(), "viewer_config.json")
         host = "127.0.0.1"
         port = 8181
@@ -61,6 +72,7 @@ class ViewerControllerMixin:
         return host, port
 
     def parseViewerBool(self, value):
+        """JSONや文字列由来の真偽値を安全にboolへ変換する。"""
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
@@ -70,6 +82,7 @@ class ViewerControllerMixin:
         return False
 
     def writeViewerRuntimeConfig(self, show_error=True):
+        """現在の動画/出力先に合わせたビューア実行時設定を書き出す。"""
         host, port = self.loadViewerDefaults()
         config = {
             "host": host,
@@ -96,10 +109,12 @@ class ViewerControllerMixin:
             return False
 
     def viewerBaseUrl(self):
+        """現在設定のhost/portからビューア基底URLを組み立てる。"""
         self.loadViewerDefaults()
         return f"http://{self.viewer_host}:{self.viewer_port}"
 
     def viewerUrl(self, frame_num=None):
+        """ブラウザで開くビューアURLを返す。フレーム指定なしならトップURL。"""
         base_url = self.viewerBaseUrl()
         if frame_num is None or not self.video_file:
             return base_url
@@ -111,6 +126,7 @@ class ViewerControllerMixin:
         return f"{base_url}/viewer?{query}"
 
     def viewerHealth(self, timeout=0.4):
+        """ローカル360Viewerが応答しているかHTTP health APIで確認する。"""
         try:
             with urlopen(f"{self.viewerBaseUrl()}/api/health", timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -119,11 +135,13 @@ class ViewerControllerMixin:
             return False
 
     def viewerProcessRunning(self):
+        """このプラグインが起動したQProcessが生存しているか返す。"""
         if self.viewer_process is None:
             return False
         return self.viewer_process.state() != QProcess.NotRunning
 
     def checkViewerDependencies(self):
+        """ビューア起動に必要なPythonモジュールがQGIS Pythonへ入っているか確認する。"""
         missing = []
         for module_name in ("cv2",):
             try:
@@ -141,10 +159,12 @@ class ViewerControllerMixin:
         return True
 
     def viewerPythonCandidates(self):
+        """360Viewer起動に使えそうなPythonランチャー候補を列挙する。"""
         candidates = []
         seen = set()
 
         def add(path):
+            """重複を除いて候補パスを追加する。"""
             if not path:
                 return
             path = os.path.abspath(str(path))
@@ -157,6 +177,7 @@ class ViewerControllerMixin:
         add(sys.executable)
         add(getattr(sys, "_base_executable", ""))
 
+        # QGISではsys.executableがqgis.exeを指す場合があるため、同階層のpythonを探す。
         executable_dir = os.path.dirname(os.path.abspath(sys.executable))
         for name in ("python.exe", "python3.exe", "python-qgis.bat", "python-qgis-ltr.bat"):
             add(os.path.join(executable_dir, name))
@@ -181,6 +202,7 @@ class ViewerControllerMixin:
         return candidates
 
     def viewerPythonCommand(self):
+        """QProcess.startへ渡せるPython起動コマンドと表示名を決定する。"""
         for candidate in self.viewerPythonCandidates():
             if not _looks_like_python_launcher(candidate):
                 continue
@@ -195,6 +217,7 @@ class ViewerControllerMixin:
         return None, [], None
 
     def reportViewerStatus(self):
+        """Start時に360Viewerの起動状態をQGISメッセージバーへ出す。"""
         if self.viewerHealth():
             self.iface.messageBar().pushMessage(
                 PLUGIN_TITLE,
@@ -207,6 +230,7 @@ class ViewerControllerMixin:
             )
 
     def ensureViewerStarted(self):
+        """ビューア設定を書き出し、必要ならローカルHTTPサーバを起動する。"""
         if not self.writeViewerRuntimeConfig():
             return False
         if self.viewerHealth():
@@ -231,6 +255,7 @@ class ViewerControllerMixin:
             )
             return False
 
+        # QGISのプロセスと環境を共有しつつ、設定だけVIEWER_CONFIGで明示的に渡す。
         self.viewer_process = QProcess(self)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("VIEWER_CONFIG", self.viewerRuntimeConfigPath())
@@ -257,6 +282,7 @@ class ViewerControllerMixin:
         return True
 
     def logViewerStdout(self):
+        """360Viewer標準出力をQGIS Pythonコンソールへ中継する。"""
         if not self.viewer_process:
             return
         text = bytes(self.viewer_process.readAllStandardOutput()).decode("utf-8", "replace").strip()
@@ -264,6 +290,7 @@ class ViewerControllerMixin:
             print(f"360Viewer stdout: {text}")
 
     def logViewerStderr(self):
+        """360Viewer標準エラーをQGIS Pythonコンソールへ中継する。"""
         if not self.viewer_process:
             return
         text = bytes(self.viewer_process.readAllStandardError()).decode("utf-8", "replace").strip()
@@ -271,14 +298,17 @@ class ViewerControllerMixin:
             print(f"360Viewer stderr: {text}")
 
     def onViewerFinished(self, exit_code, exit_status):
+        """360Viewerプロセス終了時にプラグイン側状態をリセットする。"""
         print(f"360Viewer finished: exit_code={exit_code}, exit_status={exit_status}")
         self.viewer_process = None
         self.viewer_browser_opened = False
 
     def onViewerProcessError(self, error):
+        """QProcess起動/実行エラーをログへ出す。"""
         print(f"360Viewer process error: {error}")
 
     def openViewer(self):
+        """メニュー操作から360Viewerを起動し、ブラウザを開く。"""
         self.startViewerSessionPolling()
         frame_num = self.extract_frame.value() if self.video_file else None
         if not self.ensureViewerStarted():
@@ -286,6 +316,7 @@ class ViewerControllerMixin:
         self.openViewerWhenReady(frame_num)
 
     def openViewerWhenReady(self, frame_num=None, attempts=20):
+        """ビューア応答を待ってからブラウザを開く。起動直後の遅延を吸収する。"""
         if self.viewerHealth(timeout=0.25):
             opens_viewer_page = frame_num is not None and bool(self.video_file)
             if opens_viewer_page:
@@ -306,6 +337,7 @@ class ViewerControllerMixin:
         QTimer.singleShot(250, lambda: self.openViewerWhenReady(frame_num, attempts - 1))
 
     def postViewerNavigation(self, frame_num):
+        """既存ビューアページへHTTP APIで表示フレーム変更を通知する。"""
         if not self.video_file:
             return False
 
@@ -328,6 +360,7 @@ class ViewerControllerMixin:
             return False
 
     def showFrameInViewer(self, frame_num):
+        """QGIS側のフレーム選択に合わせて360Viewer表示を更新する。"""
         if not self.video_file:
             return
         self.startViewerSessionPolling()
@@ -348,6 +381,7 @@ class ViewerControllerMixin:
         self.openViewerWhenReady(frame_num)
 
     def stopViewerProcess(self):
+        """このプラグインが起動した360Viewerプロセスを停止する。"""
         if not self.viewerProcessRunning():
             return
 

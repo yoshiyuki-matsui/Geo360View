@@ -1,3 +1,5 @@
+"""KPマスタCSVを読み込み、撮影点を最近接KPへ寄せる処理。"""
+
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsDistanceArea,
@@ -13,6 +15,10 @@ from .constants import KP_FIELDS, LATITUDE_FIELDS, LONGITUDE_FIELDS
 
 
 def _read_kp_csv(path):
+    """KP CSVから緯度経度とKP識別子を読み込む。
+
+    列名は現場データで揺れやすいため、候補列名から自動判定する。
+    """
     handle, reader = _open_csv_dict_reader(path)
     with handle:
         fieldnames = reader.fieldnames or []
@@ -49,6 +55,11 @@ def _read_kp_csv(path):
 
 
 def build_kp_matches(rows, kp_file, tolerance_m):
+    """フレーム位置行ごとに許容距離内の最近接KPを割り当てる。
+
+    戻り値は `rows` と同じ長さのmatch配列と、マッチ件数。
+    マッチしなかった行はNoneのままにして、後段CSV出力で元座標を維持する。
+    """
     matches = [None] * len(rows)
     if not kp_file:
         return matches, 0
@@ -63,6 +74,7 @@ def build_kp_matches(rows, kp_file, tolerance_m):
         index.addFeature(feat)
         kp_by_id[kp_id] = kp
 
+    # QGISの距離計算器を使い、緯度経度上の距離をWGS84楕円体で測る。
     distance = QgsDistanceArea()
     distance.setSourceCrs(
         QgsCoordinateReferenceSystem("EPSG:4326"),

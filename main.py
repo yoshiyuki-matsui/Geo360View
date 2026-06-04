@@ -1,4 +1,5 @@
-# GPXVideoProcessor/main.py
+"""GPXVideoProcessor QGISプラグインのUIと全体制御。"""
+
 import csv
 from datetime import datetime, timezone
 import json
@@ -45,7 +46,10 @@ QAction = getattr(QtWidgets, "QAction", None) or QtGui.QAction
 
 
 class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidget):
+    """GPX/動画同期、360Viewer連携、QGISレイヤ生成を統括するプラグイン本体。"""
+
     def __init__(self, iface, parent=None):
+        """QGIS ifaceと、セッション中に共有する状態を初期化する。"""
         super().__init__(parent)
         self.iface = iface
         self.gpx_file = ""
@@ -72,13 +76,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_session_timer = None
         self.last_viewer_session_signature = None
         self.radar_circle_band = None
+        self.radar_outer_circle_band = None
         self.radar_sector_band = None
         self.radar_direction_band = None
         self.radar_perpendicular_band = None
+        self.last_radar_heading = None
+        self.last_radar_sector_radius_m = None
+        self.last_radar_frame_index = None
+        self.frame_position_by_frame = {}
         self.toolbar = None
         self._gui_initialized = False
 
     def initGui(self):
+        """QGISメニュー/ツールバー/パネルUIを一度だけ構築する。"""
         if self._gui_initialized:
             return
 
@@ -89,6 +99,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layout.setSpacing(4)
 
         def compact_row(target_layout, *items):
+            """関連するUI部品を1行にまとめて、パネルの縦方向を節約する。"""
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(4)
@@ -102,6 +113,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             target_layout.addLayout(row)
 
         def set_fixed_width(widget, width):
+            """ボタンや数値入力の幅を固定し、行内レイアウトの崩れを防ぐ。"""
             widget.setMinimumWidth(width)
             widget.setMaximumWidth(width)
 
@@ -207,17 +219,36 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_button_layout.addWidget(self.nav_forward_button)
         self.nav_button_layout.addWidget(self.nav_forward_fast_button)
 
-        self.radar_radius_label = QLabel("Radar:")
+        self.radar_radius_label = QLabel("Range:")
         self.radar_radius = QDoubleSpinBox()
         self.radar_radius.setRange(1.0, 500.0)
         self.radar_radius.setDecimals(1)
         self.radar_radius.setSingleStep(1.0)
-        self.radar_radius.setValue(20.0)
+        self.radar_radius.setValue(5.0)
         self.radar_radius.setSuffix(" m")
         self.radar_radius.setToolTip(
-            "Radius for the map radar overlay drawn from viewer_session.json."
+            "Fixed map range circle. A second circle is drawn at twice this distance."
         )
         set_fixed_width(self.radar_radius, 82)
+        self.radar_scale_label = QLabel("Scale:")
+        self.radar_scale = QDoubleSpinBox()
+        self.radar_scale.setRange(0.1, 20.0)
+        self.radar_scale.setDecimals(1)
+        self.radar_scale.setSingleStep(0.1)
+        self.radar_scale.setValue(1.0)
+        self.radar_scale.setSuffix(" x")
+        self.radar_scale.setToolTip(
+            "Multiplier for the dynamic radar sector depth derived from +/-10 frame travel distance."
+        )
+        set_fixed_width(self.radar_scale, 78)
+        self.radar_offset_label = QLabel("Offset:")
+        self.radar_offset = QComboBox()
+        for offset in (0, 90, 180, 270):
+            self.radar_offset.addItem(f"{offset}deg", offset)
+        self.radar_offset.setToolTip(
+            "Clockwise bearing correction for videos whose visual front is not the travel direction."
+        )
+        set_fixed_width(self.radar_offset, 78)
 
         self.click_mode_button = QPushButton("Click Layer")
         self.click_mode_button.clicked.connect(self.activateClickMode)
@@ -289,8 +320,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.nav_step,
             QLabel("Fast:"),
             self.nav_fast_step,
+            "stretch",
+        )
+        compact_row(
+            control_layout,
             self.radar_radius_label,
             self.radar_radius,
+            self.radar_scale_label,
+            self.radar_scale,
+            self.radar_offset_label,
+            self.radar_offset,
             "stretch",
         )
         control_layout.addWidget(self.preview_info)
@@ -326,16 +365,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self._gui_initialized = True
 
     def showWindow(self):
+        """プラグインパネルを前面に表示する。"""
         self.show()
         self.raise_()
         self.activateWindow()
 
     def run(self):
+        """Startメニューからパネルを開き、ビューア状態監視を開始する。"""
         self.showWindow()
         self.startViewerSessionPolling()
         self.reportViewerStatus()
 
     def makePathLabel(self, text):
+        """長いパスでパネル幅が広がらないファイル表示ラベルを作る。"""
         label = QLabel(text)
         label.setMinimumWidth(160)
         label.setWordWrap(False)
@@ -343,25 +385,29 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return label
 
     def compactPathText(self, path, fallback):
+        """表示用にはbasenameだけを返し、空ならfallbackを返す。"""
         if not path:
             return fallback
         name = os.path.basename(os.path.normpath(path))
         return name or path
 
     def setPathLabel(self, label, path, fallback):
+        """ファイル表示ラベルを短縮表示にし、フルパスをツールチップへ保持する。"""
         label.setText(self.compactPathText(path, fallback))
         label.setToolTip(path or "")
 
     def selectGPX(self):
+        """GPXファイルを選択し、入力状態を更新する。"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select GPX File", "", "GPX Files (*.gpx)")
         if file_path:
-            self.gpx_file = file_path  # ここを確認
+            self.gpx_file = file_path
             self.setPathLabel(self.gpx_path, file_path, "No GPX")
 
     def selectVideo(self):
+        """MP4動画を選択し、出力先既定値とビューア設定を更新する。"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "MP4 Files (*.mp4)")
         if file_path:
-            self.video_file = file_path  # ここを確認
+            self.video_file = file_path
             self.setPathLabel(self.video_path, file_path, "No video")
             self.viewer_browser_opened = False
             self.setCurrentFrame(None)
@@ -370,12 +416,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.writeViewerRuntimeConfig(show_error=False)
 
     def selectKP(self):
+        """KPマスタCSVを選択する。KP未指定でも通常処理は可能。"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select KP CSV", "", "CSV Files (*.csv)")
         if file_path:
             self.kp_file = file_path
             self.setPathLabel(self.kp_path, file_path, "No KP CSV")
 
     def selectOutputDir(self):
+        """CSV/画像/セッションJSONの出力先ディレクトリを選択する。"""
         directory = QFileDialog.getExistingDirectory(self, "Select Output Directory", self.defaultOutputDir())
         if directory:
             self.output_dir = directory
@@ -384,19 +432,24 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.writeViewerRuntimeConfig(show_error=False)
 
     def defaultOutputDir(self):
+        """動画またはGPXと同じ場所に置く既定出力ディレクトリを返す。"""
         base_path = self.video_file or self.gpx_file or __file__
         return os.path.join(os.path.dirname(base_path), "360view_output")
 
     def resolvedOutputDir(self):
+        """ユーザ指定があればそれを優先した実出力先ディレクトリを返す。"""
         return self.output_dir or self.defaultOutputDir()
 
     def imagesDir(self):
+        """QGIS側プレビューJPEGの保存ディレクトリを返す。"""
         return os.path.join(self.resolvedOutputDir(), "images")
 
     def frameImagePath(self, frame_num):
+        """指定フレームのQGIS側プレビューJPEGパスを返す。"""
         return os.path.join(self.imagesDir(), _frame_image_name(frame_num))
 
     def setCurrentFrame(self, frame_num):
+        """現在フレーム状態とUI表示を同期する。"""
         if frame_num is None:
             self.current_frame = None
             self.current_frame_label.setText("Current: -")
@@ -407,11 +460,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.current_frame_label.setText(f"Current: {self.current_frame}")
 
     def currentFrameValue(self):
+        """現在フレーム状態を返す。未設定ならUIのFrame入力値を使う。"""
         if self.current_frame is not None:
             return int(self.current_frame)
         return int(self.extract_frame.value())
 
     def displayFrame(self, frame_num, feature=None):
+        """指定フレームをビューアへ送り、少し遅らせてQGISプレビューを抽出する。"""
         frame_num = int(frame_num)
         if frame_num < 0:
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Frame number must be greater than or equal to 0.")
@@ -424,13 +479,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             except Exception:
                 pass
         self.showFrameInViewer(frame_num)
+        # ブラウザ表示を先に走らせ、重いJPEG抽出が体感レスポンスを邪魔しないようにする。
         QTimer.singleShot(150, lambda: self.extractFrame(frame_num, feature=feature))
 
     def displayCurrentFrame(self):
+        """現在フレームを再表示する。キーボードSpace操作からも使う。"""
         frame_num = self.currentFrameValue()
         self.displayFrame(frame_num, feature=self.findFeatureByFrame(frame_num))
 
     def activeFrameLayer(self):
+        """ナビゲーション対象となるVideo GPX Pointsレイヤを取得する。"""
         if self.frame_click_tool is not None and self.frame_click_tool.layer is not None:
             return self.frame_click_tool.layer
 
@@ -442,6 +500,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return layer
 
     def layerFrames(self, layer):
+        """指定レイヤからframe属性を集め、重複排除して昇順で返す。"""
         frames = []
         if layer is None:
             return frames
@@ -457,6 +516,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return sorted(set(frames))
 
     def findFeatureByFrame(self, frame_num):
+        """現在の対象レイヤから指定frameの地物を探す。"""
         layer = self.activeFrameLayer()
         if layer is None:
             return None
@@ -471,6 +531,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return None
 
     def matchedFrameCsvPaths(self):
+        """KPマッチ済みフレームCSVの探索候補パスを返す。"""
         if not self.video_file:
             return []
 
@@ -491,6 +552,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return unique_paths
 
     def matchedFrames(self):
+        """KPマッチ済みCSVからナビゲーション用frame_index一覧を読み込む。"""
         for path in self.matchedFrameCsvPaths():
             if not os.path.isfile(path):
                 continue
@@ -511,6 +573,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return [], None
 
     def steppedFrame(self, frames, current_frame, direction, step_count):
+        """ソート済みフレーム列から、現在位置を基準に指定ステップ先を返す。"""
         if not frames:
             return None
 
@@ -527,6 +590,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 index = frames.index(greater[0]) + step_count - 1
             return frames[min(index, len(frames) - 1)]
 
+        # 現在フレームがリスト外でも、直前側のフレームを起点に自然に戻れるようにする。
         smaller = [frame for frame in frames if frame < current_frame]
         if not smaller:
             return None
@@ -537,6 +601,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return frames[max(index, 0)]
 
     def navigationTargetFrame(self, direction, fast=False):
+        """UIのナビモードに応じて、次に表示すべきフレームと地物を決める。"""
         current_frame = self.currentFrameValue()
         step_count = self.nav_fast_step.value() if fast else self.nav_step.value()
         mode = self.nav_mode.currentData()
@@ -572,6 +637,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return target, self.findFeatureByFrame(target)
 
     def navigateRelative(self, direction, fast=False):
+        """現在フレームから相対移動し、対象フレームを表示する。"""
         target, feature = self.navigationTargetFrame(direction, fast=fast)
         if target is None:
             return
@@ -579,6 +645,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
 
     def stopWorker(self, wait_ms=1000, show_message=True):
+        """実行中workerへ中断要求を出し、一定時間だけ終了を待つ。"""
         if self.worker is None:
             return True
 
@@ -602,6 +669,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return False
 
     def removeGeneratedLayers(self):
+        """このプラグインが生成したメモリレイヤだけをQGISプロジェクトから削除する。"""
         project = QgsProject.instance()
         removed_count = 0
         remaining_layer_ids = []
@@ -616,9 +684,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return removed_count
 
     def generatedLayerBackupPath(self):
+        """Exit時に生成レイヤを退避保存するGeoPackageパスを返す。"""
         return os.path.join(self.resolvedOutputDir(), "tmp.gpkg")
 
     def generatedLayers(self):
+        """現在QGISに残っている、プラグイン生成レイヤだけを取得する。"""
         project = QgsProject.instance()
         layers = []
         for layer_id in self.created_layer_ids:
@@ -628,6 +698,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return layers
 
     def gpkgOverwriteAction(self, overwrite_file):
+        """QGISバージョン差を吸収してGeoPackage上書きアクションを返す。"""
         action_name = "CreateOrOverwriteFile" if overwrite_file else "CreateOrOverwriteLayer"
         action_enum = getattr(QgsVectorFileWriter, "ActionOnExistingFile", None)
         if action_enum is not None:
@@ -635,6 +706,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return getattr(QgsVectorFileWriter, action_name)
 
     def writeLayerToGpkg(self, layer, gpkg_path, layer_name, overwrite_file):
+        """単一QGISレイヤをGeoPackageへ書き出す。"""
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "GPKG"
         options.layerName = layer_name
@@ -670,6 +742,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             raise RuntimeError(message or f"QgsVectorFileWriter error code: {error_code}")
 
     def saveGeneratedLayers(self):
+        """生成済みメモリレイヤをtmp.gpkgへ保存する。失敗時はエラー文字列を返す。"""
         layers = self.generatedLayers()
         if not layers:
             return None, 0, None
@@ -694,7 +767,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return gpkg_path, len(layers), None
 
     def resetPanelState(self):
+        """セッション終了後にパネル上の一時状態を初期化する。"""
         self.last_rows = []
+        self.frame_position_by_frame = {}
         self.setCurrentFrame(None)
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
@@ -704,6 +779,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.preview_label.setText("Preview")
 
     def cleanupSession(self, close_panel=True, remove_layers=True, show_message=True):
+        """クリックモード、worker、ビューア、生成レイヤをまとめて終了処理する。"""
         self.session_closing = True
         self.deactivateClickMode(show_message=False)
         worker_stopped = self.stopWorker(show_message=show_message)
@@ -717,6 +793,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if remove_layers:
             saved_path, saved_count, save_error = self.saveGeneratedLayers()
 
+        # 保存に失敗した場合は、データ消失を避けるためレイヤ削除を行わない。
         if save_error:
             removed_count = 0
             if show_message:
@@ -751,9 +828,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 )
 
     def exitSession(self):
+        """Exitメニューから現在セッションを終了する。"""
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=True)
 
     def activateClickMode(self):
+        """現在アクティブなframe属性付きレイヤをクリック待ち受け状態にする。"""
         layer = self.iface.activeLayer()
         if layer is None:
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select a Video GPX Points layer first.")
@@ -772,6 +851,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         )
 
     def deactivateClickMode(self, show_message=True):
+        """地図クリックモードを解除し、一時ハイライトも消す。"""
         if self.frame_click_tool is None:
             return
 
@@ -785,6 +865,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
 
     def processData(self):
+        """GPX/動画同期workerを開始する。結果はaddLayerで受け取る。"""
         if not self.gpx_file or not self.video_file:
             print("Error: GPX or video file not selected.")
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select both a GPX file and a video file.")
@@ -809,14 +890,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
 
     def addLayer(self, rows):
+        """workerが生成したフレーム位置行をQGISレイヤへ変換して追加する。"""
         self.process_button.setEnabled(True)
         self.progress_bar.setValue(100)
         if self.session_closing:
             return
 
         self.last_rows = rows
+        self.frame_position_by_frame = {}
+        for frame_num, _source_frame, _time, lat, lon in rows:
+            self.frame_position_by_frame[int(frame_num)] = (float(lat), float(lon))
 
         if rows:
+            # 生成レイヤは一時メモリレイヤ。Exit時にtmp.gpkgへ保存してから削除する。
             layer = QgsVectorLayer("Point?crs=EPSG:4326", "Video GPX Points", "memory")
             pr = layer.dataProvider()
 
@@ -856,9 +942,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No rows. Could not add layer.")
 
     def buildKpMatches(self, rows):
+        """現在UIのKPファイル/許容距離を使ってKPマッチングを実行する。"""
         return build_kp_matches(rows, self.kp_file, self.kp_tolerance.value())
 
     def exportFrameData(self, rows):
+        """全フレーム同期CSV、KPナビゲーションJSON/CSVを出力する。"""
         output_dir = self.resolvedOutputDir()
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -871,6 +959,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         json_path = os.path.join(output_dir, base_name + NAVIGATION_JSON_SUFFIX)
         matched_csv_paths = [os.path.join(output_dir, base_name + MATCHED_FRAMES_CSV_SUFFIX)]
         if self.video_file:
+            # WEBビューア単体でも見つけやすいよう、動画ディレクトリ側にもmatched CSVを置く。
             video_dir_matched_csv = os.path.join(
                 os.path.dirname(self.video_file),
                 base_name + MATCHED_FRAMES_CSV_SUFFIX
@@ -930,6 +1019,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     })
 
                     if match:
+                        # KPマッチ済み点だけをWEBビューアPrev/Next用ノードにする。
                         navigation_nodes.append({
                             "index": len(navigation_nodes),
                             "frame": frame_num,
@@ -951,6 +1041,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     node["next_index"] = next_node["index"] if next_node else None
                     node["next_frame"] = next_node["frame"] if next_node else None
 
+                # navigation.jsonはWEB版360ビューアが前後移動情報を読むための構造化出力。
                 payload = {
                     "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                     "video": self.video_file,
@@ -1013,6 +1104,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             )
 
     def showError(self, error):
+        """workerからのエラーをUIへ反映し、必要に応じてmessageBarへ表示する。"""
         self.process_button.setEnabled(True)
         self.progress_bar.setValue(0)
         if self.session_closing and error == "Processing cancelled.":
@@ -1023,6 +1115,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.iface.messageBar().pushWarning(PLUGIN_TITLE, error)
 
     def unload(self):
+        """QGISがプラグインをアンロードする際に、メニューとツールバーを片付ける。"""
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=False)
 
         # アクションをメニューから削除
@@ -1042,8 +1135,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.toolbar = None
 
     def closeEvent(self, event):
-        # UIが閉じられたときに呼ばれる
+        """パネル右上の閉じる操作ではセッション終了までは行わず、UIだけ閉じる。"""
         event.accept()
 
 def classFactory(iface):
+    """QGISがプラグインインスタンスを生成するためのエントリポイント。"""
     return GPXVideoPlugin(iface)

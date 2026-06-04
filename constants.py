@@ -1,3 +1,5 @@
+"""プラグイン全体で使う固定値。"""
+
 PLUGIN_TITLE = "GPXVideoProcessor"
 
 LATITUDE_FIELDS = ("lat", "latitude", "gps_lat", "y", "緯度")

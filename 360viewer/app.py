@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""QGISプラグインから起動される標準ライブラリ製ローカル360Viewerサーバ。"""
+
 import csv
 import json
 import mimetypes
@@ -26,17 +28,22 @@ DEFAULT_VIEW = {
 
 
 class ConfigError(RuntimeError):
+    """ビューア設定ファイルが読めない場合の起動時エラー。"""
     pass
 
 
 class ApiError(RuntimeError):
+    """HTTP APIとして返すstatus/message付きの例外。"""
+
     def __init__(self, status: int, message: str):
+        """HTTPステータスとエラーメッセージを保持する。"""
         super().__init__(message)
         self.status = status
         self.message = message
 
 
 def load_config() -> dict[str, Any]:
+    """viewer_config JSONを読み、パスと画質設定を正規化して返す。"""
     if not CONFIG_PATH.is_file():
         raise ConfigError(f"Config file not found: {CONFIG_PATH}")
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
@@ -59,6 +66,7 @@ def load_config() -> dict[str, Any]:
 
 
 def resolve_config_path(value: str) -> Path:
+    """設定内の相対パスを360viewerディレクトリ基準の絶対パスへ解決する。"""
     path = Path(value)
     if not path.is_absolute():
         path = BASE_DIR / path
@@ -66,6 +74,7 @@ def resolve_config_path(value: str) -> Path:
 
 
 def parse_bool(value: Any) -> bool:
+    """JSON/環境値の真偽表現をboolへ変換する。"""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -76,10 +85,12 @@ def parse_bool(value: Any) -> bool:
 
 
 def now_iso() -> str:
+    """セッションJSONへ書くローカルタイムゾーン付き現在時刻を返す。"""
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def query_value(query: dict[str, list[str]], name: str, default: Any = None) -> Any:
+    """parse_qs形式のqueryから先頭値を取り出す。"""
     values = query.get(name)
     if not values:
         return default
@@ -87,6 +98,7 @@ def query_value(query: dict[str, list[str]], name: str, default: Any = None) -> 
 
 
 def safe_video_name(video: str) -> str:
+    """動画名をファイル名だけに制限し、パストラバーサルを防ぐ。"""
     video = (video or "").strip()
     if not video:
         raise ApiError(400, "video is required")
@@ -100,6 +112,7 @@ def safe_video_name(video: str) -> str:
 
 
 def parse_frame_index(value: Any) -> int:
+    """HTTP入力から0以上の整数フレーム番号を取り出す。"""
     try:
         frame_index = int(value)
     except (TypeError, ValueError):
@@ -110,6 +123,7 @@ def parse_frame_index(value: Any) -> int:
 
 
 def parse_float(value: Any, name: str, default: float | None = None) -> float:
+    """HTTP入力からfloat値を取り出す。必須値不足はApiErrorにする。"""
     if value is None or value == "":
         if default is None:
             raise ApiError(400, f"{name} is required")
@@ -121,13 +135,16 @@ def parse_float(value: Any, name: str, default: float | None = None) -> float:
 
 
 def normalize_yaw(value: float) -> float:
+    """yaw角を0以上360未満へ正規化する。"""
     return value % 360.0
 
 
 def view_state_from_query(query: dict[str, list[str]], session: dict[str, Any] | None = None) -> dict[str, float]:
+    """URL queryと既存セッションからビュー視点状態を作る。"""
     session = session if session is not None else read_session()
 
     def value_for(name: str) -> Any:
+        """query値がなければ前回セッション、さらに既定値を使う。"""
         value = query_value(query, name)
         if value is None or value == "":
             value = session.get(name, DEFAULT_VIEW[name])
@@ -143,12 +160,14 @@ def view_state_from_query(query: dict[str, list[str]], session: dict[str, Any] |
 
 
 def safe_cache_stem(video: str) -> str:
+    """ビューアJPEGキャッシュ名に使える安全な動画stemを返す。"""
     stem = Path(video).stem
     stem = re.sub(r"[^0-9A-Za-z_.-]+", "_", stem).strip("_")
     return stem or "video"
 
 
 def video_path(video: str) -> Path:
+    """動画ファイル名を設定済みvideo_dir配下の絶対パスへ解決する。"""
     cfg = load_config()
     video = safe_video_name(video)
     root = cfg["video_dir"]
@@ -161,12 +180,14 @@ def video_path(video: str) -> Path:
 
 
 def matched_frames_path(video: str) -> Path:
+    """動画名に対応するKPマッチ済みナビゲーションCSVのパスを返す。"""
     cfg = load_config()
     stem = Path(video).stem
     return (cfg["video_dir"] / f"{stem}_matched_frames.csv").resolve()
 
 
 def load_matched_frames(video: str) -> list[int]:
+    """matched_frames CSVからPrev/Next用frame_index一覧を読み込む。"""
     path = matched_frames_path(video)
     if not path.is_file():
         return []
@@ -190,6 +211,7 @@ def load_matched_frames(video: str) -> list[int]:
 
 
 def neighbor_frames(frames: list[int], current: int) -> tuple[int | None, int | None]:
+    """現在フレームに対する前後のマッチ済みフレームを返す。"""
     prev_frame = None
     next_frame = None
     for frame in frames:
@@ -202,6 +224,7 @@ def neighbor_frames(frames: list[int], current: int) -> tuple[int | None, int | 
 
 
 def read_session() -> dict[str, Any]:
+    """viewer_session.jsonを読み込む。壊れている場合は空状態として扱う。"""
     cfg = load_config()
     path = cfg["session_json_path"]
     if not path.is_file():
@@ -215,12 +238,14 @@ def read_session() -> dict[str, Any]:
 
 
 def write_session(state: dict[str, Any]) -> dict[str, Any]:
+    """ビューア状態をviewer_session.jsonへ原子的に書き込む。"""
     cfg = load_config()
     path = cfg["session_json_path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     state = dict(state)
     state["updated_at"] = now_iso()
 
+    # QGIS側ポーリングが途中書き込みを読まないよう、一時ファイルから置換する。
     tmp_path = path.with_name(f"{path.name}.tmp")
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
@@ -230,6 +255,7 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def state_from_request_args(query: dict[str, list[str]], video: str, frame_index: int) -> dict[str, Any]:
+    """viewer初回表示URLからセッションへ保存する状態を作る。"""
     session = read_session()
     view = view_state_from_query(query, session)
 
@@ -243,6 +269,7 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
 
 
 def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """ブラウザからPOSTされた視点状態payloadを検証・正規化する。"""
     video = safe_video_name(str(payload.get("video", "")))
     frame_index = parse_frame_index(payload.get("frame_index"))
     return {
@@ -255,11 +282,13 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """QGISからのフレーム移動payloadを既存視点状態と合成する。"""
     session = read_session()
     video = safe_video_name(str(payload.get("video", "")))
     frame_index = parse_frame_index(payload.get("frame_index"))
 
     def view_value(name: str) -> Any:
+        """QGISが視点値を送らない場合、直近のブラウザ視点を継承する。"""
         value = payload.get(name)
         if value is None or value == "":
             value = session.get(name, DEFAULT_VIEW[name])
@@ -275,10 +304,12 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def json_bytes(value: Any) -> bytes:
+    """JSONレスポンス用のUTF-8バイト列を作る。"""
     return json.dumps(value, ensure_ascii=False).encode("utf-8")
 
 
 def relative_static_path(raw_path: str) -> Path:
+    """`/static/...` URLをSTATIC_DIR配下の安全な実ファイルパスへ変換する。"""
     static_name = unquote(raw_path.removeprefix("/static/"))
     path = (STATIC_DIR / static_name).resolve()
     try:
@@ -291,10 +322,12 @@ def relative_static_path(raw_path: str) -> Path:
 
 
 def frame_image_url(video: str, frame_index: int) -> str:
+    """指定フレームJPEGのHTTPパスを返す。"""
     return f"/frames/{quote(video)}/{frame_index}.jpg"
 
 
 def absolute_url(handler: BaseHTTPRequestHandler, path: str) -> str:
+    """リクエストHostヘッダを使って絶対URLを作る。"""
     host = handler.headers.get("Host")
     if not host:
         cfg = load_config()
@@ -303,6 +336,7 @@ def absolute_url(handler: BaseHTTPRequestHandler, path: str) -> str:
 
 
 def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_url: str) -> bytes:
+    """ビューアHTMLを生成し、初期状態をJavaScriptへ埋め込む。"""
     bootstrap_json = json.dumps(bootstrap, ensure_ascii=False).replace("</", "<\\/")
     krpano_script = (
         '  <script src="/static/vendor/krpano/krpano.js"></script>\n'
@@ -354,6 +388,7 @@ def build_krpano_xml(
     frame_index: int,
     view: dict[str, Any] | None = None,
 ) -> str:
+    """krpanoへ渡す単一シーンXMLを生成する。"""
     if view is None:
         view = view_state_from_query({})
     yaw = normalize_yaw(parse_float(view.get("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"]))
@@ -362,6 +397,7 @@ def build_krpano_xml(
     fov = max(1.0, min(179.0, 90.0 / max(zoom, 0.01)))
     image_url = xml_escape(absolute_url(handler, frame_image_url(video, frame_index)))
 
+    # krpanoにはequirectangular JPEGをsphere画像として渡す。
     return f"""<krpano>
   <events onloadcomplete="js(viewerKrpanoLoadComplete());" onloaderror="js(viewerKrpanoLoadError());" />
   <preview type="grid(cube,16,16,512,0x222222,0x444444,0x222222)" />
@@ -374,6 +410,7 @@ def build_krpano_xml(
 
 
 def viewer_cache_path(video: str, frame_index: int, cfg: dict[str, Any]) -> Path:
+    """画質設定を含めたビューアJPEGキャッシュパスを作る。"""
     cache_name = (
         f"{safe_cache_stem(video)}_"
         f"frame_{frame_index:06d}_"
@@ -385,6 +422,7 @@ def viewer_cache_path(video: str, frame_index: int, cfg: dict[str, Any]) -> Path
 
 
 def resize_for_viewer(frame: Any, max_width: int, cv2: Any) -> Any:
+    """ブラウザ表示用に横幅上限へ縮小する。0以下なら縮小しない。"""
     if max_width <= 0:
         return frame
 
@@ -398,6 +436,7 @@ def resize_for_viewer(frame: Any, max_width: int, cv2: Any) -> Any:
 
 
 def extract_frame_jpeg(video: str, frame_index: int) -> tuple[bytes, str]:
+    """動画から指定フレームをJPEG抽出し、ビューアキャッシュも利用する。"""
     import cv2
 
     cfg = load_config()
@@ -436,6 +475,7 @@ def extract_frame_jpeg(video: str, frame_index: int) -> tuple[bytes, str]:
 
     jpeg_bytes = encoded.tobytes()
     try:
+        # キャッシュも一時ファイルから置換し、同時リクエスト時の壊れたJPEGを避ける。
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
         tmp_path.write_bytes(jpeg_bytes)
@@ -447,12 +487,16 @@ def extract_frame_jpeg(video: str, frame_index: int) -> tuple[bytes, str]:
 
 
 class ViewerHandler(BaseHTTPRequestHandler):
+    """360ViewerのHTTPエンドポイントを処理するリクエストハンドラ。"""
+
     server_version = "360ViewerHTTP/1.0"
 
     def log_message(self, format: str, *args: Any) -> None:
+        """標準のHTTPログをQGIS側で見やすい形式にする。"""
         print(f"360Viewer {self.address_string()} - {format % args}")
 
     def do_GET(self) -> None:
+        """ヘルスチェック、ビューアHTML、画像、静的ファイルを返す。"""
         try:
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query, keep_blank_values=True)
@@ -499,6 +543,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self.send_api_error(ApiError(500, str(e)))
 
     def do_POST(self) -> None:
+        """ブラウザ/QGISからのセッション状態更新を受け付ける。"""
         try:
             parsed = urlparse(self.path)
             if parsed.path == "/api/session/viewer-state":
@@ -520,6 +565,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self.send_api_error(ApiError(500, str(e)))
 
     def handle_viewer(self, query: dict[str, list[str]]) -> None:
+        """`/viewer` を生成し、現在フレームとナビゲーション情報を埋め込む。"""
         session = read_session()
         raw_video = query_value(query, "video") or session.get("video")
         raw_frame = query_value(query, "frame_index", session.get("frame_index"))
@@ -542,6 +588,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         scene_query = f"/krpano-scene.xml?{scene_query_params}"
         scene_url = absolute_url(self, scene_query)
 
+        # bootstrapはviewer.jsがページ初期化時に参照する唯一の初期状態。
         bootstrap = {
             "state": state,
             "prev_frame": prev_frame,
@@ -561,12 +608,14 @@ class ViewerHandler(BaseHTTPRequestHandler):
         )
 
     def handle_krpano_scene(self, query: dict[str, list[str]]) -> None:
+        """krpanoが読み込むXMLシーンを返す。"""
         video = safe_video_name(query_value(query, "video", ""))
         frame_index = parse_frame_index(query_value(query, "frame_index"))
         xml = build_krpano_xml(self, video, frame_index, view_state_from_query(query))
         self.send_bytes(xml.encode("utf-8"), "application/xml; charset=utf-8")
 
     def handle_frame_image(self, path: str) -> None:
+        """`/frames/<video>/<frame>.jpg` を処理し、抽出JPEGを返す。"""
         match = re.match(r"^/frames/([^/]+)/([0-9]+)\.jpg$", path)
         if not match:
             raise ApiError(404, "frame image endpoint not found")
@@ -590,11 +639,13 @@ class ViewerHandler(BaseHTTPRequestHandler):
         )
 
     def handle_static(self, path: str) -> None:
+        """viewer.css/jsやkrpano.jsなどの静的ファイルを返す。"""
         file_path = relative_static_path(path)
         content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         self.send_bytes(file_path.read_bytes(), content_type, {"Cache-Control": "no-store"})
 
     def read_json_body(self) -> dict[str, Any]:
+        """POSTリクエストのJSON object bodyを読み込んで検証する。"""
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -612,6 +663,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         return payload
 
     def send_json(self, value: Any, status: int = 200) -> None:
+        """JSONレスポンスを送信する。"""
         self.send_bytes(json_bytes(value), "application/json; charset=utf-8", status=status)
 
     def send_bytes(
@@ -621,6 +673,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         headers: dict[str, str] | None = None,
         status: int = 200,
     ) -> None:
+        """任意バイト列をHTTPレスポンスとして送信する。"""
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -631,6 +684,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_api_error(self, error: ApiError) -> None:
+        """ApiErrorをAPI/通常ページそれぞれに合う形式で返す。"""
         status = error.status
         if status not in HTTPStatus._value2member_map_:
             status = 500
@@ -645,6 +699,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    """設定を読み、ThreadingHTTPServerで360Viewerを起動する。"""
     config = load_config()
     server = ThreadingHTTPServer((config["host"], config["port"]), ViewerHandler)
     print(f"360Viewer serving on http://{config['host']}:{config['port']}")

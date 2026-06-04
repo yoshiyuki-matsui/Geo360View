@@ -1,3 +1,5 @@
+"""360Viewer単体確認用の小さなサンプルMP4を生成するスクリプト。"""
+
 from pathlib import Path
 
 import cv2
@@ -5,6 +7,7 @@ import numpy as np
 
 
 def main() -> None:
+    """フレーム番号が焼き込まれた短いテスト動画を作成する。"""
     out = Path("sample_videos/abc.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -21,6 +24,7 @@ def main() -> None:
     try:
         for i in range(1500):
             frame = np.zeros((height, width, 3), dtype=np.uint8)
+            # フレームごとに色が変わるので、キャッシュ/フレームずれを目視確認しやすい。
             x = np.linspace(0, 255, width, dtype=np.uint16)
             y = np.linspace(0, 255, height, dtype=np.uint16)[:, None]
             frame[:, :, 0] = ((x[None, :] + i) % 255).astype(np.uint8)

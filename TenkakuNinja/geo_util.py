@@ -1,4 +1,5 @@
-# TenkakuNinja/geo_util.py
+"""GPX読込、時刻表記ゆれ吸収、フレーム補間のユーティリティ。"""
+
 from datetime import datetime, timedelta, timezone
 import math
 import re
@@ -49,16 +50,19 @@ CLOCK_FIELD_NAMES = {
 
 
 def _local_name(tag):
+    """XML名前空間を除いたローカルタグ名を返す。"""
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
 def _field_name(name):
+    """タグ名・属性名を候補名比較用の正規化フィールド名へ変換する。"""
     name = _local_name(str(name)).strip()
     name = unicodedata.normalize("NFKC", name).lower()
     return re.sub(r"[\s:./-]+", "_", name).strip("_")
 
 
 def _clean_text(value):
+    """XMLテキスト/属性値をNFKC正規化し、空文字はNoneにする。"""
     if value is None:
         return None
     value = unicodedata.normalize("NFKC", str(value)).strip()
@@ -66,6 +70,7 @@ def _clean_text(value):
 
 
 def _values_by_field_names(element, names):
+    """指定候補名に一致する属性・子要素テキストを再帰的に集める。"""
     values = []
 
     for attr_name, attr_value in element.attrib.items():
@@ -92,6 +97,7 @@ def _values_by_field_names(element, names):
 
 
 def _all_point_values(element):
+    """trkpt/rtept配下の全テキスト・属性値を時刻候補探索用に集める。"""
     values = []
     for value in element.attrib.values():
         cleaned = _clean_text(value)
@@ -115,6 +121,7 @@ def _all_point_values(element):
 
 
 def _looks_like_datetime(value):
+    """任意文字列が日時らしい形式かを粗く判定する。"""
     value = _clean_text(value)
     if not value:
         return False
@@ -128,6 +135,7 @@ def _looks_like_datetime(value):
 
 
 def _unique(values):
+    """順序を保ったまま重複値を取り除く。"""
     result = []
     seen = set()
     for value in values:
@@ -138,9 +146,11 @@ def _unique(values):
 
 
 def _time_candidates(point):
+    """GPXポイントから時刻として解釈できそうな候補文字列を列挙する。"""
     candidates = []
     candidates.extend(_values_by_field_names(point, TIME_FIELD_NAMES))
 
+    # date列とclock列が分かれている独自GPXもあるため、組み合わせて試す。
     date_values = _values_by_field_names(point, DATE_FIELD_NAMES)
     clock_values = _values_by_field_names(point, CLOCK_FIELD_NAMES)
     for date_value in date_values:
@@ -156,12 +166,14 @@ def _time_candidates(point):
 
 
 def _to_utc_naive(value):
+    """timezone付きdatetimeをUTCのnaive datetimeへ統一する。"""
     if value.tzinfo is not None:
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
 
 
 def _parse_epoch(value):
+    """Unix epoch秒/ミリ秒/マイクロ秒らしい数値をdatetimeへ変換する。"""
     if not re.fullmatch(r"\d+(\.\d+)?", value):
         return None
 
@@ -185,6 +197,7 @@ def _parse_epoch(value):
 
 
 def _normalize_time_text(value):
+    """JST/日本語日時/区切り文字違いをISO8601へ近づける。"""
     value = _clean_text(value)
     if not value:
         return ""
@@ -205,6 +218,7 @@ def _normalize_time_text(value):
 
 
 def _parse_gpx_time(value):
+    """GPX時刻候補をUTC naive datetimeへ変換する。失敗時はNone。"""
     value = _normalize_time_text(value)
     if not value:
         return None
@@ -218,6 +232,7 @@ def _parse_gpx_time(value):
         value,
     )
     if compact:
+        # 20250324130849 のようなコンパクト表記をISO文字列へ組み直す。
         year, month, day, hour, minute, second, micros, offset = compact.groups()
         micros = (micros or "")[:6].ljust(6, "0")
         iso_value = f"{year}-{month}-{day}T{hour}:{minute}:{second}.{micros}"
@@ -249,6 +264,10 @@ def _parse_gpx_time(value):
 
 
 def read_gpx(gpx_path, diagnostics=False):
+    """GPXファイルから時刻付きtrkpt/rteptを読み込む。
+
+    標準GPXの `<time>` だけでなく、extensions配下や属性値にある独自時刻も候補として扱う。
+    """
     tree = ET.parse(gpx_path)
     root = tree.getroot()
 
@@ -273,6 +292,7 @@ def read_gpx(gpx_path, diagnostics=False):
             missing_time_count += 1
             continue
 
+        # 候補は複数あり得るため、最初に解釈できた値を採用する。
         time_value = None
         for candidate in candidates:
             time_value = _parse_gpx_time(candidate)
@@ -299,6 +319,7 @@ def read_gpx(gpx_path, diagnostics=False):
 
 
 def haversine(lat1, lon1, lat2, lon2):
+    """2つの緯度経度間の概算距離をメートルで返す。"""
     r = 6371000
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
     dlat = lat2 - lat1
@@ -309,6 +330,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def time_to_frame(seconds, fps, drop_frame=None, rounding="round"):
+    """経過秒を動画フレーム番号へ変換する。"""
     if drop_frame is None:
         drop_frame = is_drop_frame_fps(fps)
 
@@ -322,10 +344,12 @@ def time_to_frame(seconds, fps, drop_frame=None, rounding="round"):
 
 
 def is_drop_frame_fps(fps):
+    """簡易的に30fps近傍をドロップフレーム系FPSとして扱う。"""
     return abs(fps - 30) < 0.03
 
 
 def interpolate_gpx_to_frames(gpx_points, fps):
+    """時刻付きGPX点列をFPS間隔のフレーム位置へ線形補間する。"""
     gpx_points.sort()
     times, lats, lons = zip(*gpx_points)
     times = list(times)
@@ -343,6 +367,7 @@ def interpolate_gpx_to_frames(gpx_points, fps):
 
         steps = int(time_diff * fps)
         for i in range(steps):
+            # GPX点間を直線・等速移動とみなしてフレーム単位の位置を作る。
             fraction = i / (time_diff * fps)
             interpolated_time = times[frame_num] + timedelta(seconds=fraction * time_diff)
             interpolated_lat = lats[frame_num] + fraction * lat_diff

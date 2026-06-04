@@ -1,6 +1,6 @@
 # GPXVideoProcessor Design Notes
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 ## Purpose
 
@@ -39,6 +39,9 @@ GPXVideoProcessor/
 │   ├── static/vendor/krpano/    krpano runtime location
 │   ├── viewer_config.json       Standalone viewer defaults
 │   └── requirements.txt         OpenCV only
+├── docs/
+│   ├── rader_spec.md            Real-scale radar overlay specification
+│   └── yolo_georeference_spec.md Future YOLO-to-georeference specification notes
 ├── metadata.txt                 QGIS plugin metadata
 ├── README.md
 └── DESIGN.md
@@ -66,7 +69,7 @@ The split intentionally avoids excessive fragmentation. QGIS GUI layout and sign
 
 ## Current Status
 
-As of 2026-06-03, the following behavior has been implemented and checked:
+As of 2026-06-04, the following behavior has been implemented and checked:
 
 - Non-standard GPX timestamps can be parsed and interpolated to MP4 frame positions.
 - The video frame number remains the immutable key while a user-defined frame shift is applied.
@@ -76,10 +79,12 @@ As of 2026-06-03, the following behavior has been implemented and checked:
 - The browser swaps frames through krpano `loadpano()` instead of reloading the whole page after the initial load.
 - Frame changes preserve the latest `yaw_to_camera_heading`, `pitch`, and `zoom`.
 - The WEB viewer writes view state to `viewer_session.json`, and QGIS polls it every 500 ms.
-- QGIS draws a temporary radar overlay with a radius circle, field-of-view sector, direction line, and perpendicular line.
+- QGIS draws a temporary radar overlay with fixed-distance range circles, a field-of-view sector, direction line, and perpendicular line.
 - The radar overlay uses `QgsRubberBand`, so it does not take over layer selection or map tools used by feature-registration plugins.
 - Python responsibilities have been split out of `main.py` into processing, viewer control, frame extraction, radar, KP, and helper modules.
 - The plugin panel now uses tabs to separate load/process settings from control/preview operations.
+- Radar heading is estimated from the +/-10 frame movement trajectory instead of GPX direction attributes.
+- Radar sector depth is driven by +/-10 frame travel distance and the UI `Scale` value.
 
 ## Runtime Environment
 
@@ -169,7 +174,7 @@ This tab groups interactive checking and navigation:
 
 - `Frame` number and `Extract`
 - `Click Layer` / `Stop Click`
-- Current frame, navigation mode, normal step, fast step, and radar radius
+- Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `Offset`
 - QGIS preview information
 - QGIS preview image
 - `<<`, `<`, `>`, `>>` navigation buttons
@@ -381,12 +386,79 @@ QGIS polls this file every 500 ms and draws a temporary radar overlay on the map
 
 The overlay includes:
 
-- A radius circle centered on the camera point.
+- Fixed-distance range circles centered on the camera point.
 - A sector that represents the viewer field of view.
 - A direction line.
 - A perpendicular line at the end of the direction line.
 
-The radius is controlled by the plugin panel's `Radar radius` setting. The default is 20 m.
+Radar display separates absolute distance from dynamic distance.
+
+### Absolute Distance
+
+The plugin panel's `Range` value is drawn as a fixed map-distance circle. The default is 5 m.
+
+Drawn circles:
+
+- `Range`
+- `Range * 2`
+
+With the default value, QGIS draws 5 m and 10 m range circles. These circles are only visual distance references.
+
+### Dynamic Distance
+
+The sector, direction line, and perpendicular end marker use the +/-10 frame travel distance:
+
+```text
+sector_radius_m = distance_m * Scale
+```
+
+The default `Scale` is `1.0`. Faster movement produces a deeper sector, while near-stationary movement produces a shorter sector.
+
+### Bearing Offset
+
+If the visual front of a 360 video does not match the travel direction, the plugin panel's `Offset` can correct the radar bearing.
+
+`Offset` means how many clockwise degrees the visual front of the video is rotated from the travel direction estimated from the movement trajectory.
+
+Available values:
+
+- `0deg`
+- `90deg`
+- `180deg`
+- `270deg`
+
+If future source videos guarantee that the visual front is the travel direction, `0deg` should be the standard setting.
+
+### Heading Calculation
+
+For target frame `i`, the plugin uses positions from `i - 10` and `i + 10` where possible. Latitude/longitude deltas are converted to local meter offsets:
+
+```text
+dx = east_m
+dy = north_m
+heading = (atan2(dx, dy) * 180 / pi + 360) % 360
+```
+
+`heading` is a GIS bearing where north is 0 degrees and angles increase clockwise.
+
+Near the beginning/end of the frame range, the plugin falls back to the best available before/after or center-to-side vector.
+
+### Fallbacks
+
+To keep the radar stable when GNSS positions jump or the camera is nearly stationary:
+
+- If heading changes by more than 45 degrees from the previous heading during nearby-frame updates, the previous heading is kept.
+- If +/-10 frame travel distance is less than 0.5 m, the previous heading is kept.
+- Sector depth is clamped to at least 1.0 m so the radar does not disappear when stationary.
+- When the user jumps to a distant frame by map click/navigation, the previous-heading clamp is not applied.
+
+### Viewer Bearing and FOV
+
+The viewer's `yaw_to_camera_heading` is treated as a clockwise relative angle from the visual front of the video to the current view direction:
+
+```text
+viewer_bearing = (heading + Offset + yaw_to_camera_heading) % 360
+```
 
 The field of view is derived from viewer `zoom`:
 
@@ -394,19 +466,9 @@ The field of view is derived from viewer `zoom`:
 fov = 90 / zoom
 ```
 
+FOV only controls sector width. It does not control sector depth.
+
 When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
-
-`yaw_to_camera_heading` is currently treated as a map bearing. If the clicked feature has one of `camera_heading`, `heading`, `direction`, `bearing`, `azimuth`, or `yaw`, that value is used as the camera heading offset:
-
-```text
-map_bearing = camera_heading + yaw_to_camera_heading
-```
-
-If no heading attribute exists:
-
-```text
-map_bearing = yaw_to_camera_heading
-```
 
 ### `images/frames_******.jpg`
 
@@ -496,9 +558,8 @@ Further tuning options:
 
 Planned or likely next steps:
 
-- Derive `direction` from neighboring frames or the movement trajectory instead of relying only on attributes.
-- Make the relationship between radar radius, viewer `zoom`, field of view, and map distance more realistic.
-- Tune `camera_heading` / `direction` source fields against real operation data.
+- Tune `yaw_to_camera_heading` bearing conversion, `Range`, `Scale`, and `Offset` defaults against real operation data.
+- Consider adding a maximum sector depth clamp for high-speed sections.
 - Add radar overlay visibility, color, and opacity settings.
 - Add a dedicated Exporter for full-resolution evidence image export.
 - Add OpenCV/ffmpeg frame identity tests using raw pixel hashes.

@@ -1,3 +1,5 @@
+"""GPXと動画メタ情報から、動画フレーム単位の撮影位置を生成するworker。"""
+
 from qgis.PyQt.QtCore import QThread, pyqtSignal
 
 from .TenkakuNinja.geo_util import (
@@ -8,17 +10,21 @@ from .TenkakuNinja.geo_util import (
 
 
 class GPXVideoProcessor(QThread):
+    """重いGPX/動画同期処理をQGIS UIスレッドから分離して実行する。"""
+
     progress = pyqtSignal(int)
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
     def __init__(self, gpx_path, video_path, frame_shift=0):
+        """入力GPX/動画とフレームシフト量を保持する。"""
         super().__init__()
         self.gpx_path = gpx_path
         self.video_path = video_path
         self.frame_shift = frame_shift
 
     def run(self):
+        """GPX点を動画FPSへ補間し、フレーム位置行を生成する。"""
         print("GPXVideoProcessor: run() called")
         try:
             try:
@@ -60,6 +66,7 @@ class GPXVideoProcessor(QThread):
                 self.error.emit("No interpolated GPX points were generated.")
                 return
 
+            # 補間結果はsource_frame基準で辞書化し、動画全フレームへシフト適用する。
             source_by_frame = {}
             start_time = interpolated_gpx[0][0]
             for time_value, lat, lon in interpolated_gpx:
@@ -79,6 +86,7 @@ class GPXVideoProcessor(QThread):
                     time_value, lat, lon = source_row
                     rows.append((frame_num, source_frame, time_value, lat, lon))
 
+                # 大容量動画ではシグナル頻度を抑え、QGIS UIの負荷を避ける。
                 if frame_num % 1000 == 0 or frame_num == total_frames - 1:
                     self.progress.emit(int(((frame_num + 1) / total) * 100))
 

@@ -1,3 +1,5 @@
+"""WEBビューアの視点状態をQGIS地図上の実寸レーダとして描画する。"""
+
 import json
 import math
 import os
@@ -17,8 +19,17 @@ from qgis.gui import QgsRubberBand
 from .common import _parse_float
 
 
+RADAR_TRAJECTORY_WINDOW_FRAMES = 10
+RADAR_HEADING_JUMP_THRESHOLD_DEG = 45.0
+RADAR_MIN_DISTANCE_M = 0.5
+RADAR_MIN_SECTOR_RADIUS_M = 1.0
+
+
 class RadarMixin:
+    """viewer_session.jsonを監視し、撮影点周辺へ一時レーダを描くMixin。"""
+
     def startViewerSessionPolling(self):
+        """WEBビューア状態JSONの定期監視を開始する。"""
         if self.viewer_session_timer is None:
             self.viewer_session_timer = QTimer(self)
             self.viewer_session_timer.timeout.connect(self.pollViewerSession)
@@ -26,10 +37,12 @@ class RadarMixin:
             self.viewer_session_timer.start(500)
 
     def stopViewerSessionPolling(self):
+        """WEBビューア状態JSONの定期監視を停止する。"""
         if self.viewer_session_timer is not None and self.viewer_session_timer.isActive():
             self.viewer_session_timer.stop()
 
     def pollViewerSession(self):
+        """viewer_session.jsonを読み、変化がある場合だけレーダを更新する。"""
         path = self.viewerSessionPath()
         if not os.path.isfile(path):
             return
@@ -50,12 +63,18 @@ class RadarMixin:
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         pitch = _parse_float(state.get("pitch"))
         zoom = _parse_float(state.get("zoom"))
+        radar_radius = getattr(self, "radar_radius", None)
+        range_m = float(radar_radius.value()) if radar_radius is not None else 0.0
+        # 同じ状態を繰り返し描画しないため、表示に関係する値だけで署名を作る。
         signature = (
             state.get("video"),
             frame_index,
             round(yaw or 0.0, 3),
             round(pitch or 0.0, 3),
             round(zoom or 1.0, 3),
+            round(range_m, 3),
+            round(self.radarScaleValue(), 3),
+            round(self.radarBearingOffsetValue(), 3),
             state.get("updated_at"),
         )
         if signature == self.last_viewer_session_signature:
@@ -68,19 +87,30 @@ class RadarMixin:
             print(f"Viewer radar update failed: {e}")
 
     def sessionFrameIndex(self, state):
+        """ビューア状態から整数フレーム番号を取り出す。"""
         value = _parse_float(state.get("frame_index"))
         if value is None:
             return None
         return int(value)
 
-    def framePosition(self, frame_num):
-        feature = self.findFeatureByFrame(frame_num)
-        if feature is not None:
-            gps = self.featureGps(feature)
-            if gps:
-                return gps["lat"], gps["lon"], feature
+    def framePosition(self, frame_num, prefer_feature=True):
+        """フレーム番号に対応する緯度経度を取得する。
 
+        通常描画はクリック地物を優先し、軌跡計算では処理済みキャッシュを優先する。
+        """
         target = int(frame_num)
+        if prefer_feature:
+            feature = self.findFeatureByFrame(target)
+            if feature is not None:
+                gps = self.featureGps(feature)
+                if gps:
+                    return gps["lat"], gps["lon"], feature
+
+        cached_position = getattr(self, "frame_position_by_frame", {}).get(target)
+        if cached_position is not None:
+            lat, lon = cached_position
+            return lat, lon, None
+
         for row in self.last_rows:
             try:
                 frame_value, _source_frame, _time_value, lat, lon = row
@@ -91,32 +121,21 @@ class RadarMixin:
 
         return None, None, None
 
-    def cameraHeadingForFeature(self, feature):
-        if feature is None:
-            return None
-
-        for field_name in ("camera_heading", "heading", "direction", "bearing", "azimuth", "yaw"):
-            if feature.fields().indexFromName(field_name) < 0:
-                continue
-            value = _parse_float(feature[field_name])
-            if value is not None:
-                return value % 360.0
-        return None
-
-    def viewerBearing(self, state, feature=None):
+    def viewerBearing(self, heading, state):
+        """移動軌跡heading、ビューアyaw、動画固有offsetから地図上の視線方位を求める。"""
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         yaw = (yaw or 0.0) % 360.0
-        camera_heading = self.cameraHeadingForFeature(feature)
-        if camera_heading is None:
-            return yaw
-        return (camera_heading + yaw) % 360.0
+        # yawは動画正面からのビューア相対角として扱う。
+        return (heading + self.radarBearingOffsetValue() + yaw) % 360.0
 
     def viewerFov(self, state):
+        """ビューアzoomから扇形の水平視野角を求める。"""
         zoom = _parse_float(state.get("zoom"))
         zoom = max(zoom or 1.0, 0.01)
         return max(1.0, min(179.0, 90.0 / zoom))
 
     def destinationPoint(self, lat, lon, bearing_deg, distance_m):
+        """緯度経度から指定方位・距離だけ進んだWGS84上の点を返す。"""
         earth_radius_m = 6378137.0
         bearing = math.radians(float(bearing_deg))
         angular_distance = float(distance_m) / earth_radius_m
@@ -134,6 +153,7 @@ class RadarMixin:
         return QgsPointXY(math.degrees(lon2), math.degrees(lat2))
 
     def canvasPoint(self, lon, lat):
+        """EPSG:4326の点を現在のQGIS canvas CRSへ変換する。"""
         canvas = self.iface.mapCanvas()
         source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
         dest_crs = canvas.mapSettings().destinationCrs()
@@ -148,7 +168,117 @@ class RadarMixin:
         )
         return transform.transform(point)
 
+    def localVectorMeters(self, lat1, lon1, lat2, lon2):
+        """短距離前提で緯度経度差を東西dx・南北dyのメートル差へ近似変換する。"""
+        earth_radius_m = 6378137.0
+        mean_lat = math.radians((float(lat1) + float(lat2)) / 2.0)
+        dx = math.radians(float(lon2) - float(lon1)) * earth_radius_m * math.cos(mean_lat)
+        dy = math.radians(float(lat2) - float(lat1)) * earth_radius_m
+        return dx, dy
+
+    def headingFromVector(self, dx, dy):
+        """東西dx・南北dyから、北0度・時計回りのheadingを算出する。"""
+        return (math.degrees(math.atan2(dx, dy)) + 360.0) % 360.0
+
+    def headingDelta(self, heading_a, heading_b):
+        """0/360度境界をまたいでも最小角度差としてheading差を返す。"""
+        return abs((float(heading_a) - float(heading_b) + 180.0) % 360.0 - 180.0)
+
+    def radarScaleValue(self):
+        """UIのScale値を取得する。古いUI状態では安全な既定値を返す。"""
+        radar_scale = getattr(self, "radar_scale", None)
+        if radar_scale is None:
+            return 1.0
+        return max(0.1, float(radar_scale.value()))
+
+    def radarBearingOffsetValue(self):
+        """動画の正面方向ずれを補正する時計回りoffset角を取得する。"""
+        radar_offset = getattr(self, "radar_offset", None)
+        if radar_offset is None:
+            return 0.0
+        return float(radar_offset.currentData() or 0.0)
+
+    def trajectoryHeadingAndDistance(self, frame_index):
+        """対象フレーム前後の軌跡からheadingと移動距離を求める。"""
+        frame_index = int(frame_index)
+        prefer_feature_lookup = not bool(getattr(self, "frame_position_by_frame", {})) and not bool(self.last_rows)
+        center = self.framePosition(frame_index, prefer_feature=prefer_feature_lookup)
+        has_center = center[0] is not None and center[1] is not None
+
+        # まずは仕様通り、前後がそろう最大offsetを使う。
+        for offset in range(RADAR_TRAJECTORY_WINDOW_FRAMES, 0, -1):
+            before = self.framePosition(frame_index - offset, prefer_feature=prefer_feature_lookup)
+            after = self.framePosition(frame_index + offset, prefer_feature=prefer_feature_lookup)
+            if before[0] is None or before[1] is None or after[0] is None or after[1] is None:
+                continue
+
+            dx, dy = self.localVectorMeters(before[0], before[1], after[0], after[1])
+            distance_m = math.hypot(dx, dy)
+            return self.headingFromVector(dx, dy), distance_m
+
+        if not has_center:
+            return None, None
+
+        # 端部では中心から片側だけを使い、方向が完全に欠落することを避ける。
+        center_lat, center_lon, _feature = center
+        for offset in range(RADAR_TRAJECTORY_WINDOW_FRAMES, 0, -1):
+            after = self.framePosition(frame_index + offset, prefer_feature=prefer_feature_lookup)
+            if after[0] is not None and after[1] is not None:
+                dx, dy = self.localVectorMeters(center_lat, center_lon, after[0], after[1])
+                distance_m = math.hypot(dx, dy)
+                return self.headingFromVector(dx, dy), distance_m
+
+            before = self.framePosition(frame_index - offset, prefer_feature=prefer_feature_lookup)
+            if before[0] is not None and before[1] is not None:
+                dx, dy = self.localVectorMeters(before[0], before[1], center_lat, center_lon)
+                distance_m = math.hypot(dx, dy)
+                return self.headingFromVector(dx, dy), distance_m
+
+        return None, None
+
+    def radarHeadingAndRadius(self, frame_index):
+        """フォールバックを含めた最終headingと扇形奥行きを決定する。"""
+        frame_index = int(frame_index)
+        computed_heading, distance_m = self.trajectoryHeadingAndDistance(frame_index)
+        previous_heading = getattr(self, "last_radar_heading", None)
+        previous_frame_index = getattr(self, "last_radar_frame_index", None)
+        frame_is_near_previous = (
+            previous_frame_index is not None
+            and abs(frame_index - int(previous_frame_index)) <= RADAR_TRAJECTORY_WINDOW_FRAMES
+        )
+
+        if computed_heading is None or distance_m is None:
+            heading = previous_heading if previous_heading is not None else 0.0
+            radius_m = getattr(self, "last_radar_sector_radius_m", None) or RADAR_MIN_SECTOR_RADIUS_M
+            self.last_radar_heading = heading
+            self.last_radar_sector_radius_m = radius_m
+            self.last_radar_frame_index = frame_index
+            return heading, radius_m
+
+        heading = computed_heading
+        radius_m = distance_m * self.radarScaleValue()
+
+        # 離れたフレームへジャンプした場合は、本当に方向が変わった可能性が高い。
+        heading_is_unstable = (
+            frame_is_near_previous
+            and previous_heading is not None
+            and self.headingDelta(computed_heading, previous_heading) > RADAR_HEADING_JUMP_THRESHOLD_DEG
+        )
+        distance_is_too_small = distance_m < RADAR_MIN_DISTANCE_M
+
+        if (heading_is_unstable or distance_is_too_small) and previous_heading is not None:
+            heading = previous_heading
+
+        if heading_is_unstable or distance_is_too_small:
+            radius_m = max(radius_m, RADAR_MIN_SECTOR_RADIUS_M)
+
+        self.last_radar_heading = heading
+        self.last_radar_sector_radius_m = radius_m
+        self.last_radar_frame_index = frame_index
+        return heading, radius_m
+
     def ensureRadarBands(self):
+        """レーダ描画用のRubberBandを必要に応じて生成する。"""
         canvas = self.iface.mapCanvas()
         if self.radar_sector_band is None:
             self.radar_sector_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
@@ -161,8 +291,15 @@ class RadarMixin:
             self.radar_circle_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
             self.radar_circle_band.setColor(QtGui.QColor(0, 190, 255, 190))
             if hasattr(self.radar_circle_band, "setFillColor"):
-                self.radar_circle_band.setFillColor(QtGui.QColor(0, 190, 255, 20))
+                self.radar_circle_band.setFillColor(QtGui.QColor(0, 190, 255, 0))
             self.radar_circle_band.setWidth(1)
+
+        if self.radar_outer_circle_band is None:
+            self.radar_outer_circle_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_outer_circle_band.setColor(QtGui.QColor(0, 130, 255, 160))
+            if hasattr(self.radar_outer_circle_band, "setFillColor"):
+                self.radar_outer_circle_band.setFillColor(QtGui.QColor(0, 130, 255, 0))
+            self.radar_outer_circle_band.setWidth(1)
 
         if self.radar_direction_band is None:
             self.radar_direction_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
@@ -175,16 +312,19 @@ class RadarMixin:
             self.radar_perpendicular_band.setWidth(2)
 
     def setRadarPolygon(self, rubber_band, points):
+        """WGS84点列をcanvas CRSへ変換し、ポリゴンRubberBandへ反映する。"""
         transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
         rubber_band.setToGeometry(QgsGeometry.fromPolygonXY([transformed]), None)
         rubber_band.show()
 
     def setRadarLine(self, rubber_band, points):
+        """WGS84点列をcanvas CRSへ変換し、ラインRubberBandへ反映する。"""
         transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
         rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(transformed), None)
         rubber_band.show()
 
     def renderViewerRadar(self, state):
+        """ビューア状態をもとに同心円・扇形・方向線を再描画する。"""
         frame_index = self.sessionFrameIndex(state)
         if frame_index is None:
             return
@@ -195,13 +335,20 @@ class RadarMixin:
             return
 
         self.setCurrentFrame(frame_index)
-        radius_m = float(self.radar_radius.value())
-        bearing = self.viewerBearing(state, feature=feature)
+        fixed_radius_m = float(self.radar_radius.value())
+        outer_radius_m = fixed_radius_m * 2.0
+        heading, sector_radius_m = self.radarHeadingAndRadius(frame_index)
+        bearing = self.viewerBearing(heading, state)
         fov = self.viewerFov(state)
         center = QgsPointXY(float(lon), float(lat))
 
+        # Rangeは絶対距離の基準線。扇形の奥行きとは別扱いにする。
         circle_points = [
-            self.destinationPoint(lat, lon, angle, radius_m)
+            self.destinationPoint(lat, lon, angle, fixed_radius_m)
+            for angle in range(0, 361, 8)
+        ]
+        outer_circle_points = [
+            self.destinationPoint(lat, lon, angle, outer_radius_m)
             for angle in range(0, 361, 8)
         ]
 
@@ -212,12 +359,12 @@ class RadarMixin:
         for index in range(segment_count + 1):
             ratio = index / float(segment_count)
             angle = start_angle + (end_angle - start_angle) * ratio
-            sector_points.append(self.destinationPoint(lat, lon, angle, radius_m))
+            sector_points.append(self.destinationPoint(lat, lon, angle, sector_radius_m))
         sector_points.append(center)
 
-        direction_end = self.destinationPoint(lat, lon, bearing, radius_m)
-        perpendicular_center = self.destinationPoint(lat, lon, bearing, radius_m)
-        perpendicular_half_m = radius_m * 0.3
+        direction_end = self.destinationPoint(lat, lon, bearing, sector_radius_m)
+        perpendicular_center = self.destinationPoint(lat, lon, bearing, sector_radius_m)
+        perpendicular_half_m = sector_radius_m * 0.3
         perpendicular_start = self.destinationPoint(
             perpendicular_center.y(),
             perpendicular_center.x(),
@@ -233,14 +380,17 @@ class RadarMixin:
 
         self.ensureRadarBands()
         self.setRadarPolygon(self.radar_circle_band, circle_points)
+        self.setRadarPolygon(self.radar_outer_circle_band, outer_circle_points)
         self.setRadarPolygon(self.radar_sector_band, sector_points)
         self.setRadarLine(self.radar_direction_band, [center, direction_end])
         self.setRadarLine(self.radar_perpendicular_band, [perpendicular_start, perpendicular_end])
 
     def clearRadar(self):
+        """地図上のレーダRubberBandと前回値をすべて破棄する。"""
         canvas = self.iface.mapCanvas()
         for attr_name in (
             "radar_circle_band",
+            "radar_outer_circle_band",
             "radar_sector_band",
             "radar_direction_band",
             "radar_perpendicular_band",
@@ -253,3 +403,6 @@ class RadarMixin:
                     pass
                 setattr(self, attr_name, None)
         self.last_viewer_session_signature = None
+        self.last_radar_heading = None
+        self.last_radar_sector_radius_m = None
+        self.last_radar_frame_index = None
