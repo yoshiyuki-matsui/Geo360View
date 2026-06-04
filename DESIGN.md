@@ -28,9 +28,14 @@ GPXVideoProcessor/
 ├── frame_extract.py             Frame extraction, EXIF writing, and QGIS preview display
 ├── map_tools.py                 QGIS map-click tool
 ├── radar.py                     viewer_session.json polling and radar overlay drawing
+├── exporter.py                  TenkakuNinja Exporter compatibility CLI wrapper
 ├── kp.py                        KP CSV reader and nearest-neighbor matching
 ├── exif_utils.py                JPEG EXIF helpers
 ├── TenkakuNinja/
+│   ├── main.py                  Standalone Exporter CLI entry point
+│   ├── exporter.py              GeoPackage-filtered evidence frame exporter
+│   ├── requirements.txt         Standalone Exporter dependencies
+│   ├── README.md                Standalone Exporter usage
 │   └── geo_util.py              GPX parsing and frame interpolation helpers
 ├── 360viewer/
 │   ├── app.py                   Local HTTP 360 viewer, standard library server
@@ -40,6 +45,7 @@ GPXVideoProcessor/
 │   ├── viewer_config.json       Standalone viewer defaults
 │   └── requirements.txt         OpenCV only
 ├── docs/
+│   ├── exporter_spec.md         Frame image exporter specification
 │   ├── rader_spec.md            Real-scale radar overlay specification
 │   └── yolo_georeference_spec.md Future YOLO-to-georeference specification notes
 ├── metadata.txt                 QGIS plugin metadata
@@ -470,9 +476,11 @@ FOV only controls sector width. It does not control sector depth.
 
 When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
 
-### `images/frames_******.jpg`
+### `images/0000/frame_0000000.jpg`
 
 QGIS preview cache. These images are saved with minimal EXIF metadata.
+
+The QGIS preview cache uses the same 1000-frame subfolder rule and `frame_{frame:07d}.jpg` naming as the Exporter. The `image_path` column in `*_frames.csv` and `*_matched_frames.csv` stores this hierarchical path relative to each CSV file. In the all-frame CSV, `image_path` also represents the planned Exporter location for frames that have not yet been extracted on demand.
 
 When created from a clicked QGIS point, GPS EXIF fields are added where latitude/longitude can be resolved.
 

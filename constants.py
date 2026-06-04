@@ -9,3 +9,5 @@ KP_FIELDS = ("kp", "kilopost", "kilo_post", "name", "id", "point", "測点", "�
 FRAMES_CSV_SUFFIX = "_frames.csv"
 MATCHED_FRAMES_CSV_SUFFIX = "_matched_frames.csv"
 NAVIGATION_JSON_SUFFIX = "_navigation.json"
+
+FRAME_IMAGE_FOLDER_SIZE = 1000

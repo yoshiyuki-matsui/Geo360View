@@ -7,6 +7,8 @@ import unicodedata
 
 from qgis.PyQt.QtCore import QDate, QDateTime, QTime, Qt
 
+from .constants import FRAME_IMAGE_FOLDER_SIZE
+
 
 def _utc_time_spec():
     """QGIS/PyQtのバージョン差を吸収してUTC指定値を返す。"""
@@ -44,8 +46,29 @@ def _base_output_name(video_path, gpx_path):
 
 
 def _frame_image_name(frame_num):
-    """QGIS側プレビュー画像の固定ファイル名を返す。"""
-    return f"frames_{frame_num:06d}.jpg"
+    """Exporter互換のフレームJPEGファイル名を返す。"""
+    return f"frame_{int(frame_num):07d}.jpg"
+
+
+def _frame_image_folder(frame_num, frames_per_folder=FRAME_IMAGE_FOLDER_SIZE):
+    """フレーム番号からExporter互換の1000件単位サブフォルダ名を返す。"""
+    return f"{int(frame_num) // int(frames_per_folder):04d}"
+
+
+def _frame_image_relative_path(frame_num, frames_per_folder=FRAME_IMAGE_FOLDER_SIZE):
+    """images配下で使うExporter互換の相対パスをOS区切りで返す。"""
+    return os.path.join(
+        _frame_image_folder(frame_num, frames_per_folder),
+        _frame_image_name(frame_num)
+    )
+
+
+def _frame_image_relative_posix(frame_num, frames_per_folder=FRAME_IMAGE_FOLDER_SIZE):
+    """CSV/JSONへ記録するExporter互換の相対パスをスラッシュ区切りで返す。"""
+    return "/".join((
+        _frame_image_folder(frame_num, frames_per_folder),
+        _frame_image_name(frame_num),
+    ))
 
 
 def _normalize_field_name(value):

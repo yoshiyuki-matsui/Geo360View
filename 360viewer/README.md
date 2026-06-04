@@ -65,14 +65,14 @@ This prototype includes a small generated `abc.mp4` for endpoint testing. Regene
 python make_sample_video.py
 ```
 
-`abc_matched_frames.csv` contains only the frames that the viewer can move to:
+`abc_matched_frames.csv` contains only the frames that the viewer can move to. `image_path` is optional and is used by downstream exported-image workflows; Prev/Next navigation only requires `frame_index`.
 
 ```csv
-frame_index
-1200
-1234
-1290
-1400
+frame_index,image_path
+1200,images/0001/frame_0001200.jpg
+1234,images/0001/frame_0001234.jpg
+1290,images/0001/frame_0001290.jpg
+1400,images/0001/frame_0001400.jpg
 ```
 
 ## Configuration

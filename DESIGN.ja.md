@@ -28,9 +28,14 @@ GPXVideoProcessor/
 ├── frame_extract.py             静止画抽出・EXIF付与・QGISプレビュー表示
 ├── map_tools.py                 地図クリック用MapTool
 ├── radar.py                     viewer_session.json監視とレーダ描画
+├── exporter.py                  TenkakuNinja Exporter互換CLIラッパー
 ├── kp.py                        KP CSV読込・最近接マッチング
 ├── exif_utils.py                JPEG EXIF生成
 ├── TenkakuNinja/
+│   ├── main.py                  単体Exporter CLI入口
+│   ├── exporter.py              GeoPackage条件指定型の証跡フレームExporter
+│   ├── requirements.txt         単体Exporter用依存関係
+│   ├── README.md                単体Exporter利用方法
 │   └── geo_util.py              GPX読込・補間処理
 ├── 360viewer/
 │   ├── app.py                   ローカルHTTPビューア
@@ -40,6 +45,7 @@ GPXVideoProcessor/
 │   ├── viewer_config.json       ビューア既定設定
 │   └── requirements.txt         OpenCVのみ
 ├── docs/
+│   ├── exporter_spec.md         フレーム画像Exporter仕様
 │   ├── rader_spec.md            レーダ表示の実寸準拠仕様
 │   └── yolo_georeference_spec.md YOLO検出結果の緯度経度化 将来仕様メモ
 ├── metadata.txt                 QGISプラグイン定義
@@ -475,9 +481,11 @@ FOVは扇形の広がりにのみ使います。扇形の奥行きには使い�
 
 画像を別フレームへ切り替える場合、WEBビューアは切替直前の `yaw_to_camera_heading`, `pitch`, `zoom` を新しいフレームへ継承します。
 
-### `images/frames_******.jpg`
+### `images/0000/frame_0000000.jpg`
 
 QGIS側プレビュー画像です。
+
+Exporterと同じく、1000フレームごとのサブフォルダと `frame_{frame:07d}.jpg` の命名規則で保存します。`*_frames.csv` と `*_matched_frames.csv` の `image_path` 列も、この階層付きパスをCSVからの相対パスとして記録します。全フレームCSVの `image_path` は、未抽出フレームでもExporterが生成する予定位置を示します。
 
 クリックした地物から緯度経度を取得できる場合、GPS EXIFも付与します。これは確認用キャッシュであり、最終証跡画像ではありません。
 

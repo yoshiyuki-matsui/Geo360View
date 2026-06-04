@@ -106,9 +106,11 @@ class FrameExtractMixin:
         self.setCurrentFrame(frame_num)
         image_dir = self.imagesDir()
         image_path = self.frameImagePath(frame_num)
+        image_parent_dir = os.path.dirname(image_path)
 
         try:
             os.makedirs(image_dir, exist_ok=True)
+            os.makedirs(image_parent_dir, exist_ok=True)
         except OSError as e:
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to create images directory: {e}")
             return

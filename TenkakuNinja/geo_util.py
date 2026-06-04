@@ -334,11 +334,12 @@ def time_to_frame(seconds, fps, drop_frame=None, rounding="round"):
     if drop_frame is None:
         drop_frame = is_drop_frame_fps(fps)
 
-    frame_num = round(seconds * fps)
     if rounding == "floor":
-        frame_num = math.floor(frame_num)
+        frame_num = math.floor(seconds * fps)
     elif rounding == "ceil":
-        frame_num = math.ceil(frame_num)
+        frame_num = math.ceil(seconds * fps)
+    else:
+        frame_num = round(seconds * fps)
 
     return int(frame_num)
 
@@ -355,23 +356,27 @@ def interpolate_gpx_to_frames(gpx_points, fps):
     times = list(times)
     lats = list(lats)
     lons = list(lons)
+    start_time = times[0]
 
     interpolated = []
-    for frame_num in range(len(times) - 1):
-        time_diff = (times[frame_num + 1] - times[frame_num]).total_seconds()
+    for point_index in range(len(times) - 1):
+        time_diff = (times[point_index + 1] - times[point_index]).total_seconds()
         if time_diff <= 0:
             continue
 
-        lat_diff = lats[frame_num + 1] - lats[frame_num]
-        lon_diff = lons[frame_num + 1] - lons[frame_num]
+        lat_diff = lats[point_index + 1] - lats[point_index]
+        lon_diff = lons[point_index + 1] - lons[point_index]
+        start_frame = time_to_frame((times[point_index] - start_time).total_seconds(), fps)
+        end_frame = time_to_frame((times[point_index + 1] - start_time).total_seconds(), fps)
 
-        steps = int(time_diff * fps)
-        for i in range(steps):
-            # GPX点間を直線・等速移動とみなしてフレーム単位の位置を作る。
-            fraction = i / (time_diff * fps)
-            interpolated_time = times[frame_num] + timedelta(seconds=fraction * time_diff)
-            interpolated_lat = lats[frame_num] + fraction * lat_diff
-            interpolated_lon = lons[frame_num] + fraction * lon_diff
+        for source_frame in range(start_frame, end_frame):
+            # 29.97fpsで1秒区間をint(time_diff * fps)にすると毎秒1フレーム落ちる。
+            # フレーム番号範囲から逆算して補間し、DB側の欠番を発生させない。
+            interpolated_time = start_time + timedelta(seconds=source_frame / fps)
+            fraction = (interpolated_time - times[point_index]).total_seconds() / time_diff
+            fraction = max(0.0, min(1.0, fraction))
+            interpolated_lat = lats[point_index] + fraction * lat_diff
+            interpolated_lon = lons[point_index] + fraction * lon_diff
             interpolated.append((interpolated_time, interpolated_lat, interpolated_lon))
 
     return interpolated

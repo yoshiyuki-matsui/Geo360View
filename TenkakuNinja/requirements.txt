@@ -1,0 +1,3 @@
+# Standalone TenkakuNinja Exporter dependencies.
+# This file is intentionally separate from the QGIS plugin runtime.
+opencv-python>=4.8,<5

@@ -22,7 +22,8 @@ from .common import (
     _base_output_name,
     _format_distance,
     _format_timestamp,
-    _frame_image_name,
+    _frame_image_relative_path,
+    _frame_image_relative_posix,
     _open_csv_dict_reader,
     _parse_float,
     _safe_gpkg_layer_name,
@@ -446,7 +447,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def frameImagePath(self, frame_num):
         """指定フレームのQGIS側プレビューJPEGパスを返す。"""
-        return os.path.join(self.imagesDir(), _frame_image_name(frame_num))
+        return os.path.join(self.imagesDir(), _frame_image_relative_path(frame_num))
+
+    def frameImageRelativePath(self, frame_num, base_dir=None):
+        """CSV/JSONから参照するフレームJPEGの相対パスを返す。"""
+        if base_dir:
+            try:
+                relative_path = os.path.relpath(self.frameImagePath(frame_num), base_dir)
+                return relative_path.replace(os.sep, "/").replace("\\", "/")
+            except ValueError:
+                return self.frameImagePath(frame_num).replace(os.sep, "/").replace("\\", "/")
+        return f"images/{_frame_image_relative_posix(frame_num)}"
 
     def setCurrentFrame(self, frame_num):
         """現在フレーム状態とUI表示を同期する。"""
@@ -902,6 +913,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.frame_position_by_frame[int(frame_num)] = (float(lat), float(lon))
 
         if rows:
+            matches, match_count, match_error = self.resolveKpMatches(rows)
+            if match_error:
+                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to match KP CSV: {match_error}")
+
             # 生成レイヤは一時メモリレイヤ。Exit時にtmp.gpkgへ保存してから削除する。
             layer = QgsVectorLayer("Point?crs=EPSG:4326", "Video GPX Points", "memory")
             pr = layer.dataProvider()
@@ -912,12 +927,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 QgsField("frame_shift", QVariant.Int),
                 QgsField("timestamp", QVariant.DateTime),
                 QgsField("latitude", QVariant.Double),
-                QgsField("longitude", QVariant.Double)
+                QgsField("longitude", QVariant.Double),
+                QgsField("aligned_latitude", QVariant.Double),
+                QgsField("aligned_longitude", QVariant.Double),
+                QgsField("kp", QVariant.String),
+                QgsField("kp_distance_m", QVariant.Double),
+                QgsField("kp_latitude", QVariant.Double),
+                QgsField("kp_longitude", QVariant.Double),
+                QgsField("kp_match", QVariant.Int),
             ])
             layer.updateFields()
 
             features = []
-            for frame_num, source_frame, time, lat, lon in rows:
+            for row_index, (frame_num, source_frame, time, lat, lon) in enumerate(rows):
+                match = matches[row_index]
+                aligned_lat = match["lat"] if match else lat
+                aligned_lon = match["lon"] if match else lon
                 feat = QgsFeature(layer.fields())
                 feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
                 feat.setAttributes([
@@ -926,7 +951,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     self.frame_shift.value(),
                     _to_qdatetime(time),
                     lat,
-                    lon
+                    lon,
+                    aligned_lat,
+                    aligned_lon,
+                    match["kp"] if match else "",
+                    round(match["distance_m"], 3) if match else None,
+                    match["lat"] if match else None,
+                    match["lon"] if match else None,
+                    1 if match else 0,
                 ])
                 features.append(feat)
 
@@ -936,7 +968,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.created_layer_ids.append(layer.id())
             print("Layer added successfully.")
             self.iface.messageBar().pushMessage(PLUGIN_TITLE, "Layer added successfully.")
-            self.exportFrameData(rows)
+            self.exportFrameData(rows, matches=matches, match_count=match_count)
         else:
             print("No rows. Could not add layer.")
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No rows. Could not add layer.")
@@ -945,7 +977,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """現在UIのKPファイル/許容距離を使ってKPマッチングを実行する。"""
         return build_kp_matches(rows, self.kp_file, self.kp_tolerance.value())
 
-    def exportFrameData(self, rows):
+    def resolveKpMatches(self, rows):
+        """KPマッチングを安全に実行し、レイヤ属性とCSV出力で共有する。"""
+        try:
+            matches, match_count = self.buildKpMatches(rows)
+            return matches, match_count, None
+        except Exception as e:
+            return [None] * len(rows), 0, str(e)
+
+    def exportFrameData(self, rows, matches=None, match_count=None):
         """全フレーム同期CSV、KPナビゲーションJSON/CSVを出力する。"""
         output_dir = self.resolvedOutputDir()
         try:
@@ -967,17 +1007,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if video_dir_matched_csv not in matched_csv_paths:
                 matched_csv_paths.append(video_dir_matched_csv)
 
-        try:
-            matches, match_count = self.buildKpMatches(rows)
-        except Exception as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to match KP CSV: {e}")
-            matches = [None] * len(rows)
-            match_count = 0
+        if matches is None or match_count is None:
+            matches, match_count, match_error = self.resolveKpMatches(rows)
+            if match_error:
+                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to match KP CSV: {match_error}")
 
         fieldnames = [
             "frame",
             "source_frame",
             "frame_shift",
+            "image_path",
             "timestamp",
             "latitude",
             "longitude",
@@ -1001,11 +1040,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     match = matches[row_index]
                     aligned_lat = match["lat"] if match else lat
                     aligned_lon = match["lon"] if match else lon
+                    image_path = self.frameImageRelativePath(frame_num, output_dir)
 
                     writer.writerow({
                         "frame": frame_num,
                         "source_frame": source_frame,
                         "frame_shift": frame_shift,
+                        "image_path": image_path,
                         "timestamp": _format_timestamp(time),
                         "latitude": f"{lat:.9f}",
                         "longitude": f"{lon:.9f}",
@@ -1025,6 +1066,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                             "frame": frame_num,
                             "source_frame": source_frame,
                             "frame_shift": frame_shift,
+                            "image_path": image_path,
                             "timestamp": _format_timestamp(time),
                             "kp": match["kp"],
                             "kp_distance_m": round(match["distance_m"], 3),
@@ -1061,6 +1103,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     "frame_index",
                     "frame",
                     "source_frame",
+                    "image_path",
                     "kp",
                     "kp_distance_m",
                     "latitude",
@@ -1075,6 +1118,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                                 "frame_index": node["frame"],
                                 "frame": node["frame"],
                                 "source_frame": node["source_frame"],
+                                "image_path": self.frameImageRelativePath(
+                                    node["frame"],
+                                    os.path.dirname(matched_csv_path)
+                                ),
                                 "kp": node["kp"],
                                 "kp_distance_m": f"{node['kp_distance_m']:.3f}",
                                 "latitude": f"{node['latitude']:.9f}",
