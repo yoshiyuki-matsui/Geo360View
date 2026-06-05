@@ -13,9 +13,16 @@
   let postTimer = null;
   let krpanoReady = false;
   let krpanoImageLoaded = false;
+  let debugLogVisible = false;
+  let navigationState = {
+    prev_frame: bootstrap.prev_frame,
+    next_frame: bootstrap.next_frame,
+    matched_csv_exists: Boolean(bootstrap.matched_csv_exists)
+  };
 
   const prevButton = document.getElementById("prevButton");
   const nextButton = document.getElementById("nextButton");
+  const debugToggleButton = document.getElementById("debugToggleButton");
   const notice = document.getElementById("notice");
   const debugLog = document.getElementById("debugLog");
   const fallbackFrame = document.getElementById("fallbackFrame");
@@ -96,10 +103,35 @@
     if (!debugLog) {
       return;
     }
-    debugLog.hidden = false;
     const line = document.createElement("div");
     line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
     debugLog.appendChild(line);
+    updateDebugLogVisibility();
+  }
+
+  function updateDebugLogVisibility() {
+    if (!debugLog) {
+      return;
+    }
+    debugLog.hidden = !debugLogVisible;
+    if (debugToggleButton) {
+      debugToggleButton.textContent = debugLogVisible ? "Hide Log" : "Log";
+      debugToggleButton.setAttribute("aria-expanded", debugLogVisible ? "true" : "false");
+    }
+  }
+
+  function setupDebugLogToggle() {
+    updateDebugLogVisibility();
+    if (!debugToggleButton) {
+      return;
+    }
+    debugToggleButton.addEventListener("click", () => {
+      debugLogVisible = !debugLogVisible;
+      updateDebugLogVisibility();
+      if (debugLogVisible && debugLog) {
+        debugLog.scrollTop = debugLog.scrollHeight;
+      }
+    });
   }
 
   function showFallbackFrame(message) {
@@ -167,6 +199,13 @@
     return `/frames/${encodeURIComponent(video)}/${frameIndex}.jpg`;
   }
 
+  function navigationUrl(video, frameIndex) {
+    const params = new URLSearchParams();
+    params.set("video", video);
+    params.set("frame_index", String(frameIndex));
+    return `/api/navigation?${params.toString()}`;
+  }
+
   function krpanoSceneUrl(video, frameIndex, viewState) {
     const params = new URLSearchParams();
     params.set("video", video);
@@ -204,6 +243,7 @@
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
     postViewerState(true);
+    refreshNavigation(nextVideo, nextFrame);
 
     const nextFrameUrl = frameImageUrl(nextVideo, nextFrame);
     fallbackFrame.hidden = true;
@@ -252,9 +292,45 @@
     if (frameIndex === null || frameIndex === undefined) {
       return;
     }
+    const nextFrame = Number(frameIndex);
+    if (!Number.isFinite(nextFrame)) {
+      return;
+    }
     const currentView = readKrpanoView() || state;
-    await postViewerState(true);
-    window.location.href = viewerUrl(state.video, frameIndex, currentView);
+    const nextState = Object.assign({}, currentView, {
+      video: state.video,
+      frame_index: nextFrame
+    });
+    if (!loadFrameInPlace(nextState)) {
+      await postViewerState(true);
+      window.location.href = viewerUrl(state.video, nextFrame, currentView);
+    }
+  }
+
+  function updateNavigationButtons() {
+    prevButton.disabled = navigationState.prev_frame === null || navigationState.prev_frame === undefined;
+    nextButton.disabled = navigationState.next_frame === null || navigationState.next_frame === undefined;
+  }
+
+  async function refreshNavigation(video, frameIndex) {
+    const response = await fetch(navigationUrl(video, frameIndex), {
+      cache: "no-store"
+    }).catch(() => null);
+    if (!response || !response.ok) {
+      return;
+    }
+
+    const payload = await response.json().catch(() => null);
+    if (!payload) {
+      return;
+    }
+
+    navigationState = {
+      prev_frame: payload.prev_frame,
+      next_frame: payload.next_frame,
+      matched_csv_exists: Boolean(payload.matched_csv_exists)
+    };
+    updateNavigationButtons();
   }
 
   async function pollExternalNavigation() {
@@ -278,17 +354,43 @@
   }
 
   function setupNavigation() {
-    if (bootstrap.prev_frame === null || bootstrap.prev_frame === undefined) {
-      prevButton.disabled = true;
-    } else {
-      prevButton.addEventListener("click", () => navigateToFrame(bootstrap.prev_frame));
-    }
+    prevButton.addEventListener("click", () => navigateToFrame(navigationState.prev_frame));
+    nextButton.addEventListener("click", () => navigateToFrame(navigationState.next_frame));
+    updateNavigationButtons();
+  }
 
-    if (bootstrap.next_frame === null || bootstrap.next_frame === undefined) {
-      nextButton.disabled = true;
-    } else {
-      nextButton.addEventListener("click", () => navigateToFrame(bootstrap.next_frame));
+  function isEditableTarget(target) {
+    if (!target) {
+      return false;
     }
+    const tagName = String(target.tagName || "").toLowerCase();
+    return target.isContentEditable || ["input", "textarea", "select"].includes(tagName);
+  }
+
+  function setupKeyboardNavigation() {
+    window.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        if (navigationState.prev_frame !== null && navigationState.prev_frame !== undefined) {
+          event.preventDefault();
+          navigateToFrame(navigationState.prev_frame);
+        }
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        if (navigationState.next_frame !== null && navigationState.next_frame !== undefined) {
+          event.preventDefault();
+          navigateToFrame(navigationState.next_frame);
+        }
+      }
+    });
   }
 
   function setupFallbackFrameDiagnostics() {
@@ -375,6 +477,8 @@
 
   setupFallbackFrameDiagnostics();
   setupNavigation();
+  setupKeyboardNavigation();
+  setupDebugLogToggle();
   updateReadout(state);
   setupKrpano();
   window.setInterval(pollExternalNavigation, 750);

@@ -205,6 +205,8 @@ Navigation settings:
 
 The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.
 
+The plugin panel uses an always-on-top window flag so it remains visible during QGIS map operations.
+
 When click mode is active, keyboard navigation is also available:
 
 - `Left` / `Right`: normal step
@@ -212,7 +214,11 @@ When click mode is active, keyboard navigation is also available:
 - `Space`: redisplay the current frame
 - `Esc`: stop click mode
 
-QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path.
+Keyboard input is handled by the active map tool and by a QGIS application event filter while click mode is active. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
+
+QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path. When the browser viewer has focus, `Left` / `Right` also moves through Prev/Next frames from `matched_frames.csv`.
+
+The browser viewer debug log is collapsed by default and can be shown or hidden with the `Log` toolbar button.
 
 ## Processing Flow
 

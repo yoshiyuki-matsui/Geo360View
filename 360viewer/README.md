@@ -149,4 +149,6 @@ Example:
 - `video` must be a file name under `video_dir`. Paths, `../`, and non-MP4 files are rejected.
 - The configured session file is written atomically via a temporary file and rename.
 - Prev/Next moves only to frames listed in `<video_stem>_matched_frames.csv`.
+- Left/Right arrow keys perform the same Prev/Next navigation while the browser viewer has focus.
+- The debug log is collapsed by default. Use the `Log` toolbar button to show or hide it.
 - If krpano is missing, the page reports the missing file and shows a non-interactive extracted image fallback if the video exists.

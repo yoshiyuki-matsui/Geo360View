@@ -46,6 +46,10 @@ button:disabled {
   opacity: 0.4;
 }
 
+.debug-toggle {
+  min-width: 52px;
+}
+
 .readout {
   display: flex;
   flex-wrap: wrap;

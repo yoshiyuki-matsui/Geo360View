@@ -223,6 +223,20 @@ def neighbor_frames(frames: list[int], current: int) -> tuple[int | None, int | 
     return prev_frame, next_frame
 
 
+def navigation_payload(video: str, frame_index: int) -> dict[str, Any]:
+    """現在フレームに対するWEBビューア用ナビゲーション状態を返す。"""
+    frames = load_matched_frames(video)
+    prev_frame, next_frame = neighbor_frames(frames, frame_index)
+    return {
+        "video": video,
+        "frame_index": frame_index,
+        "prev_frame": prev_frame,
+        "next_frame": next_frame,
+        "matched_csv_exists": matched_frames_path(video).is_file(),
+        "matched_frame_count": len(frames),
+    }
+
+
 def read_session() -> dict[str, Any]:
     """viewer_session.jsonを読み込む。壊れている場合は空状態として扱う。"""
     cfg = load_config()
@@ -356,6 +370,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     <section class="toolbar" aria-label="Viewer controls">
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
+      <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
         <span id="frameLabel"></span>
@@ -530,6 +545,12 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/session/viewer-state":
                 self.send_json(read_session())
+                return
+
+            if parsed.path == "/api/navigation":
+                video = safe_video_name(query_value(query, "video", ""))
+                frame_index = parse_frame_index(query_value(query, "frame_index"))
+                self.send_json(navigation_payload(video, frame_index))
                 return
 
             if parsed.path.startswith("/static/"):

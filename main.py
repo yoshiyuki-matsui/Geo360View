@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
     QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
-    QTimer, QVariant, Qt
+    QEvent, QTimer, QVariant, Qt
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
@@ -87,6 +87,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_position_by_frame = {}
         self.toolbar = None
         self._gui_initialized = False
+        self._keyboard_filter_installed = False
 
     def initGui(self):
         """QGISメニュー/ツールバー/パネルUIを一度だけ構築する。"""
@@ -94,6 +95,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
 
         self.setWindowTitle("GPX Video Processor")
+        self.applyPanelWindowFlags()
 
         layout = QVBoxLayout()
         layout.setContentsMargins(6, 6, 6, 6)
@@ -363,13 +365,84 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.toolbar.addAction(self.action)
         self.toolbar.addAction(self.exit_action)
         self.startViewerSessionPolling()
+        self.installKeyboardFilter()
         self._gui_initialized = True
+
+    def installKeyboardFilter(self):
+        """クリックモード中のフレーム移動キーをQGISアプリ全体で拾えるようにする。"""
+        if self._keyboard_filter_installed:
+            return
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+            self._keyboard_filter_installed = True
+
+    def removeKeyboardFilter(self):
+        """アンロード時にQGISアプリケーションイベントフィルタを外す。"""
+        if not self._keyboard_filter_installed:
+            return
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        self._keyboard_filter_installed = False
+
+    def frameKeyboardNavigationActive(self):
+        """現在のQGIS状態でキーボードフレーム移動を有効にしてよいかを返す。"""
+        if self.frame_click_tool is None:
+            return False
+        try:
+            return self.iface.mapCanvas().mapTool() is self.frame_click_tool
+        except Exception:
+            return False
+
+    def shouldIgnoreNavigationKeyTarget(self):
+        """入力ウィジェット操作中は左右キーをフレーム移動に使わない。"""
+        focus = QtWidgets.QApplication.focusWidget()
+        ignored_types = (
+            QtWidgets.QAbstractSpinBox,
+            QtWidgets.QComboBox,
+            QtWidgets.QLineEdit,
+            QtWidgets.QTextEdit,
+            QtWidgets.QPlainTextEdit,
+        )
+        return isinstance(focus, ignored_types)
+
+    def eventFilter(self, watched, event):
+        """MapToolへ届かないキー操作も、クリックモード中だけ補助的に処理する。"""
+        if event.type() == QEvent.KeyPress and self.frameKeyboardNavigationActive():
+            if self.shouldIgnoreNavigationKeyTarget():
+                return False
+
+            key = event.key()
+            fast = bool(event.modifiers() & Qt.ShiftModifier)
+            if key == Qt.Key_Left:
+                self.navigateRelative(-1, fast=fast)
+                return True
+            if key == Qt.Key_Right:
+                self.navigateRelative(1, fast=fast)
+                return True
+            if key == Qt.Key_Space:
+                self.displayCurrentFrame()
+                return True
+            if key == Qt.Key_Escape:
+                self.deactivateClickMode()
+                return True
+
+        return super().eventFilter(watched, event)
+
+    def applyPanelWindowFlags(self):
+        """操作パネルをQGIS操作中も前面へ出しやすいウィンドウにする。"""
+        flags = self.windowFlags()
+        if not (flags & Qt.WindowStaysOnTopHint):
+            self.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
 
     def showWindow(self):
         """プラグインパネルを前面に表示する。"""
+        self.applyPanelWindowFlags()
         self.show()
         self.raise_()
         self.activateWindow()
+        self.setFocus(Qt.ActiveWindowFocusReason)
 
     def run(self):
         """Startメニューからパネルを開き、ビューア状態監視を開始する。"""
@@ -1163,6 +1236,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def unload(self):
         """QGISがプラグインをアンロードする際に、メニューとツールバーを片付ける。"""
+        self.removeKeyboardFilter()
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=False)
 
         # アクションをメニューから削除
