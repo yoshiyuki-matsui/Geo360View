@@ -5,7 +5,8 @@
     frame_index: 0,
     yaw_to_camera_heading: 0,
     pitch: 0,
-    zoom: 1
+    zoom: 1,
+    target: null
   }, bootstrap.state || {});
 
   let krpano = null;
@@ -14,6 +15,7 @@
   let krpanoReady = false;
   let krpanoImageLoaded = false;
   let debugLogVisible = false;
+  let radarHudVisible = true;
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
     next_frame: bootstrap.next_frame,
@@ -22,13 +24,28 @@
 
   const prevButton = document.getElementById("prevButton");
   const nextButton = document.getElementById("nextButton");
+  const radarHudToggleButton = document.getElementById("radarHudToggleButton");
   const debugToggleButton = document.getElementById("debugToggleButton");
   const notice = document.getElementById("notice");
   const debugLog = document.getElementById("debugLog");
   const fallbackFrame = document.getElementById("fallbackFrame");
+  const panoStage = document.querySelector(".pano-stage");
+  const clickTargetMarker = document.getElementById("clickTargetMarker");
   const videoLabel = document.getElementById("videoLabel");
   const frameLabel = document.getElementById("frameLabel");
   const viewLabel = document.getElementById("viewLabel");
+  const radarHud = document.getElementById("radarHud");
+  const hudRangeLabel = document.getElementById("hudRangeLabel");
+  const hudOuterRangeLabel = document.getElementById("hudOuterRangeLabel");
+  const hudDistanceMarker = document.getElementById("hudDistanceMarker");
+  const hudDistanceLabel = document.getElementById("hudDistanceLabel");
+  const hudInnerRing = radarHud ? radarHud.querySelector(".hud-ring-inner") : null;
+  const hudOuterRing = radarHud ? radarHud.querySelector(".hud-ring-outer") : null;
+  const hudPoints = radarHud ? Array.from(radarHud.querySelectorAll(".hud-point")) : [];
+
+  function clamp(value, minValue, maxValue) {
+    return Math.max(minValue, Math.min(maxValue, value));
+  }
 
   function normalizeYaw(value) {
     const numeric = Number(value);
@@ -36,6 +53,14 @@
       return 0;
     }
     return ((numeric % 360) + 360) % 360;
+  }
+
+  function normalizeSignedYaw(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return ((numeric + 180) % 360 + 360) % 360 - 180;
   }
 
   function normalizePitch(value) {
@@ -83,9 +108,15 @@
 
   function updateReadout(viewState) {
     const active = viewState || state;
+    const fov = 90 / normalizeZoom(active.zoom);
+    const target = state.target && Number.isFinite(Number(state.target.yaw_delta_deg))
+      ? `, click: ${Number(state.target.yaw_delta_deg).toFixed(1)}deg`
+      : "";
     videoLabel.textContent = `video: ${active.video}`;
     frameLabel.textContent = `frame_index: ${active.frame_index}`;
-    viewLabel.textContent = `yaw: ${Number(active.yaw_to_camera_heading).toFixed(2)}, pitch: ${Number(active.pitch).toFixed(2)}, zoom: ${Number(active.zoom).toFixed(2)}`;
+    viewLabel.textContent = `yaw: ${Number(active.yaw_to_camera_heading).toFixed(2)}, pitch: ${Number(active.pitch).toFixed(2)}, fov: ${fov.toFixed(1)}, zoom: ${Number(active.zoom).toFixed(2)}${target}`;
+    updateRadarHud(active);
+    updateClickTargetMarker();
   }
 
   function setNotice(messages) {
@@ -132,6 +163,214 @@
         debugLog.scrollTop = debugLog.scrollHeight;
       }
     });
+  }
+
+  function updateRadarHudVisibility() {
+    if (!radarHud) {
+      return;
+    }
+    radarHud.hidden = !radarHudVisible || !state.radar;
+    if (radarHudToggleButton) {
+      radarHudToggleButton.textContent = radarHudVisible ? "Hide HUD" : "HUD";
+      radarHudToggleButton.setAttribute("aria-expanded", radarHudVisible ? "true" : "false");
+    }
+  }
+
+  function setupRadarHudToggle() {
+    updateRadarHudVisibility();
+    if (!radarHudToggleButton) {
+      return;
+    }
+    radarHudToggleButton.addEventListener("click", () => {
+      radarHudVisible = !radarHudVisible;
+      updateRadarHudVisibility();
+    });
+  }
+
+  function formatMeters(value) {
+    if (!Number.isFinite(value)) {
+      return "-";
+    }
+    if (value >= 10) {
+      return `${value.toFixed(0)}m`;
+    }
+    return `${value.toFixed(1)}m`;
+  }
+
+  function arcPath(radiusPx) {
+    const cx = 130;
+    const cy = 104;
+    const r = clamp(radiusPx, 1, 100);
+    return `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
+  }
+
+  function updateRadarHud(viewState) {
+    if (!radarHud || !state.radar) {
+      updateRadarHudVisibility();
+      return;
+    }
+
+    const radar = state.radar;
+    const rangeM = Number(radar.range_m);
+    const outerRangeM = Number(radar.outer_range_m);
+    const baseSectorRadiusM = Number(radar.base_sector_radius_m);
+    const calibrationFovDeg = Number(radar.calibration_fov_deg);
+    const calibrationDistanceM = Number(radar.calibration_distance_m);
+    const manualScale = Number(radar.manual_scale || 1);
+    const minSectorRadiusM = Number(radar.min_sector_radius_m || 1);
+    const minZoomMultiplier = Number(radar.min_zoom_multiplier || 0.25);
+    const maxZoomMultiplier = Number(radar.max_zoom_multiplier || 8);
+    if (
+      !Number.isFinite(rangeM)
+      || !Number.isFinite(outerRangeM)
+      || !Number.isFinite(baseSectorRadiusM)
+      || outerRangeM <= 0
+    ) {
+      state.radar = null;
+      updateRadarHudVisibility();
+      return;
+    }
+
+    const zoom = normalizeZoom((viewState || state).zoom);
+    const currentFovDeg = 90 / zoom;
+    let distanceMultiplier = clamp(1 / zoom, minZoomMultiplier, maxZoomMultiplier);
+    let distanceM = Math.max(minSectorRadiusM, baseSectorRadiusM * distanceMultiplier);
+    if (
+      Number.isFinite(calibrationFovDeg)
+      && Number.isFinite(calibrationDistanceM)
+      && Number.isFinite(manualScale)
+      && calibrationFovDeg > 0
+      && calibrationFovDeg < 180
+    ) {
+      const currentHalfTan = Math.tan((currentFovDeg / 2) * Math.PI / 180);
+      const calibrationHalfTan = Math.tan((calibrationFovDeg / 2) * Math.PI / 180);
+      if (Math.abs(calibrationHalfTan) > 1e-9) {
+        distanceMultiplier = currentHalfTan / calibrationHalfTan;
+        distanceM = Math.max(minSectorRadiusM, calibrationDistanceM * manualScale * distanceMultiplier);
+      }
+    }
+    const outerRadiusPx = 100;
+    const innerRadiusPx = clamp((rangeM / outerRangeM) * outerRadiusPx, 1, outerRadiusPx);
+    const markerRadiusPx = clamp((distanceM / outerRangeM) * outerRadiusPx, 0, outerRadiusPx);
+    const markerY = 104 - markerRadiusPx;
+    const innerY = 104 - innerRadiusPx;
+
+    if (hudOuterRing) {
+      hudOuterRing.setAttribute("d", arcPath(outerRadiusPx));
+    }
+    if (hudInnerRing) {
+      hudInnerRing.setAttribute("d", arcPath(innerRadiusPx));
+    }
+    if (hudPoints[0]) {
+      hudPoints[0].setAttribute("cy", String(innerY));
+    }
+    if (hudPoints[1]) {
+      hudPoints[1].setAttribute("cy", "4");
+    }
+    if (hudRangeLabel) {
+      hudRangeLabel.textContent = formatMeters(rangeM);
+      hudRangeLabel.setAttribute("y", String(innerY + 4));
+    }
+    if (hudOuterRangeLabel) {
+      hudOuterRangeLabel.textContent = formatMeters(outerRangeM);
+    }
+    if (hudDistanceMarker) {
+      const halfWidth = clamp(32 + distanceMultiplier * 12, 34, 76);
+      hudDistanceMarker.setAttribute("x1", String(130 - halfWidth));
+      hudDistanceMarker.setAttribute("x2", String(130 + halfWidth));
+      hudDistanceMarker.setAttribute("y1", String(markerY));
+      hudDistanceMarker.setAttribute("y2", String(markerY));
+    }
+    if (hudDistanceLabel) {
+      hudDistanceLabel.textContent = formatMeters(distanceM);
+      hudDistanceLabel.setAttribute("y", String(clamp(markerY - 8, 12, 96)));
+    }
+
+    updateRadarHudVisibility();
+  }
+
+  function updateRadarState(radar) {
+    state.radar = radar && typeof radar === "object" ? radar : null;
+    updateRadarHud(readKrpanoView() || state);
+  }
+
+  function updateClickTargetMarker() {
+    if (!clickTargetMarker || !state.target) {
+      if (clickTargetMarker) {
+        clickTargetMarker.hidden = true;
+      }
+      return;
+    }
+    const xRatio = Number(state.target.x_ratio);
+    const yRatio = Number(state.target.y_ratio);
+    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) {
+      clickTargetMarker.hidden = true;
+      return;
+    }
+    clickTargetMarker.style.left = `${clamp(xRatio, 0, 1) * 100}%`;
+    clickTargetMarker.style.top = `${clamp(yRatio, 0, 1) * 100}%`;
+    clickTargetMarker.hidden = false;
+  }
+
+  function currentSessionState() {
+    const current = Object.assign({}, readKrpanoView() || state);
+    if (state.target) {
+      current.target = state.target;
+    }
+    return current;
+  }
+
+  function screenClickTarget(event) {
+    if (!panoStage) {
+      return null;
+    }
+    const rect = panoStage.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+
+    const xRatio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const yRatio = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const current = readKrpanoView() || state;
+    const zoom = normalizeZoom(current.zoom);
+    const horizontalFovDeg = clamp(90 / zoom, 1, 179);
+    const verticalFovDeg = clamp(horizontalFovDeg * (rect.height / rect.width), 1, 179);
+    const xNdc = (xRatio - 0.5) * 2;
+    const yNdc = (yRatio - 0.5) * 2;
+    const yawDeltaDeg = Math.atan(xNdc * Math.tan((horizontalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
+    const pitchDeltaDeg = -Math.atan(yNdc * Math.tan((verticalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
+    const targetYaw = normalizeYaw(Number(current.yaw_to_camera_heading) + yawDeltaDeg);
+
+    return {
+      x_ratio: xRatio,
+      y_ratio: yRatio,
+      yaw_delta_deg: normalizeSignedYaw(yawDeltaDeg),
+      pitch_delta_deg: pitchDeltaDeg,
+      target_yaw_to_camera_heading: targetYaw,
+      view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
+      view_pitch: normalizePitch(current.pitch),
+      view_zoom: zoom,
+      projection: "center_plane"
+    };
+  }
+
+  function setupClickTargetProjection() {
+    if (!panoStage) {
+      return;
+    }
+    panoStage.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.button !== 0) {
+        return;
+      }
+      const target = screenClickTarget(event);
+      if (!target) {
+        return;
+      }
+      state.target = target;
+      updateReadout(readKrpanoView() || state);
+      postViewerState(true);
+      logDebug(`target click yaw=${target.target_yaw_to_camera_heading.toFixed(2)} delta=${target.yaw_delta_deg.toFixed(2)}`);
+    }, true);
   }
 
   function showFallbackFrame(message) {
@@ -235,11 +474,15 @@
 
     const currentView = readKrpanoView() || state;
     const inheritedView = normalizedView(currentView);
+    const nextRadar = nextState.radar && typeof nextState.radar === "object" ? nextState.radar : null;
+    const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
 
     Object.assign(state, nextState, inheritedView, {
       video: nextVideo,
       frame_index: nextFrame
     });
+    state.radar = nextRadar;
+    state.target = nextTarget;
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
     postViewerState(true);
@@ -262,7 +505,7 @@
   }
 
   async function postViewerState(immediate) {
-    const current = readKrpanoView() || state;
+    const current = currentSessionState();
     updateReadout(current);
 
     if (!immediate && sameState(current, lastPosted)) {
@@ -346,6 +589,9 @@
       return;
     }
 
+    updateRadarState(session.radar);
+    state.target = session.target && typeof session.target === "object" ? session.target : null;
+    updateReadout(readKrpanoView() || state);
     if (!sameFrame(session, state)) {
       if (!loadFrameInPlace(session)) {
         window.location.href = viewerUrl(session.video, session.frame_index, readKrpanoView() || state);
@@ -479,6 +725,8 @@
   setupNavigation();
   setupKeyboardNavigation();
   setupDebugLogToggle();
+  setupRadarHudToggle();
+  setupClickTargetProjection();
   updateReadout(state);
   setupKrpano();
   window.setInterval(pollExternalNavigation, 750);

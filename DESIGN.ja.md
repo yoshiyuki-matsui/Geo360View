@@ -1,6 +1,6 @@
 # GPXVideoProcessor 設計メモ
 
-更新日: 2026-06-04
+更新日: 2026-06-06
 
 ## 目的
 
@@ -92,7 +92,9 @@ QGISプラグインとWEBビューアは疎結合です。QGIS側はローカル
 - `main.py` から処理系、ビューア制御、フレーム抽出、レーダ描画、KP処理を分離し、Pythonファイルの責務を整理した。
 - プラグインパネルをタブUIへ変更し、ロード/全件処理と制御/プレビューを分離した。
 - レーダheadingをGPX属性値ではなく、±10フレームの移動軌跡から推定できる。
-- レーダ扇形の奥行きを、±10フレームの移動距離とUIの `Scale` に連動できる。
+- レーダ扇形の奥行きと先端距離線を、`CalFOV` / `CalDist` / `Scale` と現在FOVから校正距離として表示できる。
+- WEBビューア上でクリックした360空間上の点を、校正距離とクリック角から地図平面へ一時投影できる。
+- Insta360 X4 + スマホリモコン/GNSSで撮影したH.265 MP4と、Insta360書き出しGPXをそのまま読み込めることを実機確認した。
 
 ## 実行環境
 
@@ -115,6 +117,8 @@ QGISプラグインとWEBビューアは疎結合です。QGIS側はローカル
 - scipy
 
 360ViewerはFlask非依存です。現在はPython標準ライブラリの `http.server.ThreadingHTTPServer` で動作します。
+
+H.265 MP4を扱う場合は、QGIS同梱PythonのOpenCVが当該コーデックを読める環境であることが前提です。開発環境ではInsta360 X4由来のH.265 MP4を読み込めることを確認済みです。
 
 ### krpano
 
@@ -181,8 +185,8 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 単一フレーム確認、地図クリック、ナビゲーション、プレビューをまとめています。
 
 - `Frame` 番号指定と `Extract`
-- `Click Layer` / `Stop Click`
-- 現在フレーム、ナビゲーションモード、通常移動量、早送り/早戻し量、レーダ `Range` / `Scale` / `Offset`
+- `Click Layer` / `Stop Click` / `Follow`
+- 現在フレーム、ナビゲーションモード、通常移動量、早送り/早戻し量、レーダ `Range` / `Scale` / `CalFOV` / `CalDist` / `Offset`
 - QGIS側プレビュー情報
 - QGIS側プレビュー画像
 - `<<`, `<`, `>`, `>>` の移動ボタン
@@ -213,19 +217,23 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 ナビゲーションモード:
 
 - `Frame step`: 現在フレーム番号に対して `±Step` / `±Fast` する。
-- `Layer point`: 選択中またはクリックモード中の `Video GPX Points` レイヤを `frame` 順に移動する。
+- `Layer point`: GPXVideoProcessorが生成・保持している `Video GPX Points` レイヤを `frame` 順に移動する。
 - `KP matched CSV`: `<video_stem>_matched_frames.csv` の `frame_index` 順に移動する。
 
-クリックモード中はキーボードでも操作できます。
+`Video GPX Points` は360画像参照用の内部レイヤとして扱います。プラグインは生成したレイヤIDを保持してナビゲーションやクリック待ち受けに使うため、ユーザが地物登録先として別レイヤを選択していても、画像送り側の参照先は変わりません。Process前に既存のframe属性レイヤを手動利用する場合のみ、選択中レイヤを保険として参照します。
+
+クリックモード中、またはGPXVideoProcessor操作パネルにフォーカスがある場合は、キーボードでも操作できます。
 
 - `←` / `→`: 通常移動
 - `Shift + ←` / `Shift + →`: 大きく戻る/進む
 - `Space`: 現在フレームを再表示
 - `Esc`: クリックモード解除
 
-キー入力は地図キャンバスのMapToolに加え、QGISアプリケーション側のイベントフィルタでも補助的に受けます。ただし、数値入力やコンボボックス操作中の矢印キーは奪いません。
+キー入力は地図キャンバスのMapToolに加え、QGISアプリケーション側のイベントフィルタでも補助的に受けます。地物登録ツールなど別MapToolが有効な場合でも、GPXVideoProcessor操作パネルにフォーカスがあればナビゲーションキーを受け付けます。ただし、数値入力やコンボボックス操作中の矢印キーは奪いません。
 
 ナビゲーションはQGIS地図側を主導にしています。WEBビューアのPrev/Nextは補助機能であり、通常運用ではQGIS地図クリックまたはQGIS側ナビゲーションからフレームを指定します。
+
+`Follow` をONにすると、地図クリック、ボタン操作、キーボード操作で表示フレームが変わった時に、対応する撮影点をQGIS地図の中心へ移動します。ズーム倍率は変更しません。地図再描画によるレスポンス低下を避けるため、既定ではOFFです。
 
 WEBビューア側でも、ブラウザにフォーカスがある場合は `←` / `→` で `matched_frames.csv` 上のPrev/Nextへ移動できます。
 
@@ -400,6 +408,8 @@ WEBビューアの現在状態です。
 - `yaw_to_camera_heading`
 - `pitch`
 - `zoom`
+- `radar`
+- `target`
 - `updated_at`
 
 QGIS側はこのJSONを500ms間隔でポーリングし、地図上に視線方向レーダを描画します。
@@ -410,6 +420,8 @@ QGIS側はこのJSONを500ms間隔でポーリングし、地図上に視線方�
 - WEBビューアの視野角に対応する扇形
 - direction線
 - direction線の先端に置く垂線
+
+レーダは `QgsRubberBand` による一時描画です。`Exit` やセッション終了時は、RubberBandを非表示化、形状リセット、QGraphicsSceneから除去し、QGISキャンバスを更新して描画残りを避けます。
 
 レーダは「絶対距離」と「動的距離」を分けて扱います。
 
@@ -424,15 +436,17 @@ QGIS側はこのJSONを500ms間隔でポーリングし、地図上に視線方�
 
 既定では5m円と10m円になります。この2本を目視距離の基準線として使います。
 
-### 動的距離
+### 校正距離
 
-扇形、direction線、先端の垂線の奥行きは、±10フレームの移動距離から求めます。
+扇形、direction線、先端の垂線の奥行きは、`CalFOV`、`CalDist`、`Scale`、WEBビューアの現在FOVから求めます。先端の垂線は、現在の校正条件で見ている中心距離線として扱います。
 
 ```text
-sector_radius_m = distance_m * Scale
+current_fov = 90 / zoom
+fov_ratio = tan(current_fov / 2) / tan(CalFOV / 2)
+sector_radius_m = max(1.0, CalDist * Scale * fov_ratio)
 ```
 
-`Scale` の既定値は `1.0` です。速度が速い区間では扇形が伸び、停止に近い区間では短くなります。
+`CalFOV` は距離校正時のFOV、`CalDist` はそのFOVでビューア中心線が地図上の何mに相当するかを表す値です。`Use FOV` を押すと、現在ビューアのFOVを `CalFOV` へ取り込めます。`Scale` の既定値は `1.0` で、人間が地図計測と見比べて微調整する倍率です。zoomを上げると視野角が狭くなり、扇形奥行きと先端距離線は手前へ寄ります。
 
 ### 方位補正
 
@@ -486,7 +500,11 @@ viewer_bearing = (heading + Offset + yaw_to_camera_heading) % 360
 fov = 90 / zoom
 ```
 
-FOVは扇形の広がりにのみ使います。扇形の奥行きには使いません。
+FOVは扇形の広がりと、`CalFOV` からの距離倍率計算に使います。現在FOVが `CalFOV` と同じで `Scale=1.0` の場合、奥行きは `CalDist` と一致します。最終表示は最低1.0mを維持します。
+
+WEBビューアにも、5m/10m相当の半径目盛りと、QGIS側の先端垂線に対応する校正距離線をHUDとして表示します。このHUDは単眼360画像から実距離を厳密に復元するものではなく、QGIS側レーダと同じ距離目安を画像側にも重ね、ユーザが5m/10m円との比較を目測できるようにする補助表示です。ツールバーの `HUD` ボタンで表示/非表示を切り替えます。
+
+WEBビューア上で画像をクリックすると、クリック時点の360空間上の絶対yaw、ビューア中心からの相対yaw、クリック時zoomを `viewer_session.json` の `target` に保存します。QGIS側は、クリック時FOVから求めた前方距離を `cos(yaw_delta)` で補正し、撮影点から `heading + Offset + target_yaw` 方向へ一時投影点を描きます。これは地物レイヤへ書き込むものではなく、360クリック点と地図平面の対応を試すためのRubberBand表示です。
 
 画像を別フレームへ切り替える場合、WEBビューアは切替直前の `yaw_to_camera_heading`, `pitch`, `zoom` を新しいフレームへ継承します。
 

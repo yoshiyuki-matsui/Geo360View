@@ -286,13 +286,98 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """ブラウザからPOSTされた視点状態payloadを検証・正規化する。"""
     video = safe_video_name(str(payload.get("video", "")))
     frame_index = parse_frame_index(payload.get("frame_index"))
-    return {
+    state = {
         "video": video,
         "frame_index": frame_index,
         "yaw_to_camera_heading": normalize_yaw(parse_float(payload.get("yaw_to_camera_heading"), "yaw_to_camera_heading")),
         "pitch": parse_float(payload.get("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
         "zoom": parse_float(payload.get("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
     }
+    target = validate_target_payload(payload.get("target"))
+    if target:
+        state["target"] = target
+    return state
+
+
+def normalize_signed_yaw(value: float) -> float:
+    """任意角度を-180..180度の符号付きyawへ正規化する。"""
+    return (float(value) + 180.0) % 360.0 - 180.0
+
+
+def validate_target_payload(payload: Any) -> dict[str, Any] | None:
+    """ブラウザでクリックされた360空間上の投影ターゲットを検証する。"""
+    if not isinstance(payload, dict):
+        return None
+
+    try:
+        x_ratio = max(0.0, min(1.0, parse_float(payload.get("x_ratio"), "target.x_ratio")))
+        y_ratio = max(0.0, min(1.0, parse_float(payload.get("y_ratio"), "target.y_ratio")))
+        yaw_delta_deg = normalize_signed_yaw(parse_float(payload.get("yaw_delta_deg"), "target.yaw_delta_deg", 0.0))
+        pitch_delta_deg = max(-90.0, min(90.0, parse_float(payload.get("pitch_delta_deg"), "target.pitch_delta_deg", 0.0)))
+        target_yaw = normalize_yaw(parse_float(payload.get("target_yaw_to_camera_heading"), "target.target_yaw_to_camera_heading"))
+        view_yaw = normalize_yaw(parse_float(payload.get("view_yaw_to_camera_heading"), "target.view_yaw_to_camera_heading", target_yaw - yaw_delta_deg))
+        view_pitch = max(-90.0, min(90.0, parse_float(payload.get("view_pitch"), "target.view_pitch", 0.0)))
+        view_zoom = max(0.01, parse_float(payload.get("view_zoom"), "target.view_zoom", DEFAULT_VIEW["zoom"]))
+    except ApiError:
+        return None
+
+    projection = str(payload.get("projection") or "center_plane")
+    if projection not in {"center_plane", "constant_distance"}:
+        projection = "center_plane"
+
+    return {
+        "x_ratio": x_ratio,
+        "y_ratio": y_ratio,
+        "yaw_delta_deg": yaw_delta_deg,
+        "pitch_delta_deg": pitch_delta_deg,
+        "target_yaw_to_camera_heading": target_yaw,
+        "view_yaw_to_camera_heading": view_yaw,
+        "view_pitch": view_pitch,
+        "view_zoom": view_zoom,
+        "projection": projection,
+    }
+
+
+def validate_radar_payload(payload: Any) -> dict[str, float] | None:
+    """QGISから渡されたビューアHUD用レーダ補助値を検証する。"""
+    if not isinstance(payload, dict):
+        return None
+
+    try:
+        range_m = max(0.1, parse_float(payload.get("range_m"), "radar.range_m"))
+        outer_range_m = max(range_m, parse_float(payload.get("outer_range_m"), "radar.outer_range_m", range_m * 2.0))
+        base_sector_radius_m = max(0.0, parse_float(payload.get("base_sector_radius_m"), "radar.base_sector_radius_m"))
+        calibration_fov_deg = max(1.0, min(179.0, parse_float(payload.get("calibration_fov_deg"), "radar.calibration_fov_deg", 90.0)))
+        calibration_distance_m = max(0.1, parse_float(payload.get("calibration_distance_m"), "radar.calibration_distance_m", 5.0))
+        manual_scale = max(0.1, parse_float(payload.get("manual_scale"), "radar.manual_scale", 1.0))
+        min_sector_radius_m = max(0.0, parse_float(payload.get("min_sector_radius_m"), "radar.min_sector_radius_m", 1.0))
+        min_zoom_multiplier = max(0.01, parse_float(payload.get("min_zoom_multiplier"), "radar.min_zoom_multiplier", 0.25))
+        max_zoom_multiplier = max(
+            min_zoom_multiplier,
+            parse_float(payload.get("max_zoom_multiplier"), "radar.max_zoom_multiplier", 8.0)
+        )
+    except ApiError:
+        return None
+
+    return {
+        "range_m": range_m,
+        "outer_range_m": outer_range_m,
+        "base_sector_radius_m": base_sector_radius_m,
+        "calibration_fov_deg": calibration_fov_deg,
+        "calibration_distance_m": calibration_distance_m,
+        "manual_scale": manual_scale,
+        "min_sector_radius_m": min_sector_radius_m,
+        "min_zoom_multiplier": min_zoom_multiplier,
+        "max_zoom_multiplier": max_zoom_multiplier,
+    }
+
+
+def same_video_frame(session: dict[str, Any], video: str, frame_index: int) -> bool:
+    """セッション状態が指定video/frameと同一かを安全に判定する。"""
+    try:
+        return session.get("video") == video and int(session.get("frame_index", -1)) == int(frame_index)
+    except (TypeError, ValueError):
+        return False
 
 
 def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -308,13 +393,17 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
             value = session.get(name, DEFAULT_VIEW[name])
         return value
 
-    return {
+    state = {
         "video": video,
         "frame_index": frame_index,
         "yaw_to_camera_heading": normalize_yaw(parse_float(view_value("yaw_to_camera_heading"), "yaw_to_camera_heading")),
         "pitch": parse_float(view_value("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
         "zoom": parse_float(view_value("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
     }
+    radar = validate_radar_payload(payload.get("radar"))
+    if radar:
+        state["radar"] = radar
+    return state
 
 
 def json_bytes(value: Any) -> bytes:
@@ -370,6 +459,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     <section class="toolbar" aria-label="Viewer controls">
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
+      <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
@@ -384,6 +474,20 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     <section class="pano-stage">
       <div id="pano"></div>
       <img id="fallbackFrame" data-src="{frame_url}" alt="Extracted 360 frame">
+      <div id="clickTargetMarker" class="click-target-marker" hidden></div>
+      <div id="radarHud" class="radar-hud" aria-hidden="true">
+        <svg viewBox="0 0 260 118" role="img" aria-label="Viewer range guide">
+          <path class="hud-ring hud-ring-outer" d="M 30 104 A 100 100 0 0 1 230 104" />
+          <path class="hud-ring hud-ring-inner" d="M 80 104 A 50 50 0 0 1 180 104" />
+          <line class="hud-axis" x1="130" y1="104" x2="130" y2="18" />
+          <circle class="hud-point" cx="130" cy="64" r="3" />
+          <circle class="hud-point" cx="130" cy="24" r="3" />
+          <text id="hudRangeLabel" class="hud-label" x="136" y="68">5m</text>
+          <text id="hudOuterRangeLabel" class="hud-label" x="136" y="28">10m</text>
+          <line id="hudDistanceMarker" class="hud-distance-marker" x1="88" y1="64" x2="172" y2="64" />
+          <text id="hudDistanceLabel" class="hud-distance-label" x="130" y="56">-</text>
+        </svg>
+      </div>
     </section>
   </main>
 
@@ -569,7 +673,14 @@ class ViewerHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if parsed.path == "/api/session/viewer-state":
                 payload = self.read_json_body()
-                state = write_session(validate_state_payload(payload))
+                previous = read_session()
+                state = validate_state_payload(payload)
+                if (
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and isinstance(previous.get("radar"), dict)
+                ):
+                    state["radar"] = previous["radar"]
+                state = write_session(state)
                 self.send_json(state)
                 return
 
@@ -593,7 +704,18 @@ class ViewerHandler(BaseHTTPRequestHandler):
         video = safe_video_name(str(raw_video or ""))
         frame_index = parse_frame_index(raw_frame)
 
-        state = write_session(state_from_request_args(query, video, frame_index))
+        state = state_from_request_args(query, video, frame_index)
+        if (
+            same_video_frame(session, video, frame_index)
+            and isinstance(session.get("radar"), dict)
+        ):
+            state["radar"] = session["radar"]
+        if (
+            same_video_frame(session, video, frame_index)
+            and isinstance(session.get("target"), dict)
+        ):
+            state["target"] = session["target"]
+        state = write_session(state)
         frames = load_matched_frames(video)
         prev_frame, next_frame = neighbor_frames(frames, frame_index)
         video_exists = video_path(video).is_file()

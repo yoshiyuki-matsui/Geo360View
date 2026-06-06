@@ -50,6 +50,10 @@ button:disabled {
   min-width: 52px;
 }
 
+.hud-toggle {
+  min-width: 52px;
+}
+
 .readout {
   display: flex;
   flex-wrap: wrap;
@@ -102,4 +106,111 @@ button:disabled {
 
 #fallbackFrame {
   object-fit: contain;
+}
+
+.click-target-marker {
+  border: 2px solid rgba(112, 255, 142, 0.95);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.48), 0 0 16px rgba(112, 255, 142, 0.45);
+  height: 18px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  z-index: 6;
+}
+
+.click-target-marker::before,
+.click-target-marker::after {
+  background: rgba(112, 255, 142, 0.95);
+  content: "";
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.click-target-marker::before {
+  height: 2px;
+  width: 24px;
+}
+
+.click-target-marker::after {
+  height: 24px;
+  width: 2px;
+}
+
+.click-target-marker[hidden] {
+  display: none;
+}
+
+.radar-hud {
+  background: rgba(6, 10, 14, 0.54);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 6px;
+  bottom: 18px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  height: 118px;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 260px;
+  z-index: 5;
+}
+
+.radar-hud[hidden] {
+  display: none;
+}
+
+.radar-hud svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.hud-ring {
+  fill: none;
+  stroke: rgba(0, 190, 255, 0.72);
+  stroke-width: 1.4;
+}
+
+.hud-ring-inner {
+  stroke: rgba(0, 220, 255, 0.9);
+}
+
+.hud-axis {
+  stroke: rgba(255, 255, 255, 0.62);
+  stroke-dasharray: 4 4;
+  stroke-width: 1.2;
+}
+
+.hud-point {
+  fill: rgba(0, 220, 255, 0.95);
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 1;
+}
+
+.hud-distance-marker {
+  stroke: rgba(255, 238, 114, 0.96);
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
+.hud-label,
+.hud-distance-label {
+  fill: #fff7b0;
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 2px;
+  text-anchor: start;
+}
+
+.hud-distance-label {
+  fill: #fff;
+  font-size: 12px;
+  font-weight: bold;
+  text-anchor: middle;
 }

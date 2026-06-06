@@ -91,7 +91,9 @@ As of 2026-06-04, the following behavior has been implemented and checked:
 - Python responsibilities have been split out of `main.py` into processing, viewer control, frame extraction, radar, KP, and helper modules.
 - The plugin panel now uses tabs to separate load/process settings from control/preview operations.
 - Radar heading is estimated from the +/-10 frame movement trajectory instead of GPX direction attributes.
-- Radar sector depth is driven by +/-10 frame travel distance and the UI `Scale` value.
+- Radar sector depth and the perpendicular distance marker are driven by `CalFOV`, `CalDist`, `Scale`, and the current viewer FOV.
+- A clicked point in the WEB viewer can be temporarily projected onto the QGIS map using the calibrated center distance and the clicked yaw angle.
+- Real-device data from Insta360 X4 + smartphone remote/GNSS has been tested: Insta360-exported GPX and H.265 MP4 can be loaded directly.
 
 ## Runtime Environment
 
@@ -114,6 +116,8 @@ Not required:
 - scipy
 
 The 360 viewer was changed from Flask to Python standard-library `http.server.ThreadingHTTPServer`, so Flask wheels are no longer needed.
+
+For H.265 MP4 input, the QGIS Python OpenCV build must be able to decode the codec. The development environment has been verified with H.265 MP4 from Insta360 X4.
 
 ### krpano
 
@@ -180,8 +184,8 @@ Each file selector is laid out as one row: label, compact file name, and `Browse
 This tab groups interactive checking and navigation:
 
 - `Frame` number and `Extract`
-- `Click Layer` / `Stop Click`
-- Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `Offset`
+- `Click Layer` / `Stop Click` / `Follow`
+- Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `CalFOV` / `CalDist` / `Offset`
 - QGIS preview information
 - QGIS preview image
 - `<<`, `<`, `>`, `>>` navigation buttons
@@ -200,23 +204,27 @@ The plugin panel provides frame navigation controls based on the current frame:
 Navigation settings:
 
 - `Frame step`: move by frame number.
-- `Layer point`: move through the active or click-mode `Video GPX Points` layer sorted by `frame`.
+- `Layer point`: move through the `Video GPX Points` layer generated and retained by GPXVideoProcessor, sorted by `frame`.
 - `KP matched CSV`: move through `<video_stem>_matched_frames.csv` sorted by `frame_index`.
+
+`Video GPX Points` is treated as an internal reference layer for 360 image viewing. The plugin keeps the generated layer id and uses it for navigation and click-mode setup, so changing the user's feature-registration target layer does not change the viewer reference layer. The active layer is only used as a fallback before `Process`, when a pre-existing frame layer is being used manually.
 
 The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.
 
 The plugin panel uses an always-on-top window flag so it remains visible during QGIS map operations.
 
-When click mode is active, keyboard navigation is also available:
+When click mode is active, or when the GPXVideoProcessor panel has focus, keyboard navigation is also available:
 
 - `Left` / `Right`: normal step
 - `Shift + Left` / `Shift + Right`: fast step
 - `Space`: redisplay the current frame
 - `Esc`: stop click mode
 
-Keyboard input is handled by the active map tool and by a QGIS application event filter while click mode is active. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
+Keyboard input is handled by the active map tool and by a QGIS application event filter. Even when another map tool, such as a feature registration tool, is active, navigation keys are accepted while the GPXVideoProcessor panel has focus. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
 
 QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path. When the browser viewer has focus, `Left` / `Right` also moves through Prev/Next frames from `matched_frames.csv`.
+
+When `Follow` is enabled, map clicks, button navigation, and keyboard navigation recenter the QGIS map on the displayed frame point without changing the current zoom level. It is disabled by default to avoid extra map redraw cost during fast viewing.
 
 The browser viewer debug log is collapsed by default and can be shown or hidden with the `Log` toolbar button.
 
@@ -393,6 +401,8 @@ Stores the browser viewer state:
 - `yaw_to_camera_heading`
 - `pitch`
 - `zoom`
+- `radar`
+- `target`
 - `updated_at`
 
 QGIS polls this file every 500 ms and draws a temporary radar overlay on the map.
@@ -403,6 +413,8 @@ The overlay includes:
 - A sector that represents the viewer field of view.
 - A direction line.
 - A perpendicular line at the end of the direction line.
+
+The radar overlay is temporary `QgsRubberBand` drawing. On `Exit` or session cleanup, the plugin hides each rubber band, resets its geometry, removes it from the `QGraphicsScene`, and refreshes the QGIS canvas to avoid stale overlay remnants.
 
 Radar display separates absolute distance from dynamic distance.
 
@@ -417,15 +429,17 @@ Drawn circles:
 
 With the default value, QGIS draws 5 m and 10 m range circles. These circles are only visual distance references.
 
-### Dynamic Distance
+### Calibrated Distance
 
-The sector, direction line, and perpendicular end marker use the +/-10 frame travel distance:
+The sector, direction line, and perpendicular end marker use `CalFOV`, `CalDist`, UI `Scale`, and the current browser viewer FOV. The perpendicular end marker acts as the calibrated center-distance marker for the current view.
 
 ```text
-sector_radius_m = distance_m * Scale
+current_fov = 90 / zoom
+fov_ratio = tan(current_fov / 2) / tan(CalFOV / 2)
+sector_radius_m = max(1.0, CalDist * Scale * fov_ratio)
 ```
 
-The default `Scale` is `1.0`. Faster movement produces a deeper sector, while near-stationary movement produces a shorter sector.
+`CalFOV` is the FOV used at calibration time. `CalDist` is the map distance that the operator decides corresponds to the viewer center line at that FOV. `Use FOV` copies the current viewer FOV into `CalFOV`. The default `Scale` is `1.0`; it is a manual multiplier for human calibration against QGIS measurement. Increasing zoom narrows the field of view and pulls the sector depth and distance marker closer.
 
 ### Bearing Offset
 
@@ -479,7 +493,11 @@ The field of view is derived from viewer `zoom`:
 fov = 90 / zoom
 ```
 
-FOV only controls sector width. It does not control sector depth.
+FOV controls sector width and the ratio from `CalFOV` to the current calibrated distance. When current FOV equals `CalFOV` and `Scale=1.0`, sector depth equals `CalDist`. The final display depth is clamped to at least 1.0 m.
+
+The WEB viewer also displays a small HUD with 5 m / 10 m-equivalent range guides and a calibrated distance marker that corresponds to the QGIS-side perpendicular marker. This HUD is not exact monocular depth recovery. It gives the image side the same visual distance cue as the map radar, so the operator can estimate distance by comparing it with the 5 m / 10 m guides. The toolbar `HUD` button shows or hides it.
+
+When the operator clicks the image in the WEB viewer, the viewer stores the clicked point's absolute 360 yaw, relative yaw from the clicked-time view center, and clicked-time zoom in `viewer_session.json` as `target`. QGIS projects it as a temporary RubberBand point by taking the calibrated forward distance for the clicked-time FOV, dividing it by `cos(yaw_delta)`, and projecting from the camera point toward `heading + Offset + target_yaw`. This is an experimental map-plane projection aid and does not write to a user feature layer.
 
 When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
 

@@ -8,14 +8,14 @@ import os
 from qgis.PyQt import QtGui, QtWidgets
 from qgis.PyQt.QtWidgets import (
     QWidget, QPushButton, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
-    QComboBox, QDoubleSpinBox, QSpinBox
+    QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
     QEvent, QTimer, QVariant, Qt
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
-    QgsProject, QgsField, QgsVectorFileWriter
+    QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform
 )
 
 from .common import (
@@ -72,6 +72,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_progressive_jpeg = True
         self.viewer_max_width = 3072
         self.created_layer_ids = []
+        self.frame_layer_id = None
         self.session_closing = False
         self.current_frame = None
         self.viewer_session_timer = None
@@ -81,9 +82,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_sector_band = None
         self.radar_direction_band = None
         self.radar_perpendicular_band = None
+        self.radar_target_line_band = None
+        self.radar_target_point_band = None
         self.last_radar_heading = None
         self.last_radar_sector_radius_m = None
         self.last_radar_frame_index = None
+        self.current_viewer_fov = None
+        self.current_marker_distance_m = None
         self.frame_position_by_frame = {}
         self.toolbar = None
         self._gui_initialized = False
@@ -177,6 +182,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.extract_button = QPushButton("Extract")
         self.extract_button.clicked.connect(self.extractTestFrame)
         set_fixed_width(self.extract_button, 72)
+        self.follow_frame_checkbox = QCheckBox("Follow")
+        self.follow_frame_checkbox.setChecked(False)
+        self.follow_frame_checkbox.setToolTip(
+            "Center the QGIS map on the displayed frame point without changing zoom."
+        )
 
         self.nav_label = QLabel("Nav:")
         self.current_frame_label = QLabel("Current: -")
@@ -185,7 +195,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode.addItem("Layer point", "layer")
         self.nav_mode.addItem("KP matched CSV", "kp")
         self.nav_mode.setToolTip(
-            "Frame step moves by frame number. Layer point moves through the selected frame layer. "
+            "Frame step moves by frame number. Layer point moves through the GPXVideoProcessor frame layer. "
             "KP matched CSV moves through matched frame_index values."
         )
         set_fixed_width(self.nav_mode, 126)
@@ -241,9 +251,38 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_scale.setValue(1.0)
         self.radar_scale.setSuffix(" x")
         self.radar_scale.setToolTip(
-            "Multiplier for the dynamic radar sector depth derived from +/-10 frame travel distance."
+            "Manual multiplier for the calibrated radar marker distance."
         )
         set_fixed_width(self.radar_scale, 78)
+        self.current_fov_label = QLabel("FOV: -")
+        self.marker_distance_label = QLabel("Marker: -")
+        self.target_projection_label = QLabel("Click: -")
+        self.radar_cal_fov_label = QLabel("CalFOV:")
+        self.radar_cal_fov = QDoubleSpinBox()
+        self.radar_cal_fov.setRange(1.0, 179.0)
+        self.radar_cal_fov.setDecimals(1)
+        self.radar_cal_fov.setSingleStep(1.0)
+        self.radar_cal_fov.setValue(90.0)
+        self.radar_cal_fov.setSuffix(" deg")
+        self.radar_cal_fov.setToolTip(
+            "Reference field of view used when the marker distance was calibrated."
+        )
+        set_fixed_width(self.radar_cal_fov, 92)
+        self.radar_cal_distance_label = QLabel("CalDist:")
+        self.radar_cal_distance = QDoubleSpinBox()
+        self.radar_cal_distance.setRange(0.1, 500.0)
+        self.radar_cal_distance.setDecimals(1)
+        self.radar_cal_distance.setSingleStep(0.5)
+        self.radar_cal_distance.setValue(5.0)
+        self.radar_cal_distance.setSuffix(" m")
+        self.radar_cal_distance.setToolTip(
+            "Calibrated center-view marker distance at CalFOV before Scale is applied."
+        )
+        set_fixed_width(self.radar_cal_distance, 84)
+        self.use_current_fov_button = QPushButton("Use FOV")
+        self.use_current_fov_button.clicked.connect(self.useCurrentFovForCalibration)
+        self.use_current_fov_button.setToolTip("Set CalFOV to the current viewer FOV.")
+        set_fixed_width(self.use_current_fov_button, 74)
         self.radar_offset_label = QLabel("Offset:")
         self.radar_offset = QComboBox()
         for offset in (0, 90, 180, 270):
@@ -312,6 +351,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.extract_button,
             self.click_mode_button,
             self.stop_click_mode_button,
+            self.follow_frame_checkbox,
             "stretch",
         )
         compact_row(
@@ -333,6 +373,18 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.radar_scale,
             self.radar_offset_label,
             self.radar_offset,
+            "stretch",
+        )
+        compact_row(
+            control_layout,
+            self.current_fov_label,
+            self.marker_distance_label,
+            self.target_projection_label,
+            self.radar_cal_fov_label,
+            self.radar_cal_fov,
+            self.radar_cal_distance_label,
+            self.radar_cal_distance,
+            self.use_current_fov_button,
             "stretch",
         )
         control_layout.addWidget(self.preview_info)
@@ -388,12 +440,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def frameKeyboardNavigationActive(self):
         """現在のQGIS状態でキーボードフレーム移動を有効にしてよいかを返す。"""
-        if self.frame_click_tool is None:
-            return False
+        if self.panelHasKeyboardFocus():
+            return True
         try:
-            return self.iface.mapCanvas().mapTool() is self.frame_click_tool
+            return self.frame_click_tool is not None and self.iface.mapCanvas().mapTool() is self.frame_click_tool
         except Exception:
             return False
+
+    def panelHasKeyboardFocus(self):
+        """操作パネルまたはその子ウィジェットにフォーカスがあるかを返す。"""
+        focus = QtWidgets.QApplication.focusWidget()
+        if focus is None:
+            return False
+        return focus is self or self.isAncestorOf(focus) or focus.window() is self
 
     def shouldIgnoreNavigationKeyTarget(self):
         """入力ウィジェット操作中は左右キーをフレーム移動に使わない。"""
@@ -562,19 +621,72 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 self.frame_click_tool.highlightFeature(feature)
             except Exception:
                 pass
+        self.centerMapOnFeature(feature)
         self.showFrameInViewer(frame_num)
         # ブラウザ表示を先に走らせ、重いJPEG抽出が体感レスポンスを邪魔しないようにする。
         QTimer.singleShot(150, lambda: self.extractFrame(frame_num, feature=feature))
+
+    def centerMapOnFeature(self, feature):
+        """Follow有効時、表示フレーム地物を地図中心へ移動する。"""
+        if feature is None:
+            return
+        if not getattr(self, "follow_frame_checkbox", None) or not self.follow_frame_checkbox.isChecked():
+            return
+
+        geom = feature.geometry()
+        if geom is None or geom.isEmpty():
+            return
+
+        try:
+            layer = self.activeFrameLayer()
+            canvas = self.iface.mapCanvas()
+            point = geom.asPoint()
+            if layer is not None and layer.crs() != canvas.mapSettings().destinationCrs():
+                transform = QgsCoordinateTransform(
+                    layer.crs(),
+                    canvas.mapSettings().destinationCrs(),
+                    QgsProject.instance()
+                )
+                point = transform.transform(QgsPointXY(point))
+
+            canvas.setCenter(QgsPointXY(point))
+            canvas.refresh()
+        except Exception as e:
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to center map on frame: {e}")
 
     def displayCurrentFrame(self):
         """現在フレームを再表示する。キーボードSpace操作からも使う。"""
         frame_num = self.currentFrameValue()
         self.displayFrame(frame_num, feature=self.findFeatureByFrame(frame_num))
 
+    def useCurrentFovForCalibration(self):
+        """現在ビューアFOVを距離校正基準FOVへ反映する。"""
+        fov = getattr(self, "current_viewer_fov", None)
+        if fov is None:
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Current viewer FOV is not available yet.")
+            return
+        self.radar_cal_fov.setValue(float(fov))
+        self.iface.messageBar().pushMessage(PLUGIN_TITLE, f"Calibration FOV set to {float(fov):.1f} deg.")
+
     def activeFrameLayer(self):
-        """ナビゲーション対象となるVideo GPX Pointsレイヤを取得する。"""
+        """ナビゲーション対象のVideo GPX Pointsレイヤを選択状態に依存せず取得する。"""
+        project = QgsProject.instance()
+
+        if self.frame_layer_id:
+            layer = project.mapLayer(self.frame_layer_id)
+            if layer is not None and layer.fields().indexFromName("frame") >= 0:
+                return layer
+
+        for layer_id in reversed(self.created_layer_ids):
+            layer = project.mapLayer(layer_id)
+            if layer is not None and layer.fields().indexFromName("frame") >= 0:
+                self.frame_layer_id = layer.id()
+                return layer
+
         if self.frame_click_tool is not None and self.frame_click_tool.layer is not None:
-            return self.frame_click_tool.layer
+            layer = self.frame_click_tool.layer
+            if layer.fields().indexFromName("frame") >= 0:
+                return layer
 
         layer = self.iface.activeLayer()
         if layer is None:
@@ -710,7 +822,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         layer = self.activeFrameLayer()
         if layer is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select or activate a Video GPX Points layer first.")
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No Video GPX Points layer is available. Run Process first.")
             return None, None
 
         frames = self.layerFrames(layer)
@@ -763,6 +875,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 continue
             project.removeMapLayer(layer_id)
             removed_count += 1
+            if layer_id == self.frame_layer_id:
+                self.frame_layer_id = None
 
         self.created_layer_ids = remaining_layer_ids
         return removed_count
@@ -854,6 +968,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """セッション終了後にパネル上の一時状態を初期化する。"""
         self.last_rows = []
         self.frame_position_by_frame = {}
+        self.frame_layer_id = None
         self.setCurrentFrame(None)
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
@@ -916,10 +1031,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=True)
 
     def activateClickMode(self):
-        """現在アクティブなframe属性付きレイヤをクリック待ち受け状態にする。"""
-        layer = self.iface.activeLayer()
+        """参照用Video GPX Pointsレイヤをクリック待ち受け状態にする。"""
+        layer = self.activeFrameLayer()
         if layer is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select a Video GPX Points layer first.")
+            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No Video GPX Points layer is available. Run Process first.")
             return
         if layer.fields().indexFromName("frame") < 0:
             self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Selected layer has no frame field.")
@@ -1039,6 +1154,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             layer.updateExtents()
             QgsProject.instance().addMapLayer(layer)
             self.created_layer_ids.append(layer.id())
+            self.frame_layer_id = layer.id()
             print("Layer added successfully.")
             self.iface.messageBar().pushMessage(PLUGIN_TITLE, "Layer added successfully.")
             self.exportFrameData(rows, matches=matches, match_count=match_count)

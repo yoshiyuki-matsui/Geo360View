@@ -345,6 +345,9 @@ class ViewerControllerMixin:
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
         }
+        radar_payload = self.viewerRadarHudPayload(frame_num)
+        if radar_payload:
+            payload["radar"] = radar_payload
         data = json.dumps(payload).encode("utf-8")
         request = Request(
             f"{self.viewerBaseUrl()}/api/session/navigate",

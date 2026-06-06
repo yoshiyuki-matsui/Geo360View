@@ -6,6 +6,10 @@ import os
 
 from qgis.PyQt import QtGui
 from qgis.PyQt.QtCore import QTimer
+try:
+    from qgis.PyQt import sip
+except ImportError:  # pragma: no cover - QGIS配布差異への保険
+    sip = None
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
@@ -23,6 +27,8 @@ RADAR_TRAJECTORY_WINDOW_FRAMES = 10
 RADAR_HEADING_JUMP_THRESHOLD_DEG = 45.0
 RADAR_MIN_DISTANCE_M = 0.5
 RADAR_MIN_SECTOR_RADIUS_M = 1.0
+RADAR_MIN_ZOOM_DISTANCE_MULTIPLIER = 0.25
+RADAR_MAX_ZOOM_DISTANCE_MULTIPLIER = 8.0
 
 
 class RadarMixin:
@@ -63,6 +69,7 @@ class RadarMixin:
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         pitch = _parse_float(state.get("pitch"))
         zoom = _parse_float(state.get("zoom"))
+        target = state.get("target") if isinstance(state.get("target"), dict) else {}
         radar_radius = getattr(self, "radar_radius", None)
         range_m = float(radar_radius.value()) if radar_radius is not None else 0.0
         # 同じ状態を繰り返し描画しないため、表示に関係する値だけで署名を作る。
@@ -72,8 +79,13 @@ class RadarMixin:
             round(yaw or 0.0, 3),
             round(pitch or 0.0, 3),
             round(zoom or 1.0, 3),
+            round(_parse_float(target.get("target_yaw_to_camera_heading")) or 0.0, 3),
+            round(_parse_float(target.get("yaw_delta_deg")) or 0.0, 3),
+            round(_parse_float(target.get("view_zoom")) or 0.0, 3),
             round(range_m, 3),
             round(self.radarScaleValue(), 3),
+            round(self.radarCalibrationFovValue(), 3),
+            round(self.radarCalibrationDistanceValue(), 3),
             round(self.radarBearingOffsetValue(), 3),
             state.get("updated_at"),
         )
@@ -134,6 +146,93 @@ class RadarMixin:
         zoom = max(zoom or 1.0, 0.01)
         return max(1.0, min(179.0, 90.0 / zoom))
 
+    def viewerDistanceMultiplier(self, state):
+        """ビューアzoomからレーダ奥行き用の距離倍率を求める。"""
+        zoom = _parse_float(state.get("zoom"))
+        zoom = max(zoom or 1.0, 0.01)
+        # ズームインは近い対象を大きく見る操作として扱い、距離線は手前へ寄せる。
+        inverse_zoom = 1.0 / zoom
+        return max(
+            RADAR_MIN_ZOOM_DISTANCE_MULTIPLIER,
+            min(RADAR_MAX_ZOOM_DISTANCE_MULTIPLIER, inverse_zoom)
+        )
+
+    def radarCalibrationFovValue(self):
+        """UIのCalFOV値を取得する。未初期化時は90度を返す。"""
+        radar_cal_fov = getattr(self, "radar_cal_fov", None)
+        if radar_cal_fov is None:
+            return 90.0
+        return max(1.0, min(179.0, float(radar_cal_fov.value())))
+
+    def radarCalibrationDistanceValue(self):
+        """UIのCalDist値を取得する。未初期化時は5mを返す。"""
+        radar_cal_distance = getattr(self, "radar_cal_distance", None)
+        if radar_cal_distance is None:
+            return 5.0
+        return max(0.1, float(radar_cal_distance.value()))
+
+    def calibratedMarkerDistance(self, state):
+        """現在FOVと校正値から、地図上へ描く垂線中心距離を求める。"""
+        return self.calibratedMarkerDistanceForFov(self.viewerFov(state))
+
+    def calibratedMarkerDistanceForFov(self, fov):
+        """指定FOVと校正値から、地図上へ描く中心距離を求める。"""
+        cal_fov = self.radarCalibrationFovValue()
+        current_half_tan = math.tan(math.radians(float(fov) / 2.0))
+        calibration_half_tan = math.tan(math.radians(cal_fov / 2.0))
+        if abs(calibration_half_tan) < 1e-9:
+            ratio = 1.0
+        else:
+            ratio = current_half_tan / calibration_half_tan
+        return max(
+            RADAR_MIN_SECTOR_RADIUS_M,
+            self.radarCalibrationDistanceValue() * self.radarScaleValue() * ratio
+        )
+
+    def updateRadarCalibrationReadout(self, fov, marker_distance_m):
+        """現在FOVと垂線距離を操作パネルへ表示する。"""
+        self.current_viewer_fov = float(fov)
+        self.current_marker_distance_m = float(marker_distance_m)
+        current_fov_label = getattr(self, "current_fov_label", None)
+        if current_fov_label is not None:
+            current_fov_label.setText(f"FOV: {float(fov):.1f}deg")
+        marker_distance_label = getattr(self, "marker_distance_label", None)
+        if marker_distance_label is not None:
+            marker_distance_label.setText(f"Marker: {float(marker_distance_m):.1f}m")
+
+    def updateRadarTargetReadout(self, target_projection):
+        """360ビューアクリック投影点の距離と相対角を操作パネルへ表示する。"""
+        target_projection_label = getattr(self, "target_projection_label", None)
+        if target_projection_label is None:
+            return
+        if not target_projection:
+            target_projection_label.setText("Click: -")
+            return
+        distance_m = target_projection["distance_m"]
+        yaw_delta = target_projection["yaw_delta_deg"]
+        target_projection_label.setText(f"Click: {distance_m:.1f}m {yaw_delta:+.1f}deg")
+
+    def viewerRadarHudPayload(self, frame_index):
+        """WEBビューアHUDへ渡すレーダ距離補助値を作る。"""
+        try:
+            fixed_radius_m = float(self.radar_radius.value())
+        except Exception:
+            return None
+        calibration_distance_m = self.radarCalibrationDistanceValue()
+        manual_scale = self.radarScaleValue()
+
+        return {
+            "range_m": fixed_radius_m,
+            "outer_range_m": fixed_radius_m * 2.0,
+            "base_sector_radius_m": float(calibration_distance_m * manual_scale),
+            "calibration_fov_deg": self.radarCalibrationFovValue(),
+            "calibration_distance_m": calibration_distance_m,
+            "manual_scale": manual_scale,
+            "min_sector_radius_m": RADAR_MIN_SECTOR_RADIUS_M,
+            "min_zoom_multiplier": RADAR_MIN_ZOOM_DISTANCE_MULTIPLIER,
+            "max_zoom_multiplier": RADAR_MAX_ZOOM_DISTANCE_MULTIPLIER,
+        }
+
     def destinationPoint(self, lat, lon, bearing_deg, distance_m):
         """緯度経度から指定方位・距離だけ進んだWGS84上の点を返す。"""
         earth_radius_m = 6378137.0
@@ -183,6 +282,10 @@ class RadarMixin:
     def headingDelta(self, heading_a, heading_b):
         """0/360度境界をまたいでも最小角度差としてheading差を返す。"""
         return abs((float(heading_a) - float(heading_b) + 180.0) % 360.0 - 180.0)
+
+    def signedAngleDelta(self, angle_a, angle_b):
+        """angle_aからangle_bへの差を-180..180度の符号付き角度で返す。"""
+        return (float(angle_b) - float(angle_a) + 180.0) % 360.0 - 180.0
 
     def radarScaleValue(self):
         """UIのScale値を取得する。古いUI状態では安全な既定値を返す。"""
@@ -311,6 +414,18 @@ class RadarMixin:
             self.radar_perpendicular_band.setColor(QtGui.QColor(255, 255, 255, 230))
             self.radar_perpendicular_band.setWidth(2)
 
+        if self.radar_target_line_band is None:
+            self.radar_target_line_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_target_line_band.setColor(QtGui.QColor(70, 255, 130, 230))
+            self.radar_target_line_band.setWidth(2)
+
+        if self.radar_target_point_band is None:
+            self.radar_target_point_band = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+            self.radar_target_point_band.setColor(QtGui.QColor(70, 255, 130, 240))
+            self.radar_target_point_band.setWidth(5)
+            if hasattr(self.radar_target_point_band, "setIconSize"):
+                self.radar_target_point_band.setIconSize(10)
+
     def setRadarPolygon(self, rubber_band, points):
         """WGS84点列をcanvas CRSへ変換し、ポリゴンRubberBandへ反映する。"""
         transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
@@ -322,6 +437,67 @@ class RadarMixin:
         transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
         rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(transformed), None)
         rubber_band.show()
+
+    def setRadarPoint(self, rubber_band, point):
+        """WGS84点をcanvas CRSへ変換し、ポイントRubberBandへ反映する。"""
+        transformed = self.canvasPoint(point.x(), point.y())
+        rubber_band.setToGeometry(QgsGeometry.fromPointXY(transformed), None)
+        rubber_band.show()
+
+    def hideRadarTargetBands(self):
+        """クリック投影点がない場合、投影点用RubberBandだけを非表示にする。"""
+        for attr_name, geometry_type in (
+            ("radar_target_line_band", QgsWkbTypes.LineGeometry),
+            ("radar_target_point_band", QgsWkbTypes.PointGeometry),
+        ):
+            rubber_band = getattr(self, attr_name, None)
+            if rubber_band is None:
+                continue
+            try:
+                rubber_band.hide()
+                rubber_band.reset(geometry_type)
+            except Exception:
+                pass
+
+    def viewerTargetProjection(self, lat, lon, heading, state):
+        """360ビューアでクリックした球面位置を、撮影点周辺の地図点へ投影する。"""
+        target = state.get("target")
+        if not isinstance(target, dict):
+            return None
+
+        target_yaw = _parse_float(target.get("target_yaw_to_camera_heading"))
+        view_yaw = _parse_float(target.get("view_yaw_to_camera_heading"))
+        yaw_delta = _parse_float(target.get("yaw_delta_deg"))
+        if target_yaw is None:
+            state_yaw = _parse_float(state.get("yaw_to_camera_heading")) or 0.0
+            if yaw_delta is None:
+                return None
+            target_yaw = (state_yaw + yaw_delta) % 360.0
+        if view_yaw is None:
+            state_yaw = _parse_float(state.get("yaw_to_camera_heading")) or 0.0
+            view_yaw = state_yaw
+        if yaw_delta is None:
+            yaw_delta = self.signedAngleDelta(view_yaw, target_yaw)
+
+        view_zoom = _parse_float(target.get("view_zoom"))
+        fov = self.viewerFov({"zoom": view_zoom}) if view_zoom is not None else self.viewerFov(state)
+        forward_distance_m = self.calibratedMarkerDistanceForFov(fov)
+
+        # クリック点を「クリック時視線に垂直な平面」へ落とすPoC。
+        # 相対yawが大きいほど、前方距離をcosで割った斜距離になる。
+        cos_delta = math.cos(math.radians(yaw_delta))
+        if abs(cos_delta) < 0.1:
+            cos_delta = 0.1 if cos_delta >= 0 else -0.1
+        distance_m = max(RADAR_MIN_SECTOR_RADIUS_M, forward_distance_m / abs(cos_delta))
+        target_bearing = (heading + self.radarBearingOffsetValue() + target_yaw) % 360.0
+        point = self.destinationPoint(lat, lon, target_bearing, distance_m)
+        return {
+            "point": point,
+            "bearing": target_bearing,
+            "distance_m": distance_m,
+            "forward_distance_m": forward_distance_m,
+            "yaw_delta_deg": yaw_delta,
+        }
 
     def renderViewerRadar(self, state):
         """ビューア状態をもとに同心円・扇形・方向線を再描画する。"""
@@ -337,9 +513,11 @@ class RadarMixin:
         self.setCurrentFrame(frame_index)
         fixed_radius_m = float(self.radar_radius.value())
         outer_radius_m = fixed_radius_m * 2.0
-        heading, sector_radius_m = self.radarHeadingAndRadius(frame_index)
+        heading, _trajectory_radius_m = self.radarHeadingAndRadius(frame_index)
+        sector_radius_m = self.calibratedMarkerDistance(state)
         bearing = self.viewerBearing(heading, state)
         fov = self.viewerFov(state)
+        self.updateRadarCalibrationReadout(fov, sector_radius_m)
         center = QgsPointXY(float(lon), float(lat))
 
         # Rangeは絶対距離の基準線。扇形の奥行きとは別扱いにする。
@@ -377,6 +555,7 @@ class RadarMixin:
             bearing + 90.0,
             perpendicular_half_m
         )
+        target_projection = self.viewerTargetProjection(lat, lon, heading, state)
 
         self.ensureRadarBands()
         self.setRadarPolygon(self.radar_circle_band, circle_points)
@@ -384,25 +563,59 @@ class RadarMixin:
         self.setRadarPolygon(self.radar_sector_band, sector_points)
         self.setRadarLine(self.radar_direction_band, [center, direction_end])
         self.setRadarLine(self.radar_perpendicular_band, [perpendicular_start, perpendicular_end])
+        if target_projection:
+            self.setRadarLine(self.radar_target_line_band, [center, target_projection["point"]])
+            self.setRadarPoint(self.radar_target_point_band, target_projection["point"])
+        else:
+            self.hideRadarTargetBands()
+        self.updateRadarTargetReadout(target_projection)
 
     def clearRadar(self):
         """地図上のレーダRubberBandと前回値をすべて破棄する。"""
         canvas = self.iface.mapCanvas()
-        for attr_name in (
-            "radar_circle_band",
-            "radar_outer_circle_band",
-            "radar_sector_band",
-            "radar_direction_band",
-            "radar_perpendicular_band",
-        ):
+        band_types = {
+            "radar_circle_band": QgsWkbTypes.PolygonGeometry,
+            "radar_outer_circle_band": QgsWkbTypes.PolygonGeometry,
+            "radar_sector_band": QgsWkbTypes.PolygonGeometry,
+            "radar_direction_band": QgsWkbTypes.LineGeometry,
+            "radar_perpendicular_band": QgsWkbTypes.LineGeometry,
+            "radar_target_line_band": QgsWkbTypes.LineGeometry,
+            "radar_target_point_band": QgsWkbTypes.PointGeometry,
+        }
+        removed_any = False
+        for attr_name, geometry_type in band_types.items():
             rubber_band = getattr(self, attr_name, None)
             if rubber_band is not None:
+                # QGISのRubberBandはMapCanvas上のQGraphicsItemなので、
+                # 非表示化、形状リセット、sceneからの除去を順に行い描画残りを避ける。
                 try:
-                    canvas.scene().removeItem(rubber_band)
+                    rubber_band.hide()
                 except Exception:
                     pass
+                try:
+                    rubber_band.reset(geometry_type)
+                except Exception:
+                    pass
+                try:
+                    scene = rubber_band.scene() or canvas.scene()
+                    scene.removeItem(rubber_band)
+                except Exception:
+                    pass
+                if sip is not None:
+                    try:
+                        sip.delete(rubber_band)
+                    except Exception:
+                        pass
                 setattr(self, attr_name, None)
+                removed_any = True
         self.last_viewer_session_signature = None
         self.last_radar_heading = None
         self.last_radar_sector_radius_m = None
         self.last_radar_frame_index = None
+        self.updateRadarTargetReadout(None)
+        if removed_any:
+            try:
+                canvas.scene().update()
+                canvas.refresh()
+            except Exception:
+                pass

@@ -1,10 +1,10 @@
 # YOLO検出結果の緯度経度化 将来仕様メモ
 
-更新日: 2026-06-04
+更新日: 2026-06-06
 
 この文書は、360画像またはCubeMap平面画像でYOLOが検出した物体位置を、将来的に緯度経度空間の絶対座標へ変換するための座標系と処理順を整理するものです。
 
-現時点では未実装です。GPXVideoProcessor本体の現在機能は、フレーム位置同期、360Viewer表示、レーダ表示までです。
+現時点ではYOLO検出結果の自動緯度経度化は未実装です。ただし、360Viewer上の手動クリック点を校正距離とクリック角からQGIS地図上へ一時投影するPoCは実装済みです。これは、将来YOLO矩形中心を同じ方位・距離モデルで投影できるかを検証するための先行実装です。
 
 ## 目的
 
@@ -33,6 +33,14 @@ YOLO検出矩形
 ```text
 map_bearing_deg = (trajectory_heading_deg + video_front_offset_deg + camera_relative_yaw_deg) % 360
 ```
+
+手動クリック点のPoCでは、クリック時のビューア中心前方距離を `forward_distance_m` とし、クリック点の相対yawを `yaw_delta_deg` として、次の近似で地図上距離を求めます。
+
+```text
+target_distance_m = forward_distance_m / cos(yaw_delta_deg)
+```
+
+これは「クリック時視線に垂直な平面」へ投影する方式です。単眼360画像だけから実距離を自動復元するものではありませんが、YOLO矩形中心を地図へ投影する際の距離モデル候補として扱えます。
 
 ## 非対象
 
@@ -561,6 +569,8 @@ normalize180(deg) = ((deg + 180) % 360) - 180
 - `Offset=0`, 正面対象: 進行方向へ出る
 - `Offset=180`, 正面対象: 進行方向後ろへ出る
 - `Offset=180`, 動画正面から右90度対象: 進行方向左へ出る
+
+手動クリックPoCでは、ビューア上のクリック位置が `target_yaw_to_camera_heading` として保存され、QGIS側では `heading + Offset + target_yaw_to_camera_heading` 方向へ一時点を描きます。YOLO矩形中心も最終的にはこの `target_yaw_to_camera_heading` 相当の角度へ変換できれば、同じ方位投影を使えます。
 
 ### 真横代表フレーム方式の確認
 
