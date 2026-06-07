@@ -99,10 +99,12 @@ class FrameExtractMixin:
 
     def extractFrame(self, frame_num, feature=None):
         """指定フレームを動画から抽出し、キャッシュ保存とプレビュー更新を行う。"""
-        if not self.video_file:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select a video file first.")
+        config = self.collectFrameExtractConfig(frame_num)
+        if config is None:
             return
 
+        frame_num = int(config.frame_number)
+        video_file = config.video_file
         self.setCurrentFrame(frame_num)
         image_dir = self.imagesDir()
         image_path = self.frameImagePath(frame_num)
@@ -112,7 +114,7 @@ class FrameExtractMixin:
             os.makedirs(image_dir, exist_ok=True)
             os.makedirs(image_parent_dir, exist_ok=True)
         except OSError as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to create images directory: {e}")
+            self.notifyWarning("images_dir_failed", error=e)
             return
 
         start = time.perf_counter()
@@ -121,21 +123,21 @@ class FrameExtractMixin:
             elapsed = time.perf_counter() - start
             info = f"Frame {frame_num} cached: {image_path} ({elapsed:.3f}s)"
             self.loadPreview(image_path, info)
-            self.iface.messageBar().pushMessage(PLUGIN_TITLE, info)
+            self.notifyInfo("frame_cached", frame=frame_num, elapsed=elapsed)
             return
 
         try:
             import cv2
         except ImportError as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"OpenCV (cv2) is not available: {e}")
+            self.notifyWarning("opencv_unavailable", error=e)
             return
 
         cap = None
         try:
             open_start = time.perf_counter()
-            cap = cv2.VideoCapture(self.video_file)
+            cap = cv2.VideoCapture(video_file)
             if not cap.isOpened():
-                self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Failed to open video file.")
+                self.notifyWarning("video_open_failed")
                 return
             open_elapsed = time.perf_counter() - open_start
 
@@ -144,7 +146,7 @@ class FrameExtractMixin:
             ok, frame = cap.read()
             decode_elapsed = time.perf_counter() - seek_start
             if not ok or frame is None:
-                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to read frame {frame_num}.")
+                self.notifyWarning("frame_read_failed", frame=frame_num)
                 return
 
             save_start = time.perf_counter()
@@ -157,7 +159,7 @@ class FrameExtractMixin:
             )
             save_elapsed = time.perf_counter() - save_start
         except Exception as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to extract frame: {e}")
+            self.notifyWarning("frame_extract_failed", error=e)
             return
         finally:
             if cap is not None:
@@ -170,4 +172,4 @@ class FrameExtractMixin:
             f"save {save_elapsed:.3f}s, total {total_elapsed:.3f}s)"
         )
         self.loadPreview(image_path, info)
-        self.iface.messageBar().pushMessage(PLUGIN_TITLE, info)
+        self.notifyInfo("frame_saved", frame=frame_num, total=total_elapsed, path=image_path)

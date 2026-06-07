@@ -1,6 +1,6 @@
 # GPXVideoProcessor Design Notes
 
-Last updated: 2026-06-04
+Last updated: 2026-06-07
 
 ## Purpose
 
@@ -22,11 +22,13 @@ This plugin is not intended to export all final evidence images. Full export is 
 GPXVideoProcessor/
 ├── main.py                      QGIS plugin UI and top-level controller
 ├── constants.py                 Shared plugin constants
+├── config.py                    UI input Config dataclasses and pure-Python validation
 ├── common.py                    CSV, string, timestamp, and naming helpers
 ├── processor.py                 QThread that generates frame positions from GPX and MP4
 ├── viewer_controller.py         360Viewer process control and HTTP integration
 ├── frame_extract.py             Frame extraction, EXIF writing, and QGIS preview display
 ├── map_tools.py                 QGIS map-click tool
+├── messages.py                  User-facing message templates and locale switching
 ├── radar.py                     viewer_session.json polling and radar overlay drawing
 ├── exporter.py                  TenkakuNinja Exporter compatibility CLI wrapper
 ├── kp.py                        KP CSV reader and nearest-neighbor matching
@@ -46,6 +48,8 @@ GPXVideoProcessor/
 │   └── requirements.txt         OpenCV only
 ├── docs/
 │   ├── exporter_spec.md         Frame image exporter specification
+│   ├── quality_assurance.md     Quality policy, regression tests, and manual checks
+│   ├── qgis_manual_test_checklist.md QGIS manual test checklist by feature
 │   ├── rader_spec.md            Real-scale radar overlay specification
 │   ├── tenkaku_ninja_operations.md TenkakuNinja-derived large JPEG operation notes
 │   └── yolo_georeference_spec.md Future YOLO-to-georeference specification notes
@@ -63,6 +67,7 @@ The QGIS plugin and the browser viewer are loosely coupled. The QGIS plugin star
 Current responsibilities:
 
 - `processor.py`: background GPX/video frame-position generation.
+- `config.py`: pure-Python input validation layer that groups UI values into feature-level Config objects before processing.
 - `kp.py`: KP CSV column detection, spatial indexing, and tolerance-based nearest-neighbor matching.
 - `viewer_controller.py`: 360Viewer runtime config, QProcess lifecycle, HTTP health checks, and browser launch.
 - `frame_extract.py`: single-frame OpenCV extraction, JPEG/EXIF writing, and QGIS panel preview.
@@ -94,6 +99,8 @@ As of 2026-06-04, the following behavior has been implemented and checked:
 - Radar sector depth and the perpendicular distance marker are driven by `CalFOV`, `CalDist`, `Scale`, and the current viewer FOV.
 - A clicked point in the WEB viewer can be temporarily projected onto the QGIS map using the calibrated center distance and the clicked yaw angle.
 - Real-device data from Insta360 X4 + smartphone remote/GNSS has been tested: Insta360-exported GPX and H.265 MP4 can be loaded directly.
+- `config.py` now validates Process, single-frame extraction, navigation, radar, and 360Viewer startup inputs outside QGIS.
+- `docs/qgis_manual_test_checklist.md` lists QGIS manual checks by feature.
 
 ## Runtime Environment
 

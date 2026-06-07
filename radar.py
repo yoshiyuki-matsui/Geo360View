@@ -70,8 +70,11 @@ class RadarMixin:
         pitch = _parse_float(state.get("pitch"))
         zoom = _parse_float(state.get("zoom"))
         target = state.get("target") if isinstance(state.get("target"), dict) else {}
-        radar_radius = getattr(self, "radar_radius", None)
-        range_m = float(radar_radius.value()) if radar_radius is not None else 0.0
+        radar_config = self.collectRadarConfig(show_errors=False)
+        if radar_config is None:
+            self.clearRadar()
+            return
+        range_m = radar_config.range_m
         # 同じ状態を繰り返し描画しないため、表示に関係する値だけで署名を作る。
         signature = (
             state.get("video"),
@@ -83,10 +86,10 @@ class RadarMixin:
             round(_parse_float(target.get("yaw_delta_deg")) or 0.0, 3),
             round(_parse_float(target.get("view_zoom")) or 0.0, 3),
             round(range_m, 3),
-            round(self.radarScaleValue(), 3),
-            round(self.radarCalibrationFovValue(), 3),
-            round(self.radarCalibrationDistanceValue(), 3),
-            round(self.radarBearingOffsetValue(), 3),
+            round(radar_config.scale, 3),
+            round(radar_config.cal_fov_deg, 3),
+            round(radar_config.cal_dist_m, 3),
+            round(radar_config.offset_deg, 3),
             state.get("updated_at"),
         )
         if signature == self.last_viewer_session_signature:
@@ -214,18 +217,18 @@ class RadarMixin:
 
     def viewerRadarHudPayload(self, frame_index):
         """WEBビューアHUDへ渡すレーダ距離補助値を作る。"""
-        try:
-            fixed_radius_m = float(self.radar_radius.value())
-        except Exception:
+        radar_config = self.collectRadarConfig(show_errors=False)
+        if radar_config is None:
             return None
-        calibration_distance_m = self.radarCalibrationDistanceValue()
-        manual_scale = self.radarScaleValue()
+        fixed_radius_m = radar_config.range_m
+        calibration_distance_m = radar_config.cal_dist_m
+        manual_scale = radar_config.scale
 
         return {
             "range_m": fixed_radius_m,
             "outer_range_m": fixed_radius_m * 2.0,
             "base_sector_radius_m": float(calibration_distance_m * manual_scale),
-            "calibration_fov_deg": self.radarCalibrationFovValue(),
+            "calibration_fov_deg": radar_config.cal_fov_deg,
             "calibration_distance_m": calibration_distance_m,
             "manual_scale": manual_scale,
             "min_sector_radius_m": RADAR_MIN_SECTOR_RADIUS_M,
@@ -501,6 +504,11 @@ class RadarMixin:
 
     def renderViewerRadar(self, state):
         """ビューア状態をもとに同心円・扇形・方向線を再描画する。"""
+        radar_config = self.collectRadarConfig(show_errors=False)
+        if radar_config is None:
+            self.clearRadar()
+            return
+
         frame_index = self.sessionFrameIndex(state)
         if frame_index is None:
             return
@@ -511,7 +519,7 @@ class RadarMixin:
             return
 
         self.setCurrentFrame(frame_index)
-        fixed_radius_m = float(self.radar_radius.value())
+        fixed_radius_m = radar_config.range_m
         outer_radius_m = fixed_radius_m * 2.0
         heading, _trajectory_radius_m = self.radarHeadingAndRadius(frame_index)
         sector_radius_m = self.calibratedMarkerDistance(state)

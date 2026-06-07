@@ -1,6 +1,6 @@
 # GPXVideoProcessor 設計メモ
 
-更新日: 2026-06-06
+更新日: 2026-06-07
 
 ## 目的
 
@@ -22,11 +22,13 @@ GPXVideoProcessor は、360度MP4動画のフレーム番号と、GPXから得�
 GPXVideoProcessor/
 ├── main.py                      QGISプラグインUI/全体制御
 ├── constants.py                 プラグイン共通定数
+├── config.py                    UI入力Configと純Python validation
 ├── common.py                    CSV/文字列/日時などの共通ヘルパー
 ├── processor.py                 GPXとMP4からフレーム位置を生成するQThread
 ├── viewer_controller.py         360Viewer起動・HTTP連携・QProcess制御
 ├── frame_extract.py             静止画抽出・EXIF付与・QGISプレビュー表示
 ├── map_tools.py                 地図クリック用MapTool
+├── messages.py                  ユーザ向けメッセージテンプレートとlocale切替
 ├── radar.py                     viewer_session.json監視とレーダ描画
 ├── exporter.py                  TenkakuNinja Exporter互換CLIラッパー
 ├── kp.py                        KP CSV読込・最近接マッチング
@@ -46,6 +48,8 @@ GPXVideoProcessor/
 │   └── requirements.txt         OpenCVのみ
 ├── docs/
 │   ├── exporter_spec.md         フレーム画像Exporter仕様
+│   ├── quality_assurance.md     品質保証方針・退行テスト・手動確認観点
+│   ├── qgis_manual_test_checklist.md QGIS実機の機能別手動テスト項目
 │   ├── rader_spec.md            レーダ表示の実寸準拠仕様
 │   ├── tenkaku_ninja_operations.md TenkakuNinja由来の大量JPEG運用ノウハウ
 │   └── yolo_georeference_spec.md YOLO検出結果の緯度経度化 将来仕様メモ
@@ -64,6 +68,7 @@ QGISプラグインとWEBビューアは疎結合です。QGIS側はローカル
 現在の主な責務分担:
 
 - `processor.py`: GPXと動画FPSから全フレーム位置を生成するバックグラウンド処理。
+- `config.py`: UI入力を機能単位のConfigへ束ね、処理前に検証する純Python層。
 - `kp.py`: KP CSVの列自動判定、空間インデックス、許容距離内の最近接マッチング。
 - `viewer_controller.py`: 360Viewerの設定ファイル生成、QProcess起動/停止、HTTPヘルスチェック、ブラウザ起動。
 - `frame_extract.py`: OpenCVによる単一フレーム抽出、JPEG/EXIF保存、QGISパネル内プレビュー表示。
@@ -95,6 +100,8 @@ QGISプラグインとWEBビューアは疎結合です。QGIS側はローカル
 - レーダ扇形の奥行きと先端距離線を、`CalFOV` / `CalDist` / `Scale` と現在FOVから校正距離として表示できる。
 - WEBビューア上でクリックした360空間上の点を、校正距離とクリック角から地図平面へ一時投影できる。
 - Insta360 X4 + スマホリモコン/GNSSで撮影したH.265 MP4と、Insta360書き出しGPXをそのまま読み込めることを実機確認した。
+- `config.py` により、Process、単体フレーム抽出、ナビゲーション、レーダ、360Viewer起動設定の入力検証をQGIS非依存のユニットテスト対象にした。
+- QGIS実機で確認すべき操作を `docs/qgis_manual_test_checklist.md` に機能単位で整理した。
 
 ## 実行環境
 

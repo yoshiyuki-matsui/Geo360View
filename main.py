@@ -18,6 +18,13 @@ from qgis.core import (
     QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform
 )
 
+from .config import (
+    validate_frame_extract_config,
+    validate_navigation_config,
+    validate_process_config,
+    validate_radar_config,
+    validate_viewer_config,
+)
 from .common import (
     _base_output_name,
     _format_distance,
@@ -38,6 +45,7 @@ from .constants import (
 from .frame_extract import FrameExtractMixin
 from .kp import build_kp_matches
 from .map_tools import FrameIdentifyTool
+from .messages import message_text
 from .processor import GPXVideoProcessor
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
@@ -53,12 +61,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """QGIS ifaceと、セッション中に共有する状態を初期化する。"""
         super().__init__(parent)
         self.iface = iface
+        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "en")
         self.gpx_file = ""
         self.video_file = ""
         self.kp_file = ""
         self.output_dir = ""
         self.output_dir_user_selected = False
         self.last_rows = []
+        self.last_process_config = None
         self.worker = None
         self.frame_click_tool = None
         self.action = None
@@ -93,6 +103,135 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.toolbar = None
         self._gui_initialized = False
         self._keyboard_filter_installed = False
+
+    def uiMessage(self, key, **params):
+        """現在localeでユーザ向けメッセージを組み立てる。"""
+        return message_text(key, self.message_locale, **params)
+
+    def notifyInfo(self, key, **params):
+        """QGIS messageBarへ正常系メッセージを表示する。"""
+        self.iface.messageBar().pushMessage(PLUGIN_TITLE, self.uiMessage(key, **params))
+
+    def notifyWarning(self, key, **params):
+        """QGIS messageBarへ警告メッセージを表示する。"""
+        self.iface.messageBar().pushWarning(PLUGIN_TITLE, self.uiMessage(key, **params))
+
+    def notifyInfoText(self, text):
+        """既存の詳細文字列をそのまま正常系メッセージとして表示する移行用入口。"""
+        self.iface.messageBar().pushMessage(PLUGIN_TITLE, text)
+
+    def notifyWarningText(self, text):
+        """既存の詳細文字列をそのまま警告メッセージとして表示する移行用入口。"""
+        self.iface.messageBar().pushWarning(PLUGIN_TITLE, text)
+
+    def validationErrorText(self, errors, limit=5):
+        """複数のvalidationエラーをmessageBar向けの短い文へまとめる。"""
+        visible = [str(error) for error in errors[:limit]]
+        if len(errors) > limit:
+            visible.append(f"and {len(errors) - limit} more")
+        return "; ".join(visible)
+
+    def notifyValidationErrors(self, errors):
+        """入力検証エラーをユーザ向け警告として表示する。"""
+        self.notifyWarning("input_validation_failed", errors=self.validationErrorText(errors))
+
+    def collectProcessConfig(self, show_errors=True):
+        """Load/Processタブの入力をProcessConfigへ束ね、処理前に検証する。"""
+        config, errors = validate_process_config({
+            "gpx_file": self.gpx_file,
+            "video_file": self.video_file,
+            "output_dir": self.resolvedOutputDir(),
+            "kp_file": self.kp_file,
+            "frame_shift": self.frame_shift.value(),
+            "kp_tolerance_m": self.kp_tolerance.value(),
+        })
+        if errors:
+            if show_errors:
+                self.notifyValidationErrors(errors)
+            return None
+        return config
+
+    def collectFrameExtractConfig(self, frame_num, show_errors=True):
+        """単一フレーム抽出の入力をFrameExtractConfigへ束ねる。"""
+        config, errors = validate_frame_extract_config({
+            "video_file": self.video_file,
+            "frame_number": frame_num,
+            "output_dir": self.resolvedOutputDir(),
+        })
+        if errors:
+            if show_errors:
+                self.notifyValidationErrors(errors)
+            return None
+        return config
+
+    def collectNavigationConfig(self, show_errors=True):
+        """ナビゲーション入力をNavigationConfigへ束ねる。"""
+        config, errors = validate_navigation_config({
+            "mode": self.nav_mode.currentData(),
+            "step": self.nav_step.value(),
+            "fast_step": self.nav_fast_step.value(),
+            "follow": self.follow_frame_checkbox.isChecked(),
+        })
+        if errors:
+            if show_errors:
+                self.notifyValidationErrors(errors)
+            return None
+        return config
+
+    def collectRadarConfig(self, show_errors=True):
+        """レーダ距離校正入力をRadarConfigへ束ねる。"""
+        config, errors = validate_radar_config({
+            "range_m": self.radar_radius.value(),
+            "scale": self.radar_scale.value(),
+            "cal_fov_deg": self.radar_cal_fov.value(),
+            "cal_dist_m": self.radar_cal_distance.value(),
+            "offset_deg": self.radar_offset.currentData(),
+        })
+        if errors:
+            if show_errors:
+                self.notifyValidationErrors(errors)
+            return None
+        return config
+
+    def collectViewerConfig(self, show_errors=True):
+        """360Viewer実行時設定をViewerConfigへ束ねる。"""
+        self.loadViewerDefaults()
+        config, errors = validate_viewer_config({
+            "host": self.viewer_host,
+            "port": self.viewer_port,
+            "video_dir": self.viewerVideoDir(),
+            "session_json_path": self.viewerSessionPath(),
+            "cache_dir": self.viewerCacheDir(),
+            "jpeg_quality": self.viewer_jpeg_quality,
+            "progressive_jpeg": self.viewer_progressive_jpeg,
+            "max_width": self.viewer_max_width,
+        })
+        if errors:
+            if show_errors:
+                self.notifyValidationErrors(errors)
+            return None
+        return config
+
+    def processFrameShiftValue(self):
+        """実行中Processのframe shiftを、後続レイヤ/CSV出力で一貫利用する。"""
+        config = getattr(self, "last_process_config", None)
+        if config is not None:
+            return int(config.frame_shift)
+        return int(self.frame_shift.value())
+
+    def processKpFileValue(self):
+        """実行中ProcessのKP CSVパスを返す。未指定なら空文字を返す。"""
+        config = getattr(self, "last_process_config", None)
+        if config is not None:
+            return config.kp_file or ""
+        return self.kp_file
+
+    def processKpToleranceValue(self):
+        """実行中ProcessのKP許容距離を返す。"""
+        config = getattr(self, "last_process_config", None)
+        if config is not None:
+            return float(config.kp_tolerance_m)
+        return float(self.kp_tolerance.value())
 
     def initGui(self):
         """QGISメニュー/ツールバー/パネルUIを一度だけ構築する。"""
@@ -612,7 +751,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """指定フレームをビューアへ送り、少し遅らせてQGISプレビューを抽出する。"""
         frame_num = int(frame_num)
         if frame_num < 0:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Frame number must be greater than or equal to 0.")
+            self.notifyWarning("frame_number_nonnegative")
             return
 
         self.setCurrentFrame(frame_num)
@@ -652,7 +791,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             canvas.setCenter(QgsPointXY(point))
             canvas.refresh()
         except Exception as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to center map on frame: {e}")
+            self.notifyWarning("center_map_failed", error=e)
 
     def displayCurrentFrame(self):
         """現在フレームを再表示する。キーボードSpace操作からも使う。"""
@@ -663,10 +802,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """現在ビューアFOVを距離校正基準FOVへ反映する。"""
         fov = getattr(self, "current_viewer_fov", None)
         if fov is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Current viewer FOV is not available yet.")
+            self.notifyWarning("current_viewer_fov_unavailable")
             return
         self.radar_cal_fov.setValue(float(fov))
-        self.iface.messageBar().pushMessage(PLUGIN_TITLE, f"Calibration FOV set to {float(fov):.1f} deg.")
+        self.notifyInfo("calibration_fov_set", fov=float(fov))
 
     def activeFrameLayer(self):
         """ナビゲーション対象のVideo GPX Pointsレイヤを選択状態に依存せず取得する。"""
@@ -798,9 +937,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def navigationTargetFrame(self, direction, fast=False):
         """UIのナビモードに応じて、次に表示すべきフレームと地物を決める。"""
+        config = self.collectNavigationConfig()
+        if config is None:
+            return None, None
+
         current_frame = self.currentFrameValue()
-        step_count = self.nav_fast_step.value() if fast else self.nav_step.value()
-        mode = self.nav_mode.currentData()
+        step_count = config.fast_step if fast else config.step
+        mode = config.mode
 
         if mode == "frame":
             target = max(0, current_frame + direction * step_count)
@@ -809,26 +952,23 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if mode == "kp":
             frames, path = self.matchedFrames()
             if not frames:
-                self.iface.messageBar().pushWarning(
-                    PLUGIN_TITLE,
-                    "Matched frame CSV was not found. Run Process with KP CSV or choose another navigation mode."
-                )
+                self.notifyWarning("matched_frame_csv_missing")
                 return None, None
             target = self.steppedFrame(frames, current_frame, direction, step_count)
             if target is None:
-                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"No {'next' if direction > 0 else 'previous'} KP frame.")
+                self.notifyWarning("no_kp_frame", direction="next" if direction > 0 else "previous")
                 return None, None
             return target, self.findFeatureByFrame(target)
 
         layer = self.activeFrameLayer()
         if layer is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No Video GPX Points layer is available. Run Process first.")
+            self.notifyWarning("video_gpx_layer_missing")
             return None, None
 
         frames = self.layerFrames(layer)
         target = self.steppedFrame(frames, current_frame, direction, step_count)
         if target is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"No {'next' if direction > 0 else 'previous'} layer frame.")
+            self.notifyWarning("no_layer_frame", direction="next" if direction > 0 else "previous")
             return None, None
         return target, self.findFeatureByFrame(target)
 
@@ -858,10 +998,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return True
 
         if show_message:
-            self.iface.messageBar().pushWarning(
-                PLUGIN_TITLE,
-                "Processing is still running. Exit will finish after the worker stops."
-            )
+            self.notifyWarning("processing_still_running")
         return False
 
     def removeGeneratedLayers(self):
@@ -996,10 +1133,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if save_error:
             removed_count = 0
             if show_message:
-                self.iface.messageBar().pushWarning(
-                    PLUGIN_TITLE,
-                    f"Failed to save generated layer(s) to {saved_path}. Layers were not removed: {save_error}"
-                )
+                self.notifyWarning("save_generated_layers_failed", path=saved_path, error=save_error)
         else:
             removed_count = self.removeGeneratedLayers() if remove_layers else 0
 
@@ -1010,21 +1144,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         if show_message and not save_error:
             if worker_stopped:
-                backup_message = (
-                    f" Saved {saved_count} layer(s) to {saved_path}."
-                    if saved_path and saved_count
-                    else ""
-                )
-                self.iface.messageBar().pushMessage(
-                    PLUGIN_TITLE,
-                    f"Session closed.{backup_message} "
-                    f"Removed {removed_count} generated layer(s); 360Viewer process stopped."
-                )
+                self.notifyInfo("session_closed", saved_count=saved_count, removed_count=removed_count)
             else:
-                self.iface.messageBar().pushWarning(
-                    PLUGIN_TITLE,
-                    "Session close requested. Generated layers/viewer were cleaned up where possible."
-                )
+                self.notifyWarning("session_close_requested")
 
     def exitSession(self):
         """Exitメニューから現在セッションを終了する。"""
@@ -1034,20 +1156,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """参照用Video GPX Pointsレイヤをクリック待ち受け状態にする。"""
         layer = self.activeFrameLayer()
         if layer is None:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No Video GPX Points layer is available. Run Process first.")
+            self.notifyWarning("video_gpx_layer_missing")
             return
         if layer.fields().indexFromName("frame") < 0:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Selected layer has no frame field.")
+            self.notifyWarning("selected_layer_no_frame")
             return
 
         self.deactivateClickMode(show_message=False)
         canvas = self.iface.mapCanvas()
         self.frame_click_tool = FrameIdentifyTool(canvas, layer, self)
         canvas.setMapTool(self.frame_click_tool)
-        self.iface.messageBar().pushMessage(
-            PLUGIN_TITLE,
-            f"Click mode active for layer: {layer.name()}"
-        )
+        self.notifyInfo("click_mode_active", layer=layer.name())
 
     def deactivateClickMode(self, show_message=True):
         """地図クリックモードを解除し、一時ハイライトも消す。"""
@@ -1060,27 +1179,28 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_click_tool.clearHighlight()
         self.frame_click_tool = None
         if show_message:
-            self.iface.messageBar().pushMessage(PLUGIN_TITLE, "Click mode stopped.")
+            self.notifyInfo("click_mode_stopped")
 
 
     def processData(self):
         """GPX/動画同期workerを開始する。結果はaddLayerで受け取る。"""
-        if not self.gpx_file or not self.video_file:
-            print("Error: GPX or video file not selected.")
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "Select both a GPX file and a video file.")
+        config = self.collectProcessConfig()
+        if config is None:
+            print("Error: Process input validation failed.")
             return
 
         self.session_closing = False
-        print(f"Processing GPX: {self.gpx_file}")
-        print(f"Processing Video: {self.video_file}")
+        self.last_process_config = config
+        print(f"Processing GPX: {config.gpx_file}")
+        print(f"Processing Video: {config.video_file}")
 
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(False)
 
         self.worker = GPXVideoProcessor(
-            self.gpx_file,
-            self.video_file,
-            frame_shift=self.frame_shift.value()
+            config.gpx_file,
+            config.video_file,
+            frame_shift=config.frame_shift
         )
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.finished.connect(self.addLayer)
@@ -1103,7 +1223,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if rows:
             matches, match_count, match_error = self.resolveKpMatches(rows)
             if match_error:
-                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to match KP CSV: {match_error}")
+                self.notifyWarning("kp_match_failed", error=match_error)
 
             # 生成レイヤは一時メモリレイヤ。Exit時にtmp.gpkgへ保存してから削除する。
             layer = QgsVectorLayer("Point?crs=EPSG:4326", "Video GPX Points", "memory")
@@ -1136,7 +1256,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 feat.setAttributes([
                     frame_num,
                     source_frame,
-                    self.frame_shift.value(),
+                    self.processFrameShiftValue(),
                     _to_qdatetime(time),
                     lat,
                     lon,
@@ -1156,15 +1276,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.created_layer_ids.append(layer.id())
             self.frame_layer_id = layer.id()
             print("Layer added successfully.")
-            self.iface.messageBar().pushMessage(PLUGIN_TITLE, "Layer added successfully.")
+            self.notifyInfo("layer_added", count=len(features))
             self.exportFrameData(rows, matches=matches, match_count=match_count)
         else:
             print("No rows. Could not add layer.")
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, "No rows. Could not add layer.")
+            self.notifyWarning("no_rows_layer")
 
     def buildKpMatches(self, rows):
         """現在UIのKPファイル/許容距離を使ってKPマッチングを実行する。"""
-        return build_kp_matches(rows, self.kp_file, self.kp_tolerance.value())
+        return build_kp_matches(rows, self.processKpFileValue(), self.processKpToleranceValue())
 
     def resolveKpMatches(self, rows):
         """KPマッチングを安全に実行し、レイヤ属性とCSV出力で共有する。"""
@@ -1180,7 +1300,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         try:
             os.makedirs(output_dir, exist_ok=True)
         except OSError as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to create output directory: {e}")
+            self.notifyWarning("output_dir_failed", error=e)
             return
 
         base_name = _base_output_name(self.video_file, self.gpx_file)
@@ -1199,7 +1319,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if matches is None or match_count is None:
             matches, match_count, match_error = self.resolveKpMatches(rows)
             if match_error:
-                self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to match KP CSV: {match_error}")
+                self.notifyWarning("kp_match_failed", error=match_error)
 
         fieldnames = [
             "frame",
@@ -1224,7 +1344,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 writer = csv.DictWriter(handle, fieldnames=fieldnames)
                 writer.writeheader()
 
-                frame_shift = self.frame_shift.value()
+                frame_shift = self.processFrameShiftValue()
                 for row_index, (frame_num, source_frame, time, lat, lon) in enumerate(rows):
                     match = matches[row_index]
                     aligned_lat = match["lat"] if match else lat
@@ -1263,7 +1383,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                             "longitude": match["lon"],
                         })
 
-            if self.kp_file:
+            if self.processKpFileValue():
                 for index, node in enumerate(navigation_nodes):
                     previous_node = navigation_nodes[index - 1] if index > 0 else None
                     next_node = navigation_nodes[index + 1] if index < len(navigation_nodes) - 1 else None
@@ -1277,9 +1397,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                     "video": self.video_file,
                     "gpx": self.gpx_file,
-                    "kp_csv": self.kp_file,
-                    "kp_tolerance_m": self.kp_tolerance.value(),
-                    "frame_shift": self.frame_shift.value(),
+                    "kp_csv": self.processKpFileValue(),
+                    "kp_tolerance_m": self.processKpToleranceValue(),
+                    "frame_shift": self.processFrameShiftValue(),
                     "frames_csv": os.path.basename(csv_path),
                     "matched_frames_csv": [os.path.basename(path) for path in matched_csv_paths],
                     "node_count": len(navigation_nodes),
@@ -1317,27 +1437,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                                 "longitude": f"{node['longitude']:.9f}",
                             })
         except OSError as e:
-            self.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Failed to save output files: {e}")
+            self.notifyWarning("output_files_failed", error=e)
             return
 
-        self.iface.messageBar().pushMessage(
-            PLUGIN_TITLE,
-            f"Saved frame CSV: {csv_path}"
-        )
-        if self.kp_file:
+        self.notifyInfo("saved_frame_csv", path=csv_path)
+        if self.processKpFileValue():
             if match_count == 0:
-                self.iface.messageBar().pushWarning(
-                    PLUGIN_TITLE,
-                    f"No KP matches within {self.kp_tolerance.value():.1f} m."
-                )
-            self.iface.messageBar().pushMessage(
-                PLUGIN_TITLE,
-                f"Saved navigation JSON: {json_path}"
-            )
-            self.iface.messageBar().pushMessage(
-                PLUGIN_TITLE,
-                f"Saved viewer matched CSV: {matched_csv_paths[-1]}"
-            )
+                self.notifyWarning("no_kp_matches", distance=self.processKpToleranceValue())
+            self.notifyInfo("saved_navigation_json", path=json_path)
+            self.notifyInfo("saved_viewer_matched_csv", path=matched_csv_paths[-1])
 
     def showError(self, error):
         """workerからのエラーをUIへ反映し、必要に応じてmessageBarへ表示する。"""
@@ -1348,7 +1456,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
 
         print(f"Error: {error}")
-        self.iface.messageBar().pushWarning(PLUGIN_TITLE, error)
+        self.notifyWarning("worker_error", error=error)
 
     def unload(self):
         """QGISがプラグインをアンロードする際に、メニューとツールバーを片付ける。"""

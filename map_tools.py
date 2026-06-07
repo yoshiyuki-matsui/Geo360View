@@ -5,9 +5,6 @@ from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsWkbTypes
 from qgis.gui import QgsMapToolIdentifyFeature, QgsRubberBand
 
-from .constants import PLUGIN_TITLE
-
-
 class FrameIdentifyTool(QgsMapToolIdentifyFeature):
     """`Video GPX Points` をクリックし、対応フレームをプラグインへ通知する。"""
 
@@ -30,20 +27,20 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
                 QgsMapToolIdentifyFeature.TopDownStopAtFirst
             )
             if not results:
-                self.plugin.iface.messageBar().pushWarning(PLUGIN_TITLE, "No frame point found.")
+                self.plugin.notifyWarning("no_frame_point_found")
                 return
 
             feature = results[0].mFeature
             frame = feature["frame"]
             if frame is None:
-                self.plugin.iface.messageBar().pushWarning(PLUGIN_TITLE, "Clicked feature has no frame value.")
+                self.plugin.notifyWarning("selected_layer_no_frame")
                 return
 
             self.highlightFeature(feature)
             frame_num = int(frame)
             self.plugin.displayFrame(frame_num, feature=feature)
         except Exception as e:
-            self.plugin.iface.messageBar().pushWarning(PLUGIN_TITLE, f"Frame click failed: {e}")
+            self.plugin.notifyWarning("frame_extract_failed", error=e)
 
     def keyPressEvent(self, event):
         """クリックモード中のキーボードナビゲーションを処理する。"""

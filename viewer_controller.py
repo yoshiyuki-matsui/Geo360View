@@ -83,16 +83,19 @@ class ViewerControllerMixin:
 
     def writeViewerRuntimeConfig(self, show_error=True):
         """現在の動画/出力先に合わせたビューア実行時設定を書き出す。"""
-        host, port = self.loadViewerDefaults()
+        viewer_config = self.collectViewerConfig(show_errors=show_error)
+        if viewer_config is None:
+            return False
+
         config = {
-            "host": host,
-            "port": port,
-            "video_dir": self.viewerVideoDir(),
-            "session_json_path": self.viewerSessionPath(),
-            "viewer_jpeg_quality": self.viewer_jpeg_quality,
-            "viewer_progressive_jpeg": self.viewer_progressive_jpeg,
-            "viewer_max_width": self.viewer_max_width,
-            "viewer_cache_dir": self.viewerCacheDir(),
+            "host": viewer_config.host,
+            "port": viewer_config.port,
+            "video_dir": viewer_config.video_dir,
+            "session_json_path": viewer_config.session_json_path,
+            "viewer_jpeg_quality": viewer_config.jpeg_quality,
+            "viewer_progressive_jpeg": viewer_config.progressive_jpeg,
+            "viewer_max_width": viewer_config.max_width,
+            "viewer_cache_dir": viewer_config.cache_dir,
         }
 
         try:
