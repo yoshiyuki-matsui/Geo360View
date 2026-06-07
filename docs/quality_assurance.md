@@ -27,6 +27,19 @@ node --check 360viewer/static/viewer.js
 
 `common.py` や `main.py` などQGISモジュールを直接importするファイルは、通常Python環境では完全なユニットテスト対象にしにくいです。純Pythonへ切り出せる処理は、今後小さなヘルパーとして分離し、`tests/` から検証できるようにします。
 
+## 2026-06-07時点の品質・UX補強
+
+この時点で、以下の補強を実装済みです。
+
+- `config.py` に機能単位のConfig/Validationを置き、入力不備や破綻値を処理本体へ渡す前に止める。
+- `tests/test_config_validation.py` でProcess、Frame抽出、Navigation、Radar、Viewer設定の境界値を確認する。
+- `messages.py` にmessageBar用 `MESSAGES` とUI用 `UI_TEXTS` を置き、英語/日本語のキー対応を `tests/test_messages.py` で確認する。
+- プラグインパネルは主要操作を日本語化し、短い技術ラベルは英語/略称のままtooltipで補足する。
+- `docs/qgis_manual_test_checklist.md` に、QGIS実機が必要な結合テストシナリオを機能単位で整理する。
+- プレビュー領域を簡易ダッシュボード化し、`images/` への抽出状況と `viewer_cache/` 側の想定ファイルを切り分けられるようにする。
+
+ユニットテストは細かい入力規則と退行検知を担当し、QGIS手動チェックはMapTool、RubberBand、外部ブラウザ、実ファイルI/O、既存地物登録ツールとの共存を担当します。
+
 ## 現在のユニットテスト対象
 
 ### `tests/test_360viewer_app.py`
@@ -69,15 +82,17 @@ node --check 360viewer/static/viewer.js
 
 対象:
 
-- 英語既定メッセージと日本語テンプレートのキー対応
-- 未対応localeの英語フォールバック
+- 既定localeメッセージと英語/日本語テンプレートのキー対応
+- 既定locale UI文言と英語/日本語UIテンプレートのキー対応
+- 未対応localeの既定localeフォールバック
 - `ja_JP` / `ja-JP` の日本語locale正規化
 - テンプレート変数のformat
 - テンプレート変数不足時の安全な表示
 
 守りたい事故:
 
-- 英語側へ追加したメッセージキーに日本語テンプレートを追加し忘れる
+- 片方のlocaleへ追加したメッセージキーをもう片方へ追加し忘れる
+- 片方のlocaleへ追加したUIキーをもう片方へ追加し忘れる
 - 日本語運用へ切り替えた時に未知キーやformat例外でUI表示が壊れる
 - QGIS messageBarの文型が機能ごとにばらつく
 
@@ -131,6 +146,14 @@ node --check 360viewer/static/viewer.js
 
 両者を混同しないようにします。
 
+QGIS操作パネルでは、この責任分界を運用中に確認できるようにします。
+
+- `Frame ... 保存/既存` 表示: QGIS側が `images/` に抽出したJPEGと処理時間。
+- プレビュー画像tooltip: 360Viewerが参照する `viewer_cache/` 側の想定ファイル名。生成済みならサイズも表示。
+- WEBビューア表示: ブラウザ/krpanoへ渡った最終的な表示結果。
+
+表示異常時は、`images/` への抽出、`viewer_cache/` 生成、ブラウザ表示の順に切り分けます。
+
 ### 揮発性データと成果品データ
 
 GPXVideoProcessorには、地物を生成するための揮発性データと、最終的に納品・再検証の対象になる成果品データが混在します。この2つは性質が違うため、品質保証上も分けて考えます。
@@ -176,6 +199,8 @@ QGIS実機で確認する主要観点:
 - WEBビューアクリック点がQGIS地図上の緑点として投影される。
 - `CalFOV` / `CalDist` / `Scale` を変えた時、QGIS側垂線、クリック投影点、WEB HUDが同じ前提で変化する。
 - `Follow` ON/OFFで地図再中心化の挙動が切り替わる。
+- 操作パネルの主要ボタン、タブ、messageBar、tooltipが同じlocaleで表示される。
+- パネル上の `Frame ... 保存/既存` 表示とプレビュー画像tooltipで、`images/` と `viewer_cache/` のどちらを見ているか切り分けられる。
 
 ## QGIS UI手動テストの考え方
 
@@ -276,17 +301,18 @@ messageBarに出しすぎない内容:
 
 これらはログファイルまたはブラウザ側デバッグログへ出します。
 
-現在、`messages.py` に英語既定・日本語テンプレートのメッセージカタログを置いています。`tests/test_messages.py` で以下を確認します。
+現在、`messages.py` に既定locale・英語/日本語テンプレートのメッセージカタログとUI文言カタログを置いています。messageBar向けは `MESSAGES`、ボタン/タブ/tooltip向けは `UI_TEXTS` で管理します。`tests/test_messages.py` で以下を確認します。
 
 - 英語キーと日本語キーの対応漏れ
+- UIラベル/tooltipキーの英語・日本語対応漏れ
 - localeフォールバック
 - `ja_JP` / `ja-JP` の正規化
 - format変数不足時の安全性
 
 将来の方針:
 
-- `messages.py` をmessageBar専用ではなく、UIラベル、ボタン、tooltipも扱うi18nカタログへ拡張する。
-- `ui.*` と `msg.*` のようにキー名前空間を分ける。
+- UI要素追加時は `UI_TEXTS` の英語/日本語両方へ同じキーを追加する。
+- messageBar追加時は `MESSAGES` の英語/日本語両方へ同じキーを追加する。
 - UIラベルとmessageBarのlocaleを必ず一致させる。
 - ログは保守者向けのため、英語固定でもよい。
 
@@ -462,7 +488,7 @@ Frame extraction is slower than expected. Check storage or video location.
 - 1000件サブフォルダ規則に反していない
 - JPEGが0バイトではなく、画像として読める
 - EXIFにSoftware/Description/GPSなど期待するタグが入っている
-- cache画像と成果品画像を混同していない
+- `viewer_cache/` と `images/` または成果品画像を混同していない
 
 この検査はQGISなしのCLIとしても実装できます。
 
@@ -508,7 +534,6 @@ python tools/validate_outputs.py \
 - QGIS実機チェックリストをリリース手順へ組み込む。
 - `viewer_controller.py` 側のmessageBar呼び出しも `messages.py` 経由へ移行する。
 - 将来的にUI設定またはプロジェクト設定から `GPX_VIDEO_PROCESSOR_LOCALE` 相当を選べるようにする。
-- `config.py` を追加し、機能単位Configとvalidationを本体処理へ組み込む。
 - `logging_utils.py` を追加し、operation/debugログをファイルへ出す。
 - Self Checkメニューを追加し、環境診断JSONを出力する。
 - Performance Probeを追加し、動画read/JPEG encode/I/O性能を簡易測定する。

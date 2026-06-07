@@ -1,6 +1,7 @@
 """QGIS側のオンザフライ静止画抽出とプレビュー表示。"""
 
 import os
+import re
 import time
 from datetime import datetime
 
@@ -16,21 +17,90 @@ class FrameExtractMixin:
     """選択フレームをOpenCVで抽出し、QGISパネルへ表示するMixin。"""
 
     def compactPreviewInfo(self, info):
-        """長い抽出ログをパネル幅に収まる短縮表示へ変換する。"""
+        """長い抽出ログを2行程度のプレビュー表示へ変換する。"""
         if len(info) <= 160:
             return info
         return f"{info[:112]} ... {info[-44:]}"
 
-    def loadPreview(self, image_path, info):
+    def framePreviewInfo(self, frame_num, status, image_path, timing_text):
+        """フレーム抽出結果を、パス行と処理時間行に分けて表示する。"""
+        return self.uiText(
+            "ui.preview.frame_info",
+            frame=frame_num,
+            status=status,
+            path=image_path,
+            timing=timing_text,
+        )
+
+    def formatPreviewFileSize(self, byte_count):
+        """画像ファイルサイズをプレビュー用の短い表記へ変換する。"""
+        try:
+            size = float(max(int(byte_count), 0))
+        except (TypeError, ValueError):
+            return "-"
+
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024.0 or unit == "GB":
+                if unit == "B":
+                    return f"{int(size)} B"
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return "-"
+
+    def viewerCachePathForFrame(self, frame_num):
+        """360Viewerが生成する軽量JPEGキャッシュの想定パスを返す。"""
+        if hasattr(self, "loadViewerDefaults"):
+            self.loadViewerDefaults()
+
+        stem = os.path.splitext(os.path.basename(self.video_file or ""))[0]
+        stem = re.sub(r"[^0-9A-Za-z_.-]+", "_", stem).strip("_") or "video"
+        cache_name = (
+            f"{stem}_"
+            f"frame_{int(frame_num):06d}_"
+            f"w{int(getattr(self, 'viewer_max_width', 3072))}_"
+            f"q{int(getattr(self, 'viewer_jpeg_quality', 70))}_"
+            f"p{1 if getattr(self, 'viewer_progressive_jpeg', True) else 0}.jpg"
+        )
+        return os.path.join(self.viewerCacheDir(), cache_name)
+
+    def viewerCacheDisplayPath(self, cache_path):
+        """viewer_cacheパスを、出力フォルダ基準の短い表示名へ変換する。"""
+        try:
+            relative_path = os.path.relpath(cache_path, self.resolvedOutputDir())
+            if relative_path != os.pardir and not relative_path.startswith(os.pardir + os.sep):
+                return relative_path.replace("\\", "/").replace(os.sep, "/")
+        except (OSError, TypeError, ValueError):
+            pass
+        return os.path.basename(cache_path)
+
+    def viewerCacheTooltip(self, frame_num):
+        """プレビュー画像tooltipへ表示するviewer_cache情報を作る。"""
+        cache_path = self.viewerCachePathForFrame(frame_num)
+        try:
+            file_size = os.path.getsize(cache_path)
+        except OSError:
+            file_size = None
+
+        display_path = self.viewerCacheDisplayPath(cache_path)
+        if file_size is None:
+            return f"viewer_cache: {display_path}\n{cache_path}"
+
+        size_text = self.formatPreviewFileSize(file_size)
+        return f"viewer_cache: {display_path} | {size_text}\n{cache_path}"
+
+    def loadPreview(self, image_path, info, frame_num=None):
         """保存済みJPEGをプレビュー領域へ読み込み、抽出ログを更新する。"""
+        tooltip = self.viewerCacheTooltip(frame_num) if frame_num is not None else image_path
         pixmap = QtGui.QPixmap(image_path)
         if pixmap.isNull():
-            self.preview_label.setText("Preview unavailable")
+            self.preview_label.setText(self.uiText("ui.preview.unavailable"))
+            self.preview_label.setToolTip(tooltip)
         else:
             self.preview_label.setPixmap(
                 pixmap.scaled(480, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
-        self.preview_info.setText(self.compactPreviewInfo(info))
+            self.preview_label.setToolTip(tooltip)
+        self.preview_info.setText(info)
         self.preview_info.setToolTip(info)
 
     def featureGps(self, feature):
@@ -119,10 +189,15 @@ class FrameExtractMixin:
 
         start = time.perf_counter()
         if os.path.exists(image_path):
-            # クリックのたびに再エンコードしない。フレーム番号は不変キーなのでキャッシュ可能。
+            # クリックのたびに再エンコードしない。フレーム番号は不変キーなので抽出済み画像を再利用できる。
             elapsed = time.perf_counter() - start
-            info = f"Frame {frame_num} cached: {image_path} ({elapsed:.3f}s)"
-            self.loadPreview(image_path, info)
+            info = self.framePreviewInfo(
+                frame_num,
+                self.uiText("ui.preview.status.existing"),
+                image_path,
+                self.uiText("ui.preview.timing.existing", elapsed=elapsed),
+            )
+            self.loadPreview(image_path, info, frame_num=frame_num)
             self.notifyInfo("frame_cached", frame=frame_num, elapsed=elapsed)
             return
 
@@ -166,10 +241,15 @@ class FrameExtractMixin:
                 cap.release()
 
         total_elapsed = time.perf_counter() - start
-        info = (
-            f"Frame {frame_num} saved: {image_path} "
-            f"(open {open_elapsed:.3f}s, seek/read {decode_elapsed:.3f}s, "
-            f"save {save_elapsed:.3f}s, total {total_elapsed:.3f}s)"
+        timing_text = (
+            f"open {open_elapsed:.3f}s, seek/read {decode_elapsed:.3f}s, "
+            f"save {save_elapsed:.3f}s, total {total_elapsed:.3f}s"
         )
-        self.loadPreview(image_path, info)
+        info = self.framePreviewInfo(
+            frame_num,
+            self.uiText("ui.preview.status.saved"),
+            image_path,
+            timing_text,
+        )
+        self.loadPreview(image_path, info, frame_num=frame_num)
         self.notifyInfo("frame_saved", frame=frame_num, total=total_elapsed, path=image_path)

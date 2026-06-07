@@ -6,16 +6,20 @@ import messages
 
 
 class MessageCatalogTests(unittest.TestCase):
-    """英語既定・日本語差し替えのメッセージ規則を確認する。"""
+    """既定locale・日本語/英語差し替えのメッセージ規則を確認する。"""
 
     def test_japanese_catalog_has_all_default_keys(self):
-        """英語既定辞書にあるキーは日本語辞書にも用意する。"""
+        """既定辞書にあるキーは日本語辞書にも用意する。"""
         self.assertEqual(messages.missing_translation_keys("ja"), [])
 
-    def test_unknown_locale_falls_back_to_english(self):
-        """未対応localeは英語メッセージへフォールバックする。"""
+    def test_japanese_ui_catalog_has_all_default_keys(self):
+        """既定UI辞書にあるキーは日本語UI辞書にも用意する。"""
+        self.assertEqual(messages.missing_ui_translation_keys("ja"), [])
+
+    def test_unknown_locale_falls_back_to_default_locale(self):
+        """未対応localeは既定localeメッセージへフォールバックする。"""
         text = messages.message_text("video_required", "fr")
-        self.assertEqual(text, messages.MESSAGES["en"]["video_required"])
+        self.assertEqual(text, messages.MESSAGES[messages.DEFAULT_LOCALE]["video_required"])
 
     def test_japanese_locale_variants_are_supported(self):
         """ja_JPやja-JP指定でも日本語テンプレートを選ぶ。"""
@@ -35,6 +39,10 @@ class MessageCatalogTests(unittest.TestCase):
     def test_unknown_key_returns_key_name(self):
         """未知キーはキー名を返し、呼び出し側の例外にしない。"""
         self.assertEqual(messages.message_text("unknown_message_key", "en"), "unknown_message_key")
+
+    def test_unknown_ui_key_returns_key_name(self):
+        """未知UIキーはキー名を返し、UI構築を壊さない。"""
+        self.assertEqual(messages.ui_text("unknown_ui_key", "en"), "unknown_ui_key")
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ from .constants import (
 from .frame_extract import FrameExtractMixin
 from .kp import build_kp_matches
 from .map_tools import FrameIdentifyTool
-from .messages import message_text
+from .messages import message_text, ui_text
 from .processor import GPXVideoProcessor
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
@@ -61,7 +61,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """QGIS ifaceと、セッション中に共有する状態を初期化する。"""
         super().__init__(parent)
         self.iface = iface
-        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "en")
+        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "ja")
         self.gpx_file = ""
         self.video_file = ""
         self.kp_file = ""
@@ -107,6 +107,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def uiMessage(self, key, **params):
         """現在localeでユーザ向けメッセージを組み立てる。"""
         return message_text(key, self.message_locale, **params)
+
+    def uiText(self, key, **params):
+        """現在localeでUIラベル/tooltip文言を組み立てる。"""
+        return ui_text(key, self.message_locale, **params)
+
+    def applyHelp(self, help_key, *widgets):
+        """同じ説明文を関連UI部品のtooltip/What's Thisへ付与する。"""
+        text = self.uiText(help_key)
+        for widget in widgets:
+            widget.setToolTip(text)
+            widget.setWhatsThis(text)
 
     def notifyInfo(self, key, **params):
         """QGIS messageBarへ正常系メッセージを表示する。"""
@@ -238,7 +249,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if self._gui_initialized:
             return
 
-        self.setWindowTitle("GPX Video Processor")
+        self.setWindowTitle(self.uiText("ui.window.title"))
         self.applyPanelWindowFlags()
 
         layout = QVBoxLayout()
@@ -265,21 +276,24 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             widget.setMaximumWidth(width)
 
         self.gpx_label = QLabel("GPX:")
-        self.gpx_path = self.makePathLabel("No GPX")
-        self.gpx_button = QPushButton("Browse")
+        self.gpx_path = self.makePathLabel(self.uiText("ui.path.no_gpx"))
+        self.gpx_button = QPushButton(self.uiText("ui.button.browse"))
         self.gpx_button.clicked.connect(self.selectGPX)
+        self.applyHelp("ui.help.gpx", self.gpx_label, self.gpx_button)
         set_fixed_width(self.gpx_button, 72)
 
         self.video_label = QLabel("Video:")
-        self.video_path = self.makePathLabel("No video")
-        self.video_button = QPushButton("Browse")
+        self.video_path = self.makePathLabel(self.uiText("ui.path.no_video"))
+        self.video_button = QPushButton(self.uiText("ui.button.browse"))
         self.video_button.clicked.connect(self.selectVideo)
+        self.applyHelp("ui.help.video", self.video_label, self.video_button)
         set_fixed_width(self.video_button, 72)
 
         self.kp_label = QLabel("KP CSV:")
-        self.kp_path = self.makePathLabel("No KP CSV")
-        self.kp_button = QPushButton("Browse")
+        self.kp_path = self.makePathLabel(self.uiText("ui.path.no_kp"))
+        self.kp_button = QPushButton(self.uiText("ui.button.browse"))
         self.kp_button.clicked.connect(self.selectKP)
+        self.applyHelp("ui.help.kp", self.kp_label, self.kp_button)
         set_fixed_width(self.kp_button, 72)
 
         for label in (self.gpx_label, self.video_label, self.kp_label):
@@ -292,6 +306,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.kp_tolerance.setSingleStep(0.5)
         self.kp_tolerance.setValue(5.0)
         self.kp_tolerance.setSuffix(" m")
+        self.applyHelp("ui.help.kp_tolerance", self.kp_tolerance_label, self.kp_tolerance)
         set_fixed_width(self.kp_tolerance, 82)
 
         self.frame_shift_label = QLabel("Shift:")
@@ -300,16 +315,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_shift.setSingleStep(1)
         self.frame_shift.setValue(0)
         self.frame_shift.setSuffix(" fr")
-        self.frame_shift.setToolTip(
-            "Keeps video frame numbers fixed. Position source frame = video frame - shift."
-        )
+        self.applyHelp("ui.help.frame_shift", self.frame_shift_label, self.frame_shift)
         set_fixed_width(self.frame_shift, 92)
 
         self.output_label = QLabel("Output:")
-        self.output_path = self.makePathLabel("Default output")
-        self.output_button = QPushButton("Browse")
+        self.output_path = self.makePathLabel(self.uiText("ui.path.default_output"))
+        self.output_button = QPushButton(self.uiText("ui.button.browse"))
         self.output_button.clicked.connect(self.selectOutputDir)
         self.output_label.setMinimumWidth(52)
+        self.applyHelp("ui.help.output", self.output_label, self.output_button)
         set_fixed_width(self.output_button, 72)
 
         self.extract_frame_label = QLabel("Frame:")
@@ -317,34 +331,35 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.extract_frame.setRange(0, 1000000000)
         self.extract_frame.setSingleStep(1)
         self.extract_frame.setValue(0)
+        self.applyHelp("ui.help.frame", self.extract_frame_label, self.extract_frame)
         set_fixed_width(self.extract_frame, 92)
-        self.extract_button = QPushButton("Extract")
+        self.extract_button = QPushButton(self.uiText("ui.button.extract"))
         self.extract_button.clicked.connect(self.extractTestFrame)
+        self.applyHelp("ui.help.extract", self.extract_button)
         set_fixed_width(self.extract_button, 72)
-        self.follow_frame_checkbox = QCheckBox("Follow")
+        self.follow_frame_checkbox = QCheckBox(self.uiText("ui.checkbox.follow"))
         self.follow_frame_checkbox.setChecked(False)
-        self.follow_frame_checkbox.setToolTip(
-            "Center the QGIS map on the displayed frame point without changing zoom."
-        )
+        self.applyHelp("ui.help.follow", self.follow_frame_checkbox)
 
         self.nav_label = QLabel("Nav:")
-        self.current_frame_label = QLabel("Current: -")
+        self.current_frame_label = QLabel(self.uiText("ui.status.current_empty"))
         self.nav_mode = QComboBox()
         self.nav_mode.addItem("Frame step", "frame")
         self.nav_mode.addItem("Layer point", "layer")
         self.nav_mode.addItem("KP matched CSV", "kp")
-        self.nav_mode.setToolTip(
-            "Frame step moves by frame number. Layer point moves through the GPXVideoProcessor frame layer. "
-            "KP matched CSV moves through matched frame_index values."
-        )
+        self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 126)
+        self.nav_step_label = QLabel("Step:")
         self.nav_step = QSpinBox()
         self.nav_step.setRange(1, 1000000)
         self.nav_step.setValue(1)
+        self.applyHelp("ui.help.nav_step", self.nav_step_label, self.nav_step)
         set_fixed_width(self.nav_step, 76)
+        self.nav_fast_label = QLabel("Fast:")
         self.nav_fast_step = QSpinBox()
         self.nav_fast_step.setRange(1, 1000000)
         self.nav_fast_step.setValue(30)
+        self.applyHelp("ui.help.nav_fast", self.nav_fast_label, self.nav_fast_step)
         set_fixed_width(self.nav_fast_step, 76)
 
         self.nav_back_fast_button = QPushButton("<<")
@@ -378,9 +393,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_radius.setSingleStep(1.0)
         self.radar_radius.setValue(5.0)
         self.radar_radius.setSuffix(" m")
-        self.radar_radius.setToolTip(
-            "Fixed map range circle. A second circle is drawn at twice this distance."
-        )
+        self.applyHelp("ui.help.radar_range", self.radar_radius_label, self.radar_radius)
         set_fixed_width(self.radar_radius, 82)
         self.radar_scale_label = QLabel("Scale:")
         self.radar_scale = QDoubleSpinBox()
@@ -389,9 +402,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_scale.setSingleStep(0.1)
         self.radar_scale.setValue(1.0)
         self.radar_scale.setSuffix(" x")
-        self.radar_scale.setToolTip(
-            "Manual multiplier for the calibrated radar marker distance."
-        )
+        self.applyHelp("ui.help.radar_scale", self.radar_scale_label, self.radar_scale)
         set_fixed_width(self.radar_scale, 78)
         self.current_fov_label = QLabel("FOV: -")
         self.marker_distance_label = QLabel("Marker: -")
@@ -403,9 +414,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_cal_fov.setSingleStep(1.0)
         self.radar_cal_fov.setValue(90.0)
         self.radar_cal_fov.setSuffix(" deg")
-        self.radar_cal_fov.setToolTip(
-            "Reference field of view used when the marker distance was calibrated."
-        )
+        self.applyHelp("ui.help.cal_fov", self.radar_cal_fov_label, self.radar_cal_fov)
         set_fixed_width(self.radar_cal_fov, 92)
         self.radar_cal_distance_label = QLabel("CalDist:")
         self.radar_cal_distance = QDoubleSpinBox()
@@ -414,42 +423,42 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_cal_distance.setSingleStep(0.5)
         self.radar_cal_distance.setValue(5.0)
         self.radar_cal_distance.setSuffix(" m")
-        self.radar_cal_distance.setToolTip(
-            "Calibrated center-view marker distance at CalFOV before Scale is applied."
-        )
+        self.applyHelp("ui.help.cal_dist", self.radar_cal_distance_label, self.radar_cal_distance)
         set_fixed_width(self.radar_cal_distance, 84)
-        self.use_current_fov_button = QPushButton("Use FOV")
+        self.use_current_fov_button = QPushButton(self.uiText("ui.button.use_fov"))
         self.use_current_fov_button.clicked.connect(self.useCurrentFovForCalibration)
-        self.use_current_fov_button.setToolTip("Set CalFOV to the current viewer FOV.")
+        self.applyHelp("ui.help.use_fov", self.use_current_fov_button)
         set_fixed_width(self.use_current_fov_button, 74)
         self.radar_offset_label = QLabel("Offset:")
         self.radar_offset = QComboBox()
         for offset in (0, 90, 180, 270):
             self.radar_offset.addItem(f"{offset}deg", offset)
-        self.radar_offset.setToolTip(
-            "Clockwise bearing correction for videos whose visual front is not the travel direction."
-        )
+        self.applyHelp("ui.help.offset", self.radar_offset_label, self.radar_offset)
         set_fixed_width(self.radar_offset, 78)
 
-        self.click_mode_button = QPushButton("Click Layer")
+        self.click_mode_button = QPushButton(self.uiText("ui.button.click_layer"))
         self.click_mode_button.clicked.connect(self.activateClickMode)
-        self.stop_click_mode_button = QPushButton("Stop Click")
+        self.applyHelp("ui.help.click_layer", self.click_mode_button)
+        self.stop_click_mode_button = QPushButton(self.uiText("ui.button.stop_click"))
         self.stop_click_mode_button.clicked.connect(self.deactivateClickMode)
-        set_fixed_width(self.click_mode_button, 92)
+        self.applyHelp("ui.help.stop_click", self.stop_click_mode_button)
+        set_fixed_width(self.click_mode_button, 96)
         set_fixed_width(self.stop_click_mode_button, 82)
 
-        self.preview_info = QLabel("No frame extracted")
-        self.preview_info.setWordWrap(False)
-        self.preview_info.setMaximumHeight(22)
+        self.preview_info = QLabel(self.uiText("ui.preview.empty"))
+        self.preview_info.setWordWrap(True)
+        self.preview_info.setMinimumHeight(38)
+        self.preview_info.setMaximumHeight(44)
         self.preview_info.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setMinimumHeight(120)
         self.preview_label.setMaximumHeight(190)
-        self.preview_label.setText("Preview")
+        self.preview_label.setText(self.uiText("ui.preview.title"))
 
-        self.process_button = QPushButton("Process")
+        self.process_button = QPushButton(self.uiText("ui.button.process"))
         self.process_button.clicked.connect(self.processData)
+        self.applyHelp("ui.help.process", self.process_button)
         set_fixed_width(self.process_button, 86)
 
         self.progress_bar = QProgressBar()
@@ -498,9 +507,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.nav_label,
             self.current_frame_label,
             self.nav_mode,
-            QLabel("Step:"),
+            self.nav_step_label,
             self.nav_step,
-            QLabel("Fast:"),
+            self.nav_fast_label,
             self.nav_fast_step,
             "stretch",
         )
@@ -528,21 +537,24 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         )
         control_layout.addWidget(self.preview_info)
         control_layout.addWidget(self.preview_label)
-        compact_row(control_layout, QLabel("Move:"), self.nav_button_layout, "stretch")
+        self.move_label = QLabel(self.uiText("ui.label.move"))
+        compact_row(control_layout, self.move_label, self.nav_button_layout, "stretch")
         control_layout.addStretch(1)
 
-        tabs.addTab(load_tab, "Load / Process")
-        tabs.addTab(control_tab, "Control / Preview")
+        tabs.addTab(load_tab, self.uiText("ui.tab.load"))
+        tabs.addTab(control_tab, self.uiText("ui.tab.control"))
         layout.addWidget(tabs)
 
         self.setLayout(layout)
 
         # アクションを定義
-        self.action = QAction("Start", self)
+        self.action = QAction(self.uiText("ui.action.start"), self)
+        self.action.setStatusTip(self.uiText("ui.help.process"))
         self.action.triggered.connect(self.run)
-        self.viewer_action = QAction("360ViewerOpen", self)
+        self.viewer_action = QAction(self.uiText("ui.action.open_viewer"), self)
+        self.viewer_action.setStatusTip(self.uiText("ui.help.video"))
         self.viewer_action.triggered.connect(self.openViewer)
-        self.exit_action = QAction("Exit", self)
+        self.exit_action = QAction(self.uiText("ui.action.exit"), self)
         self.exit_action.triggered.connect(self.exitSession)
 
         # メニューにアクションを追加
@@ -673,18 +685,18 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         file_path, _ = QFileDialog.getOpenFileName(self, "Select GPX File", "", "GPX Files (*.gpx)")
         if file_path:
             self.gpx_file = file_path
-            self.setPathLabel(self.gpx_path, file_path, "No GPX")
+            self.setPathLabel(self.gpx_path, file_path, self.uiText("ui.path.no_gpx"))
 
     def selectVideo(self):
         """MP4動画を選択し、出力先既定値とビューア設定を更新する。"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "MP4 Files (*.mp4)")
         if file_path:
             self.video_file = file_path
-            self.setPathLabel(self.video_path, file_path, "No video")
+            self.setPathLabel(self.video_path, file_path, self.uiText("ui.path.no_video"))
             self.viewer_browser_opened = False
             self.setCurrentFrame(None)
             if not self.output_dir_user_selected:
-                self.setPathLabel(self.output_path, self.defaultOutputDir(), "Default output")
+                self.setPathLabel(self.output_path, self.defaultOutputDir(), self.uiText("ui.path.default_output"))
             self.writeViewerRuntimeConfig(show_error=False)
 
     def selectKP(self):
@@ -692,7 +704,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         file_path, _ = QFileDialog.getOpenFileName(self, "Select KP CSV", "", "CSV Files (*.csv)")
         if file_path:
             self.kp_file = file_path
-            self.setPathLabel(self.kp_path, file_path, "No KP CSV")
+            self.setPathLabel(self.kp_path, file_path, self.uiText("ui.path.no_kp"))
 
     def selectOutputDir(self):
         """CSV/画像/セッションJSONの出力先ディレクトリを選択する。"""
@@ -700,7 +712,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if directory:
             self.output_dir = directory
             self.output_dir_user_selected = True
-            self.setPathLabel(self.output_path, directory, "Default output")
+            self.setPathLabel(self.output_path, directory, self.uiText("ui.path.default_output"))
             self.writeViewerRuntimeConfig(show_error=False)
 
     def defaultOutputDir(self):
@@ -734,12 +746,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """現在フレーム状態とUI表示を同期する。"""
         if frame_num is None:
             self.current_frame = None
-            self.current_frame_label.setText("Current: -")
+            self.current_frame_label.setText(self.uiText("ui.status.current_empty"))
             return
 
         self.current_frame = int(frame_num)
         self.extract_frame.setValue(max(0, self.current_frame))
-        self.current_frame_label.setText(f"Current: {self.current_frame}")
+        self.current_frame_label.setText(self.uiText("ui.status.current", frame=self.current_frame))
 
     def currentFrameValue(self):
         """現在フレーム状態を返す。未設定ならUIのFrame入力値を使う。"""
@@ -935,6 +947,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             index = frames.index(smaller[-1]) - step_count + 1
         return frames[max(index, 0)]
 
+    def setNavigationModeByData(self, mode):
+        """指定dataを持つナビゲーションモードへUI選択を切り替える。"""
+        for index in range(self.nav_mode.count()):
+            if self.nav_mode.itemData(index) == mode:
+                self.nav_mode.setCurrentIndex(index)
+                return True
+        return False
+
+    def frameStepNavigationTarget(self, current_frame, direction, step_count):
+        """Frame stepモードとして次フレームを決める。"""
+        target = max(0, int(current_frame) + int(direction) * int(step_count))
+        return target, self.findFeatureByFrame(target)
+
     def navigationTargetFrame(self, direction, fast=False):
         """UIのナビモードに応じて、次に表示すべきフレームと地物を決める。"""
         config = self.collectNavigationConfig()
@@ -946,14 +971,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         mode = config.mode
 
         if mode == "frame":
-            target = max(0, current_frame + direction * step_count)
-            return target, self.findFeatureByFrame(target)
+            return self.frameStepNavigationTarget(current_frame, direction, step_count)
 
         if mode == "kp":
             frames, path = self.matchedFrames()
             if not frames:
-                self.notifyWarning("matched_frame_csv_missing")
-                return None, None
+                self.setNavigationModeByData("frame")
+                self.notifyWarning("kp_navigation_fallback_frame")
+                return self.frameStepNavigationTarget(current_frame, direction, step_count)
             target = self.steppedFrame(frames, current_frame, direction, step_count)
             if target is None:
                 self.notifyWarning("no_kp_frame", direction="next" if direction > 0 else "previous")
@@ -1109,10 +1134,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.setCurrentFrame(None)
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
-        self.preview_info.setText("No frame extracted")
+        self.preview_info.setText(self.uiText("ui.preview.empty"))
         self.preview_info.setToolTip("")
         self.preview_label.clear()
-        self.preview_label.setText("Preview")
+        self.preview_label.setText(self.uiText("ui.preview.title"))
+        self.preview_label.setToolTip("")
 
     def cleanupSession(self, close_panel=True, remove_layers=True, show_message=True):
         """クリックモード、worker、ビューア、生成レイヤをまとめて終了処理する。"""

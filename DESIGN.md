@@ -81,12 +81,12 @@ The split intentionally avoids excessive fragmentation. QGIS GUI layout and sign
 
 ## Current Status
 
-As of 2026-06-04, the following behavior has been implemented and checked:
+As of 2026-06-07, the following behavior has been implemented and checked:
 
 - Non-standard GPX timestamps can be parsed and interpolated to MP4 frame positions.
 - The video frame number remains the immutable key while a user-defined frame shift is applied.
 - When KP CSV is provided, nearest KP points within tolerance are matched and written to CSV.
-- `360ViewerOpen` starts the local WEB viewer from QGIS.
+- `Open 360Viewer` starts the local WEB viewer from QGIS.
 - Clicking a camera point on the QGIS map displays the corresponding 360 frame in the browser.
 - The browser swaps frames through krpano `loadpano()` instead of reloading the whole page after the initial load.
 - Frame changes preserve the latest `yaw_to_camera_heading`, `pitch`, and `zoom`.
@@ -101,6 +101,8 @@ As of 2026-06-04, the following behavior has been implemented and checked:
 - Real-device data from Insta360 X4 + smartphone remote/GNSS has been tested: Insta360-exported GPX and H.265 MP4 can be loaded directly.
 - `config.py` now validates Process, single-frame extraction, navigation, radar, and 360Viewer startup inputs outside QGIS.
 - `docs/qgis_manual_test_checklist.md` lists QGIS manual checks by feature.
+- The main UI uses hybrid localization: primary operations are localized while compact technical labels are explained through tooltips.
+- The preview area makes the responsibility boundary visible between QGIS-side `images/` extraction and WEB viewer `viewer_cache/` generation.
 
 ## Runtime Environment
 
@@ -140,11 +142,11 @@ If `krpano.js` is missing, the viewer falls back to a normal extracted equirecta
 
 The plugin menu and toolbar currently expose:
 
-- `360ViewerOpen`
-- `Start`
+- `Open 360Viewer`
+- `Control Panel`
 - `Exit`
 
-### 360ViewerOpen
+### Open 360Viewer
 
 Starts the local HTTP viewer process and opens the browser.
 
@@ -153,7 +155,7 @@ Important implementation detail:
 - QGIS may expose `sys.executable` as `qgis.exe` or `qgis-bin.exe`.
 - The plugin avoids launching QGIS recursively by searching for a Python launcher such as `python.exe`, `python3.exe`, or `python-qgis.bat`.
 
-### Start
+### Control Panel
 
 Opens the synchronization/processing panel and reports whether the viewer server is running.
 
@@ -173,6 +175,13 @@ Only layers whose IDs were created by this plugin are removed. Other layers with
 
 The panel uses two tabs to reduce vertical height and make the operation order easier to follow.
 
+The UI uses a hybrid localization policy so operators can start without a manual while the panel remains compact.
+
+- Menus, tabs, primary buttons, and checkboxes are localized.
+- Short technical labels such as `Shift`, `KP tol`, `CalFOV`, `CalDist`, `Scale`, and `Offset` remain in English/abbreviated form.
+- Tooltips and What's This text explain the technical labels, operational cautions, and cache-vs-output distinctions in the active locale.
+- UI text uses the same locale setting as messageBar text and is managed in `messages.py` under `UI_TEXTS`.
+
 ### `Load / Process`
 
 This tab follows the full-processing setup order:
@@ -191,13 +200,20 @@ Each file selector is laid out as one row: label, compact file name, and `Browse
 This tab groups interactive checking and navigation:
 
 - `Frame` number and `Extract`
-- `Click Layer` / `Stop Click` / `Follow`
+- `Camera Point` / `Stop Click` / `Follow`
 - Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `CalFOV` / `CalDist` / `Offset`
 - QGIS preview information
 - QGIS preview image
 - `<<`, `<`, `>`, `>>` navigation buttons
 
 The earlier single vertical panel became too tall in QGIS. The current UI separates load settings from controls, keeps related operations on one row, and shortens button labels where the surrounding label already provides context.
+
+The preview area also acts as a small diagnostic dashboard during frame synchronization checks.
+
+- The `Frame ... saved/existing` line shows the QGIS-side JPEG written under `images/` and the extraction timing.
+- Even when two nearby frames look visually similar, the frame number and file name make the change visible.
+- The preview image tooltip shows the expected `viewer_cache/` file used by the WEB viewer.
+- If the `viewer_cache/` file already exists, the tooltip also shows its file size.
 
 ## Frame Navigation
 
@@ -214,6 +230,8 @@ Navigation settings:
 - `Layer point`: move through the `Video GPX Points` layer generated and retained by GPXVideoProcessor, sorted by `frame`.
 - `KP matched CSV`: move through `<video_stem>_matched_frames.csv` sorted by `frame_index`.
 
+If `KP matched CSV` is missing or empty, the plugin shows a warning and automatically changes the navigation mode back to `Frame step`. This prevents the operator from repeatedly hitting the same unavailable KP navigation error when no KP data is being used.
+
 `Video GPX Points` is treated as an internal reference layer for 360 image viewing. The plugin keeps the generated layer id and uses it for navigation and click-mode setup, so changing the user's feature-registration target layer does not change the viewer reference layer. The active layer is only used as a fallback before `Process`, when a pre-existing frame layer is being used manually.
 
 The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.
@@ -228,6 +246,8 @@ When click mode is active, or when the GPXVideoProcessor panel has focus, keyboa
 - `Esc`: stop click mode
 
 Keyboard input is handled by the active map tool and by a QGIS application event filter. Even when another map tool, such as a feature registration tool, is active, navigation keys are accepted while the GPXVideoProcessor panel has focus. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
+
+QGIS allows only one active map tool on the map canvas. Map clicks are therefore explicitly switched: normal feature-registration work keeps the external feature tool as the primary map tool, while GPXVideoProcessor behaves as a subordinate viewer/navigation tool through its panel, keyboard handling, and WEB viewer session polling. The operator presses `Camera Point` only when they want to temporarily switch map clicks to GPXVideoProcessor camera-point selection.
 
 QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path. When the browser viewer has focus, `Left` / `Right` also moves through Prev/Next frames from `matched_frames.csv`.
 
@@ -245,7 +265,7 @@ The browser viewer debug log is collapsed by default and can be shown or hidden 
 6. The plugin reads GPX points and interpolates positions to video frames.
 7. A `Video GPX Points` memory layer is added to QGIS.
 8. CSV/JSON outputs are written.
-9. In the `Control / Preview` tab, enable `Click Layer`.
+9. In the `Control / Preview` tab, enable `Camera Point`.
 10. Click a point on the `Video GPX Points` layer.
 11. The browser viewer displays the corresponding frame.
 12. QGIS also creates/loads a local preview JPEG.
@@ -516,6 +536,8 @@ The QGIS preview cache uses the same 1000-frame subfolder rule and `frame_{frame
 
 When created from a clicked QGIS point, GPS EXIF fields are added where latitude/longitude can be resolved.
 
+The plugin panel `Frame ... saved/existing` text refers to this `images/` side. It confirms that the QGIS plugin extracted the frame from the MP4 and wrote the preview JPEG.
+
 ### `viewer_cache/`
 
 WEB viewer JPEG cache. This is separate from the QGIS preview cache and is optimized for interactive viewing.
@@ -531,6 +553,14 @@ Current default:
 ```
 
 The source 8K frame is resized for the browser viewer before JPEG encoding. This does not affect QGIS preview images or future evidence export.
+
+The preview image tooltip shows the `viewer_cache/` path predicted with the same naming rule as the WEB viewer. Even before the browser finishes generating the cache file, the operator can see which file the viewer should write for the current frame. If the file exists, the tooltip also shows its size.
+
+Responsibility boundary:
+
+- `images/`: preview or planned evidence image extracted by the QGIS plugin.
+- `viewer_cache/`: lightweight JPEG generated by 360Viewer for browser display.
+- When browser display is abnormal, check the `images/` status line, the `viewer_cache/` tooltip, and the WEB viewer display in that order.
 
 ## 360 Viewer
 
