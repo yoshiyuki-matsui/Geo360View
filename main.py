@@ -567,8 +567,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.toolbar.addAction(self.viewer_action)
         self.toolbar.addAction(self.action)
         self.toolbar.addAction(self.exit_action)
-        self.startViewerSessionPolling()
-        self.installKeyboardFilter()
         self._gui_initialized = True
 
     def installKeyboardFilter(self):
@@ -658,6 +656,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """Startメニューからパネルを開き、ビューア状態監視を開始する。"""
         self.showWindow()
         self.startViewerSessionPolling()
+        self.installKeyboardFilter()
         self.reportViewerStatus()
 
     def makePathLabel(self, text):
