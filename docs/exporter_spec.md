@@ -88,7 +88,7 @@ CSV/JSON内の画像参照:
 image_path = images/{folder}/frame_{frame:07d}.jpg
 ```
 
-`image_path` はCSV/JSONファイルから見た相対パスです。通常の `360view_output` 配下では `images/0000/frame_0000000.jpg` になります。動画フォルダ側へ複製する `*_matched_frames.csv` では、そのCSV位置から見た相対パスになります。
+`image_path` はCSV/JSONファイルから見た相対パスです。通常のMP4名由来の出力フォルダ配下では `images/0000/frame_0000000.jpg` になります。動画フォルダ側へ複製する `*_matched_frames.csv` では、そのCSV位置から見た相対パスになります。
 
 全フレームCSVでは、`image_path` は実体ファイルの存在保証ではなく、QGISオンザフライ抽出またはExporterが生成する予定位置を示します。
 
@@ -408,7 +408,7 @@ Done in 50.30s. Counts: {'exported': 1000}
 
 ```bash
 python TenkakuNinja/main.py ^
-  --database W:/workshop/nexco/360view_output/tmp.gpkg ^
+  --database W:/workshop/nexco/VID_20250324_135428_00_033_rot170/tmp.gpkg ^
   --video W:/workshop/nexco/VID_20250324_135428_00_033_rot170.mp4
 ```
 
@@ -416,7 +416,7 @@ python TenkakuNinja/main.py ^
 
 ```bash
 python TenkakuNinja/main.py ^
-  --database W:/workshop/nexco/360view_output/tmp.gpkg ^
+  --database W:/workshop/nexco/VID_20250324_135428_00_033_rot170/tmp.gpkg ^
   --video W:/workshop/nexco/VID_20250324_135428_00_033_rot170.mp4 ^
   --matched-only
 ```
@@ -425,7 +425,7 @@ python TenkakuNinja/main.py ^
 
 ```bash
 python TenkakuNinja/main.py ^
-  --database W:/workshop/nexco/360view_output/tmp.gpkg ^
+  --database W:/workshop/nexco/VID_20250324_135428_00_033_rot170/tmp.gpkg ^
   --video W:/workshop/nexco/VID_20250324_135428_00_033_rot170.mp4 ^
   --start 10000 ^
   --end 12000 ^

@@ -54,6 +54,10 @@ button:disabled {
   min-width: 52px;
 }
 
+.grid-toggle {
+  min-width: 52px;
+}
+
 .readout {
   display: flex;
   flex-wrap: wrap;
@@ -93,7 +97,8 @@ button:disabled {
 }
 
 #pano,
-#fallbackFrame {
+#fallbackFrame,
+#groundRingsOverlay {
   height: 100%;
   inset: 0;
   position: absolute;
@@ -106,6 +111,42 @@ button:disabled {
 
 #fallbackFrame {
   object-fit: contain;
+}
+
+.ground-rings-overlay {
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.ground-rings-overlay[hidden] {
+  display: none;
+}
+
+.ground-ring {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.0;
+  vector-effect: non-scaling-stroke;
+}
+
+.ground-ring-grid {
+  fill: none;
+  stroke: rgba(255, 238, 72, 0.5);
+    stroke-dasharray: 2 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.0;
+  vector-effect: non-scaling-stroke;
+}
+
+.ground-ring-outer {
+  stroke: rgba(0, 190, 255, 0.78);
+}
+
+.ground-ring-inner {
+  stroke: rgba(255, 238, 114, 0.92);
 }
 
 .click-target-marker {

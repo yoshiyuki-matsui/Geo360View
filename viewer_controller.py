@@ -96,6 +96,7 @@ class ViewerControllerMixin:
             "viewer_progressive_jpeg": viewer_config.progressive_jpeg,
             "viewer_max_width": viewer_config.max_width,
             "viewer_cache_dir": viewer_config.cache_dir,
+            "viewer_camera_height_m": viewer_config.camera_height_m,
         }
 
         try:
@@ -125,6 +126,7 @@ class ViewerControllerMixin:
         query = urlencode({
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
+            "viewer_camera_height_m": self.viewerCameraHeightValue(),
         })
         return f"{base_url}/viewer?{query}"
 
@@ -234,6 +236,7 @@ class ViewerControllerMixin:
 
     def ensureViewerStarted(self):
         """ビューア設定を書き出し、必要ならローカルHTTPサーバを起動する。"""
+        self.loadViewerSessionCameraHeight()
         if not self.writeViewerRuntimeConfig():
             return False
         if self.viewerHealth():
@@ -347,6 +350,7 @@ class ViewerControllerMixin:
         payload = {
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
+            "viewer_camera_height_m": self.viewerCameraHeightValue(),
         }
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:

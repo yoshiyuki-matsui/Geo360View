@@ -2,9 +2,10 @@
   "host": "127.0.0.1",
   "port": 8181,
   "video_dir": "D:\\nexco",
-  "session_json_path": "D:/nexco\\360view_output\\viewer_session.json",
+  "session_json_path": "D:/nexco\\VID_20260605_140303_00_001_2\\viewer_session.json",
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
-  "viewer_cache_dir": "D:/nexco\\360view_output\\viewer_cache"
+  "viewer_cache_dir": "D:/nexco\\VID_20260605_140303_00_001_2\\viewer_cache",
+  "viewer_camera_height_m": 0.9999999999999997
 }

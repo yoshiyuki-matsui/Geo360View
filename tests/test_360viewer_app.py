@@ -24,6 +24,7 @@ def load_viewer_app(temp_dir):
         "viewer_jpeg_quality": 70,
         "viewer_progressive_jpeg": True,
         "viewer_max_width": 3072,
+        "viewer_camera_height_m": 1.5,
     }
     config_path = temp_dir / "viewer_config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -66,6 +67,7 @@ class ViewerAppValidationTests(unittest.TestCase):
             "yaw_to_camera_heading": "370",
             "pitch": "-3.5",
             "zoom": "2",
+            "viewer_camera_height_m": "1.2",
             "target": {
                 "x_ratio": "1.5",
                 "y_ratio": "-0.5",
@@ -83,6 +85,7 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["yaw_to_camera_heading"], 10.0)
         self.assertEqual(state["pitch"], -3.5)
         self.assertEqual(state["zoom"], 2.0)
+        self.assertEqual(state["viewer_camera_height_m"], 1.2)
         self.assertEqual(state["target"]["x_ratio"], 1.0)
         self.assertEqual(state["target"]["y_ratio"], 0.0)
         self.assertEqual(state["target"]["yaw_delta_deg"], -170.0)
@@ -109,17 +112,44 @@ class ViewerAppValidationTests(unittest.TestCase):
         stored = json.loads(session_path.read_text(encoding="utf-8"))
         self.assertEqual(stored["video"], "abc.mp4")
         self.assertEqual(stored["frame_index"], 3)
+        self.assertEqual(stored["viewer_camera_height_m"], 1.5)
         self.assertIn("updated_at", stored)
         self.assertEqual(state, stored)
 
+    def test_request_args_accepts_camera_height_from_url(self):
+        """初回表示URLのカメラ高さをviewer_session.jsonへ引き渡す。"""
+        state = self.app.state_from_request_args({
+            "viewer_camera_height_m": ["2.3"],
+        }, "abc.mp4", 8)
+
+        self.assertEqual(state["video"], "abc.mp4")
+        self.assertEqual(state["frame_index"], 8)
+        self.assertEqual(state["viewer_camera_height_m"], 2.3)
+
+    def test_request_args_preserves_camera_height_from_existing_session(self):
+        """既存ジョブsessionのカメラ高さを初回表示状態へ復元する。"""
+        self.app.write_session({
+            "video": "abc.mp4",
+            "frame_index": 7,
+            "yaw_to_camera_heading": 0.0,
+            "pitch": 0.0,
+            "zoom": 1.0,
+            "viewer_camera_height_m": 1.9,
+        })
+
+        state = self.app.state_from_request_args({}, "abc.mp4", 8)
+
+        self.assertEqual(state["viewer_camera_height_m"], 1.9)
+
     def test_navigation_payload_preserves_existing_view_when_omitted(self):
-        """QGISナビゲーションpayloadが視点値を省略した場合は直近視点を継承する。"""
+        """QGISナビゲーションpayloadが視点値やカメラ高を省略した場合は直近値を継承する。"""
         self.app.write_session({
             "video": "abc.mp4",
             "frame_index": 10,
             "yaw_to_camera_heading": 88.0,
             "pitch": -12.0,
             "zoom": 1.5,
+            "viewer_camera_height_m": 1.8,
         })
 
         state = self.app.state_from_navigation_payload({
@@ -131,6 +161,17 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["yaw_to_camera_heading"], 88.0)
         self.assertEqual(state["pitch"], -12.0)
         self.assertEqual(state["zoom"], 1.5)
+        self.assertEqual(state["viewer_camera_height_m"], 1.8)
+
+    def test_navigation_payload_accepts_camera_height_from_qgis(self):
+        """QGISから渡されたカメラ高さをviewer_session.jsonへ保存する。"""
+        state = self.app.state_from_navigation_payload({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "viewer_camera_height_m": "2.4",
+        })
+
+        self.assertEqual(state["viewer_camera_height_m"], 2.4)
 
 
 if __name__ == "__main__":

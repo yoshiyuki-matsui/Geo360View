@@ -81,6 +81,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_jpeg_quality = 70
         self.viewer_progressive_jpeg = True
         self.viewer_max_width = 3072
+        self.viewer_camera_height_m = 1.5
+        self.viewer_camera_height_dirty = False
         self.created_layer_ids = []
         self.frame_layer_id = None
         self.session_closing = False
@@ -216,6 +218,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "jpeg_quality": self.viewer_jpeg_quality,
             "progressive_jpeg": self.viewer_progressive_jpeg,
             "max_width": self.viewer_max_width,
+            "camera_height_m": self.viewerCameraHeightValue(),
         })
         if errors:
             if show_errors:
@@ -404,6 +407,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.radar_scale.setSuffix(" x")
         self.applyHelp("ui.help.radar_scale", self.radar_scale_label, self.radar_scale)
         set_fixed_width(self.radar_scale, 78)
+        self.viewer_camera_height_label = QLabel("CamH:")
+        self.viewer_camera_height = QDoubleSpinBox()
+        self.viewer_camera_height.setRange(0.1, 20.0)
+        self.viewer_camera_height.setDecimals(1)
+        self.viewer_camera_height.setSingleStep(0.1)
+        self.viewer_camera_height.setValue(self.viewer_camera_height_m)
+        self.viewer_camera_height.setSuffix(" m")
+        self.viewer_camera_height.valueChanged.connect(self.onViewerCameraHeightChanged)
+        self.applyHelp("ui.help.camera_height", self.viewer_camera_height_label, self.viewer_camera_height)
+        set_fixed_width(self.viewer_camera_height, 78)
         self.current_fov_label = QLabel("FOV: -")
         self.marker_distance_label = QLabel("Marker: -")
         self.target_projection_label = QLabel("Click: -")
@@ -519,6 +532,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.radar_radius,
             self.radar_scale_label,
             self.radar_scale,
+            self.viewer_camera_height_label,
+            self.viewer_camera_height,
             self.radar_offset_label,
             self.radar_offset,
             "stretch",
@@ -696,6 +711,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.setCurrentFrame(None)
             if not self.output_dir_user_selected:
                 self.setPathLabel(self.output_path, self.defaultOutputDir(), self.uiText("ui.path.default_output"))
+            self.setViewerCameraHeightValue(1.5)
+            self.viewer_camera_height_dirty = False
+            self.loadViewerSessionCameraHeight()
             self.writeViewerRuntimeConfig(show_error=False)
 
     def selectKP(self):
@@ -712,11 +730,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.output_dir = directory
             self.output_dir_user_selected = True
             self.setPathLabel(self.output_path, directory, self.uiText("ui.path.default_output"))
+            self.loadViewerSessionCameraHeight(force=True)
             self.writeViewerRuntimeConfig(show_error=False)
 
     def defaultOutputDir(self):
-        """動画またはGPXと同じ場所に置く既定出力ディレクトリを返す。"""
-        base_path = self.video_file or self.gpx_file or __file__
+        """選択動画名を既定出力ディレクトリ名にし、動画由来を明示する。"""
+        if self.video_file:
+            video_dir = os.path.dirname(self.video_file)
+            return os.path.join(video_dir, _base_output_name(self.video_file, ""))
+
+        base_path = self.gpx_file or __file__
         return os.path.join(os.path.dirname(base_path), "360view_output")
 
     def resolvedOutputDir(self):
@@ -817,6 +840,102 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
         self.radar_cal_fov.setValue(float(fov))
         self.notifyInfo("calibration_fov_set", fov=float(fov))
+
+    def viewerCameraHeightValue(self):
+        """ジョブ条件として扱うカメラ高さをUIまたは既定値から取得する。"""
+        widget = getattr(self, "viewer_camera_height", None)
+        if widget is not None:
+            value = float(widget.value())
+        else:
+            value = float(getattr(self, "viewer_camera_height_m", 1.5))
+        return max(0.1, min(20.0, value))
+
+    def setViewerCameraHeightValue(self, value, mark_dirty=False):
+        """セッション等から読んだカメラ高さをUI状態へ安全に反映する。"""
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return False
+        numeric = max(0.1, min(20.0, numeric))
+        self.viewer_camera_height_m = numeric
+        if mark_dirty:
+            self.viewer_camera_height_dirty = True
+
+        widget = getattr(self, "viewer_camera_height", None)
+        if widget is not None and abs(float(widget.value()) - numeric) > 0.0005:
+            previous_blocked = widget.blockSignals(True)
+            try:
+                widget.setValue(numeric)
+            finally:
+                widget.blockSignals(previous_blocked)
+        return True
+
+    def loadViewerSessionCameraHeight(self, force=False):
+        """既存viewer_session.jsonがあれば、ジョブ固有のカメラ高さを復元する。"""
+        if getattr(self, "viewer_camera_height_dirty", False) and not force:
+            return False
+        path = self.viewerSessionPath()
+        if not os.path.isfile(path):
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(state, dict):
+            return False
+        current_video = os.path.basename(self.video_file) if self.video_file else ""
+        session_video = state.get("video")
+        if current_video and session_video and session_video != current_video:
+            return False
+        if "viewer_camera_height_m" not in state:
+            return False
+        restored = self.setViewerCameraHeightValue(state.get("viewer_camera_height_m"))
+        if restored:
+            self.viewer_camera_height_dirty = False
+        return restored
+
+    def writeViewerCameraHeightSessionValue(self):
+        """動画選択済みならカメラ高さだけでもviewer_session.jsonへ成果物として残す。"""
+        if not self.video_file:
+            return False
+        path = self.viewerSessionPath()
+        current_video = os.path.basename(self.video_file)
+        state = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    loaded = json.load(handle)
+                if isinstance(loaded, dict):
+                    state = loaded
+            except (OSError, json.JSONDecodeError):
+                state = {}
+
+        if state.get("video") not in (None, current_video):
+            state = {}
+
+        state["video"] = current_video
+        state["viewer_camera_height_m"] = self.viewerCameraHeightValue()
+        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+            os.replace(tmp_path, path)
+            return True
+        except OSError:
+            return False
+
+    def onViewerCameraHeightChanged(self, _value):
+        """カメラ高さ変更をランタイム設定と開いているビューアへ反映する。"""
+        self.setViewerCameraHeightValue(self.viewerCameraHeightValue(), mark_dirty=True)
+        self.writeViewerRuntimeConfig(show_error=False)
+        self.writeViewerCameraHeightSessionValue()
+        if self.current_frame is not None and self.viewerHealth(timeout=0.15):
+            self.postViewerNavigation(self.current_frame)
 
     def activeFrameLayer(self):
         """ナビゲーション対象のVideo GPX Pointsレイヤを選択状態に依存せず取得する。"""

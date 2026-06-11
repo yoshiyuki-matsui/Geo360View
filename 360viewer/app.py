@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import mimetypes
 import os
 import re
@@ -25,6 +26,9 @@ DEFAULT_VIEW = {
     "pitch": 0.0,
     "zoom": 1.0,
 }
+DEFAULT_CAMERA_HEIGHT_M = 1.5
+MIN_CAMERA_HEIGHT_M = 0.1
+MAX_CAMERA_HEIGHT_M = 20.0
 
 
 class ConfigError(RuntimeError):
@@ -40,6 +44,17 @@ class ApiError(RuntimeError):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+def normalize_camera_height(value: Any, default: float = DEFAULT_CAMERA_HEIGHT_M) -> float:
+    """ジョブ条件のカメラ高さを安全な範囲のm値へ正規化する。"""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = float(default)
+    if not math.isfinite(numeric):
+        numeric = float(default)
+    return max(MIN_CAMERA_HEIGHT_M, min(MAX_CAMERA_HEIGHT_M, numeric))
 
 
 def load_config() -> dict[str, Any]:
@@ -62,6 +77,7 @@ def load_config() -> dict[str, Any]:
         "viewer_progressive_jpeg": parse_bool(raw.get("viewer_progressive_jpeg", True)),
         "viewer_max_width": max(0, int(raw.get("viewer_max_width", 3072))),
         "viewer_cache_dir": viewer_cache_dir,
+        "viewer_camera_height_m": normalize_camera_height(raw.get("viewer_camera_height_m")),
     }
 
 
@@ -257,6 +273,10 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
     path = cfg["session_json_path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     state = dict(state)
+    state["viewer_camera_height_m"] = normalize_camera_height(
+        state.get("viewer_camera_height_m"),
+        cfg["viewer_camera_height_m"],
+    )
     state["updated_at"] = now_iso()
 
     # QGIS側ポーリングが途中書き込みを読まないよう、一時ファイルから置換する。
@@ -270,8 +290,13 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
 
 def state_from_request_args(query: dict[str, list[str]], video: str, frame_index: int) -> dict[str, Any]:
     """viewer初回表示URLからセッションへ保存する状態を作る。"""
+    cfg = load_config()
     session = read_session()
     view = view_state_from_query(query, session)
+    camera_height = normalize_camera_height(
+        query_value(query, "viewer_camera_height_m", session.get("viewer_camera_height_m")),
+        cfg["viewer_camera_height_m"],
+    )
 
     return {
         "video": video,
@@ -279,6 +304,7 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
         "yaw_to_camera_heading": view["yaw_to_camera_heading"],
         "pitch": view["pitch"],
         "zoom": view["zoom"],
+        "viewer_camera_height_m": camera_height,
     }
 
 
@@ -292,6 +318,10 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "yaw_to_camera_heading": normalize_yaw(parse_float(payload.get("yaw_to_camera_heading"), "yaw_to_camera_heading")),
         "pitch": parse_float(payload.get("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
         "zoom": parse_float(payload.get("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
+        "viewer_camera_height_m": normalize_camera_height(
+            payload.get("viewer_camera_height_m"),
+            load_config()["viewer_camera_height_m"],
+        ),
     }
     target = validate_target_payload(payload.get("target"))
     if target:
@@ -399,6 +429,10 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "yaw_to_camera_heading": normalize_yaw(parse_float(view_value("yaw_to_camera_heading"), "yaw_to_camera_heading")),
         "pitch": parse_float(view_value("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
         "zoom": parse_float(view_value("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
+        "viewer_camera_height_m": normalize_camera_height(
+            payload.get("viewer_camera_height_m", session.get("viewer_camera_height_m")),
+            load_config()["viewer_camera_height_m"],
+        ),
     }
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
@@ -460,6 +494,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
       <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
+      <button id="groundGridToggleButton" class="grid-toggle" type="button" aria-pressed="true">Grid</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
@@ -474,6 +509,11 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     <section class="pano-stage">
       <div id="pano"></div>
       <img id="fallbackFrame" data-src="{frame_url}" alt="Extracted 360 frame">
+      <svg id="groundRingsOverlay" class="ground-rings-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <path id="groundRingGrid" class="ground-ring-grid" />
+        <path id="groundRingOuter" class="ground-ring ground-ring-outer" />
+        <path id="groundRingInner" class="ground-ring ground-ring-inner" />
+      </svg>
       <div id="clickTargetMarker" class="click-target-marker" hidden></div>
       <div id="radarHud" class="radar-hud" aria-hidden="true">
         <svg viewBox="0 0 260 118" role="img" aria-label="Viewer range guide">
@@ -680,6 +720,15 @@ class ViewerHandler(BaseHTTPRequestHandler):
                     and isinstance(previous.get("radar"), dict)
                 ):
                     state["radar"] = previous["radar"]
+                if (
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and "viewer_camera_height_m" not in payload
+                    and previous.get("viewer_camera_height_m") is not None
+                ):
+                    state["viewer_camera_height_m"] = normalize_camera_height(
+                        previous.get("viewer_camera_height_m"),
+                        load_config()["viewer_camera_height_m"],
+                    )
                 state = write_session(state)
                 self.send_json(state)
                 return
@@ -742,6 +791,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "matched_csv_exists": matched_csv_exists,
             "video_exists": video_exists,
             "krpano_js_url": "/static/vendor/krpano/krpano.js",
+            "viewer_camera_height_m": state["viewer_camera_height_m"],
         }
 
         self.send_bytes(

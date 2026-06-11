@@ -13,6 +13,7 @@
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
       <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
+      <button id="groundGridToggleButton" class="grid-toggle" type="button" aria-pressed="true">Grid</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
@@ -26,7 +27,13 @@
 
     <section class="pano-stage">
       <div id="pano"></div>
-      <img id="fallbackFrame" src="" alt="Extracted 360 frame">
+      <img id="fallbackFrame" data-src="" alt="Extracted 360 frame">
+      <svg id="groundRingsOverlay" class="ground-rings-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <path id="groundRingGrid" class="ground-ring-grid"></path>
+        <path id="groundRingOuter" class="ground-ring ground-ring-outer"></path>
+        <path id="groundRingInner" class="ground-ring ground-ring-inner"></path>
+      </svg>
+      <div id="clickTargetMarker" class="click-target-marker" hidden></div>
       <div id="radarHud" class="radar-hud" aria-hidden="true">
         <svg viewBox="0 0 260 118" role="img" aria-label="Viewer range guide">
           <path class="hud-ring hud-ring-outer" d="M 30 104 A 100 100 0 0 1 230 104" />

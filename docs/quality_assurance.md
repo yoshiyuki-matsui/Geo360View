@@ -104,7 +104,7 @@ node --check 360viewer/static/viewer.js
 - `FrameExtractConfig`: MP4、frame番号、出力先
 - `NavigationConfig`: mode、step、fast step、follow
 - `RadarConfig`: Range、Scale、CalFOV、CalDist、Offset
-- `ViewerConfig`: host、port、動画ディレクトリ、session/cacheパス、JPEG品質、最大幅
+- `ViewerConfig`: host、port、動画ディレクトリ、session/cacheパス、JPEG品質、最大幅、カメラ高さ
 
 守りたい事故:
 
@@ -112,6 +112,7 @@ node --check 360viewer/static/viewer.js
 - 負のframe番号や0ステップなど、処理上意味を持たない値が混入する
 - レーダ距離校正に破綻した値が入り、地図上に誤解を招く表示が出る
 - 360Viewerのport/JPEG品質/キャッシュ設定が壊れたままQProcessを起動する
+- ジョブ固有のカメラ高さが不正なまま地面範囲HUDへ流れる
 
 ## 長時間運用で重視する不変条件
 
@@ -198,6 +199,8 @@ QGIS実機で確認する主要観点:
 - WEBビューアの画像送りでyaw/pitch/zoomを継承する。
 - WEBビューアクリック点がQGIS地図上の緑点として投影される。
 - `CalFOV` / `CalDist` / `Scale` を変えた時、QGIS側垂線、クリック投影点、WEB HUDが同じ前提で変化する。
+- `CamH` を変えた時、`viewer_session.json` への保存とWEB HUDの地面範囲円が更新される。
+- WEB HUDの1m破線補助グリッドを `Grid` ボタンで主円とは独立して切り替えられる。
 - `Follow` ON/OFFで地図再中心化の挙動が切り替わる。
 - 操作パネルの主要ボタン、タブ、messageBar、tooltipが同じlocaleで表示される。
 - パネル上の `Frame ... 保存/既存` 表示とプレビュー画像tooltipで、`images/` と `viewer_cache/` のどちらを見ているか切り分けられる。
@@ -246,7 +249,7 @@ UI入力は、処理本体が直接 `self.gpx_file` や `QSpinBox.value()` を�
 現在のConfig:
 
 - `ProcessConfig`: GPX、MP4、KP CSV、出力先、frame shift、KP許容距離
-- `ViewerConfig`: host、port、JPEG品質、progressive JPEG、最大幅、cache/sessionパス
+- `ViewerConfig`: host、port、JPEG品質、progressive JPEG、最大幅、cache/sessionパス、カメラ高さ
 - `NavigationConfig`: navigation mode、通常step、fast step、follow
 - `RadarConfig`: Range、Scale、CalFOV、CalDist、Offset
 - `FrameExtractConfig`: MP4、frame番号、出力先
@@ -496,8 +499,8 @@ Frame extraction is slower than expected. Check storage or video location.
 
 ```bash
 python tools/validate_outputs.py \
-  --output-dir /path/to/360view_output \
-  --database /path/to/360view_output/tmp.gpkg \
+  --output-dir /path/to/VID_20250324_135428_00_033_rot170 \
+  --database /path/to/VID_20250324_135428_00_033_rot170/tmp.gpkg \
   --video-name VID_20250324_135428_00_033_rot170.mp4
 ```
 

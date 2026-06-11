@@ -6,8 +6,12 @@
     yaw_to_camera_heading: 0,
     pitch: 0,
     zoom: 1,
+    viewer_camera_height_m: bootstrap.viewer_camera_height_m,
     target: null
   }, bootstrap.state || {});
+  const GROUND_GRID_STEP_M = 1;
+  const GROUND_RING_SAMPLE_COUNT = 96;
+  const GROUND_GRID_SAMPLE_COUNT = 64;
 
   let krpano = null;
   let lastPosted = null;
@@ -16,6 +20,8 @@
   let krpanoImageLoaded = false;
   let debugLogVisible = false;
   let radarHudVisible = true;
+  let groundGridVisible = true;
+  let lastViewDebug = null;
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
     next_frame: bootstrap.next_frame,
@@ -25,12 +31,17 @@
   const prevButton = document.getElementById("prevButton");
   const nextButton = document.getElementById("nextButton");
   const radarHudToggleButton = document.getElementById("radarHudToggleButton");
+  const groundGridToggleButton = document.getElementById("groundGridToggleButton");
   const debugToggleButton = document.getElementById("debugToggleButton");
   const notice = document.getElementById("notice");
   const debugLog = document.getElementById("debugLog");
   const fallbackFrame = document.getElementById("fallbackFrame");
   const panoStage = document.querySelector(".pano-stage");
   const clickTargetMarker = document.getElementById("clickTargetMarker");
+  const groundRingsOverlay = document.getElementById("groundRingsOverlay");
+  const groundRingGrid = document.getElementById("groundRingGrid");
+  const groundRingOuter = document.getElementById("groundRingOuter");
+  const groundRingInner = document.getElementById("groundRingInner");
   const videoLabel = document.getElementById("videoLabel");
   const frameLabel = document.getElementById("frameLabel");
   const viewLabel = document.getElementById("viewLabel");
@@ -42,6 +53,7 @@
   const hudInnerRing = radarHud ? radarHud.querySelector(".hud-ring-inner") : null;
   const hudOuterRing = radarHud ? radarHud.querySelector(".hud-ring-outer") : null;
   const hudPoints = radarHud ? Array.from(radarHud.querySelectorAll(".hud-point")) : [];
+  let viewerCameraHeightM = normalizeCameraHeight(state.viewer_camera_height_m);
 
   function clamp(value, minValue, maxValue) {
     return Math.max(minValue, Math.min(maxValue, value));
@@ -79,6 +91,19 @@
     return numeric;
   }
 
+  function normalizeCameraHeight(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 1.5;
+    }
+    return clamp(numeric, 0.1, 20.0);
+  }
+
+  function updateCameraHeight(value) {
+    viewerCameraHeightM = normalizeCameraHeight(value);
+    state.viewer_camera_height_m = viewerCameraHeightM;
+  }
+
   function normalizedView(source) {
     return {
       yaw_to_camera_heading: normalizeYaw(source && source.yaw_to_camera_heading),
@@ -102,7 +127,8 @@
       frame_index: Number(state.frame_index),
       yaw_to_camera_heading: yaw,
       pitch: normalizePitch(pitch),
-      zoom: normalizeZoom(zoom)
+      zoom: normalizeZoom(zoom),
+      viewer_camera_height_m: viewerCameraHeightM
     };
   }
 
@@ -140,6 +166,63 @@
     updateDebugLogVisibility();
   }
 
+  function shouldLogViewChange(nextView) {
+    if (!nextView) {
+      return false;
+    }
+    if (!lastViewDebug) {
+      return true;
+    }
+    return Math.abs(Number(nextView.yaw_to_camera_heading) - Number(lastViewDebug.yaw_to_camera_heading)) >= 1.0
+      || Math.abs(Number(nextView.pitch) - Number(lastViewDebug.pitch)) >= 1.0
+      || Math.abs(Number(nextView.zoom) - Number(lastViewDebug.zoom)) >= 0.05;
+  }
+
+  function logViewDebug(viewState, reason) {
+    const active = viewState || readKrpanoView() || state;
+    if (!active || !shouldLogViewChange(active)) {
+      return;
+    }
+    const fov = 90 / normalizeZoom(active.zoom);
+    logDebug(`${reason || "view"} yaw=${Number(active.yaw_to_camera_heading).toFixed(2)} pitch=${Number(active.pitch).toFixed(2)} fov=${fov.toFixed(2)} zoom=${Number(active.zoom).toFixed(3)}`);
+    lastViewDebug = {
+      yaw_to_camera_heading: Number(active.yaw_to_camera_heading),
+      pitch: Number(active.pitch),
+      zoom: Number(active.zoom)
+    };
+  }
+
+  function formatVector(vector) {
+    if (!vector) {
+      return "(n/a)";
+    }
+    return `(${Number(vector.x).toFixed(2)},${Number(vector.y).toFixed(2)},${Number(vector.z).toFixed(2)})`;
+  }
+
+  function logGroundRingSamples(viewState) {
+    if (!panoStage || !viewState) {
+      return;
+    }
+    const stageRect = panoStage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) {
+      return;
+    }
+    const samples = [
+      ["front5", { x: 0, y: -viewerCameraHeightM, z: 5 }],
+      ["right5", { x: 5, y: -viewerCameraHeightM, z: 0 }],
+      ["back5", { x: 0, y: -viewerCameraHeightM, z: -5 }],
+      ["left5", { x: -5, y: -viewerCameraHeightM, z: 0 }]
+    ];
+    const yaw = normalizeYaw(viewState.yaw_to_camera_heading);
+    const pitch = normalizePitch(viewState.pitch);
+    samples.forEach(([label, worldPoint]) => {
+      const yawAligned = rotateYaw(worldPoint, -yaw);
+      const viewAligned = rotatePitch(yawAligned, pitch);
+      const projected = projectGroundPoint(worldPoint, viewState, stageRect);
+      logDebug(`sample ${label} world=${formatVector(worldPoint)} yawAligned=${formatVector(yawAligned)} viewAligned=${formatVector(viewAligned)} visible=${Boolean(projected)}`);
+    });
+  }
+
   function updateDebugLogVisibility() {
     if (!debugLog) {
       return;
@@ -166,13 +249,20 @@
   }
 
   function updateRadarHudVisibility() {
-    if (!radarHud) {
-      return;
+    const visible = radarHudVisible && Boolean(state.radar);
+    if (radarHud) {
+      radarHud.hidden = !visible;
     }
-    radarHud.hidden = !radarHudVisible || !state.radar;
+    if (groundRingsOverlay) {
+      groundRingsOverlay.hidden = !visible;
+    }
     if (radarHudToggleButton) {
       radarHudToggleButton.textContent = radarHudVisible ? "Hide HUD" : "HUD";
       radarHudToggleButton.setAttribute("aria-expanded", radarHudVisible ? "true" : "false");
+    }
+    if (groundGridToggleButton) {
+      groundGridToggleButton.textContent = groundGridVisible ? "Hide Grid" : "Grid";
+      groundGridToggleButton.setAttribute("aria-pressed", groundGridVisible ? "true" : "false");
     }
   }
 
@@ -184,6 +274,19 @@
     radarHudToggleButton.addEventListener("click", () => {
       radarHudVisible = !radarHudVisible;
       updateRadarHudVisibility();
+      updateGroundRings(readKrpanoView() || state);
+    });
+  }
+
+  function setupGroundGridToggle() {
+    updateRadarHudVisibility();
+    if (!groundGridToggleButton) {
+      return;
+    }
+    groundGridToggleButton.addEventListener("click", () => {
+      groundGridVisible = !groundGridVisible;
+      updateRadarHudVisibility();
+      updateGroundRings(readKrpanoView() || state);
     });
   }
 
@@ -204,9 +307,176 @@
     return `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
   }
 
+  function rotateYaw(vector, degrees) {
+    const radians = degrees * Math.PI / 180;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    return {
+      x: cos * vector.x + sin * vector.z,
+      y: vector.y,
+      z: -sin * vector.x + cos * vector.z
+    };
+  }
+
+  function rotatePitch(vector, degrees) {
+    const radians = degrees * Math.PI / 180;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    return {
+      x: vector.x,
+      y: cos * vector.y + sin * vector.z,
+      z: -sin * vector.y + cos * vector.z
+    };
+  }
+
+  function projectGroundPoint(point, viewState, stageRect) {
+    const yaw = normalizeYaw(viewState && viewState.yaw_to_camera_heading);
+    const pitch = normalizePitch(viewState && viewState.pitch);
+    const zoom = normalizeZoom(viewState && viewState.zoom);
+    const horizontalFovDeg = clamp(90 / zoom, 1, 179);
+    const horizontalHalfRadians = (horizontalFovDeg / 2) * Math.PI / 180;
+    const verticalHalfRadians = Math.atan(
+      Math.tan(horizontalHalfRadians) * (stageRect.height / stageRect.width)
+    );
+    const verticalFovDeg = clamp(verticalHalfRadians * 2 * 180 / Math.PI, 1, 179);
+    const yawAligned = rotateYaw(point, -yaw);
+    const viewAligned = rotatePitch(yawAligned, pitch);
+    if (viewAligned.z <= 0.01) {
+      return null;
+    }
+    const tanHalfHorizontal = Math.tan((horizontalFovDeg / 2) * Math.PI / 180);
+    const tanHalfVertical = Math.tan((verticalFovDeg / 2) * Math.PI / 180);
+    if (Math.abs(tanHalfHorizontal) < 1e-9 || Math.abs(tanHalfVertical) < 1e-9) {
+      return null;
+    }
+    const xNdc = (viewAligned.x / viewAligned.z) / tanHalfHorizontal;
+    const yNdc = -(viewAligned.y / viewAligned.z) / tanHalfVertical;
+    if (!Number.isFinite(xNdc) || !Number.isFinite(yNdc)) {
+      return null;
+    }
+    if (Math.abs(xNdc) > 2.2 || Math.abs(yNdc) > 2.2) {
+      return null;
+    }
+    return {
+      x: ((xNdc + 1) / 2) * stageRect.width,
+      y: ((yNdc + 1) / 2) * stageRect.height
+    };
+  }
+
+  function buildGroundRingPath(radiusM, viewState, stageRect, sampleCount) {
+    if (!groundRingsOverlay || !stageRect || radiusM <= 0) {
+      return "";
+    }
+    if (!stageRect.width || !stageRect.height) {
+      return "";
+    }
+    const segments = [];
+    let currentSegment = [];
+    for (let index = 0; index <= sampleCount; index += 1) {
+      const fraction = index / sampleCount;
+      const azimuth = fraction * Math.PI * 2;
+      const point = {
+        x: Math.sin(azimuth) * radiusM,
+        y: -viewerCameraHeightM,
+        z: Math.cos(azimuth) * radiusM
+      };
+      const projected = projectGroundPoint(point, viewState, stageRect);
+      if (!projected) {
+        if (currentSegment.length >= 2) {
+          segments.push(currentSegment);
+        }
+        currentSegment = [];
+        continue;
+      }
+      currentSegment.push(projected);
+    }
+    if (currentSegment.length >= 2) {
+      segments.push(currentSegment);
+    }
+    if (!segments.length) {
+      return "";
+    }
+    return segments.map((segment) => segment.map((point, pointIndex) => {
+      const command = pointIndex === 0 ? "M" : "L";
+      return `${command} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+    }).join(" ")).join(" ");
+  }
+
+  function sameGridRadius(left, right) {
+    return Math.abs(Number(left) - Number(right)) < 0.001;
+  }
+
+  function buildGroundGridPath(outerRadiusM, innerRadiusM, viewState, stageRect) {
+    if (!groundGridVisible || !Number.isFinite(outerRadiusM) || outerRadiusM < GROUND_GRID_STEP_M) {
+      return "";
+    }
+    const maxGridRadiusM = Math.floor(outerRadiusM);
+    const paths = [];
+    for (let radiusM = GROUND_GRID_STEP_M; radiusM <= maxGridRadiusM; radiusM += GROUND_GRID_STEP_M) {
+      if (sameGridRadius(radiusM, innerRadiusM) || sameGridRadius(radiusM, outerRadiusM)) {
+        continue;
+      }
+      const path = buildGroundRingPath(radiusM, viewState, stageRect, GROUND_GRID_SAMPLE_COUNT);
+      if (path) {
+        paths.push(path);
+      }
+    }
+    return paths.join(" ");
+  }
+
+  function clearGroundRings() {
+    if (groundRingGrid) {
+      groundRingGrid.removeAttribute("d");
+    }
+    if (groundRingOuter) {
+      groundRingOuter.removeAttribute("d");
+    }
+    if (groundRingInner) {
+      groundRingInner.removeAttribute("d");
+    }
+  }
+
+  function updateGroundRings(viewState) {
+    if (!groundRingsOverlay || !groundRingOuter || !groundRingInner || !groundRingGrid) {
+      return;
+    }
+    const stageRect = panoStage ? panoStage.getBoundingClientRect() : null;
+    if (!stageRect || !stageRect.width || !stageRect.height) {
+      groundRingsOverlay.hidden = true;
+      clearGroundRings();
+      return;
+    }
+    groundRingsOverlay.setAttribute("viewBox", `0 0 ${stageRect.width} ${stageRect.height}`);
+    if (!state.radar || !radarHudVisible) {
+      groundRingsOverlay.hidden = true;
+      clearGroundRings();
+      return;
+    }
+    const outerRadiusM = Number(state.radar.outer_range_m);
+    const innerRadiusM = Number(state.radar.range_m);
+    if (!Number.isFinite(outerRadiusM) || !Number.isFinite(innerRadiusM) || outerRadiusM <= 0 || innerRadiusM <= 0) {
+      groundRingsOverlay.hidden = true;
+      clearGroundRings();
+      return;
+    }
+    const activeView = viewState || readKrpanoView() || state;
+    const gridPath = buildGroundGridPath(outerRadiusM, innerRadiusM, activeView, stageRect);
+    const outerPath = buildGroundRingPath(outerRadiusM, activeView, stageRect, GROUND_RING_SAMPLE_COUNT);
+    const innerPath = buildGroundRingPath(innerRadiusM, activeView, stageRect, GROUND_RING_SAMPLE_COUNT);
+    if (gridPath) {
+      groundRingGrid.setAttribute("d", gridPath);
+    } else {
+      groundRingGrid.removeAttribute("d");
+    }
+    groundRingOuter.setAttribute("d", outerPath);
+    groundRingInner.setAttribute("d", innerPath);
+    groundRingsOverlay.hidden = !(gridPath || outerPath || innerPath);
+  }
+
   function updateRadarHud(viewState) {
     if (!radarHud || !state.radar) {
       updateRadarHudVisibility();
+      updateGroundRings(viewState);
       return;
     }
 
@@ -287,6 +557,7 @@
     }
 
     updateRadarHudVisibility();
+    updateGroundRings(viewState);
   }
 
   function updateRadarState(radar) {
@@ -314,6 +585,7 @@
 
   function currentSessionState() {
     const current = Object.assign({}, readKrpanoView() || state);
+    current.viewer_camera_height_m = viewerCameraHeightM;
     if (state.target) {
       current.target = state.target;
     }
@@ -334,7 +606,11 @@
     const current = readKrpanoView() || state;
     const zoom = normalizeZoom(current.zoom);
     const horizontalFovDeg = clamp(90 / zoom, 1, 179);
-    const verticalFovDeg = clamp(horizontalFovDeg * (rect.height / rect.width), 1, 179);
+    const horizontalHalfRadians = (horizontalFovDeg / 2) * Math.PI / 180;
+    const verticalHalfRadians = Math.atan(
+      Math.tan(horizontalHalfRadians) * (rect.height / rect.width)
+    );
+    const verticalFovDeg = clamp(verticalHalfRadians * 2 * 180 / Math.PI, 1, 179);
     const xNdc = (xRatio - 0.5) * 2;
     const yNdc = (yRatio - 0.5) * 2;
     const yawDeltaDeg = Math.atan(xNdc * Math.tan((horizontalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
@@ -372,6 +648,17 @@
       logDebug(`target click yaw=${target.target_yaw_to_camera_heading.toFixed(2)} delta=${target.yaw_delta_deg.toFixed(2)}`);
     }, true);
   }
+
+  window.viewerOnViewChanged = function () {
+    const activeView = readKrpanoView() || state;
+    schedulePost();
+    updateReadout(activeView);
+    updateGroundRings(activeView);
+    logViewDebug(activeView, "view changed");
+    if (activeView && Number(activeView.pitch) >= 70) {
+      logGroundRingSamples(activeView);
+    }
+  };
 
   function showFallbackFrame(message) {
     if (!fallbackFrame.getAttribute("src")) {
@@ -476,6 +763,7 @@
     const inheritedView = normalizedView(currentView);
     const nextRadar = nextState.radar && typeof nextState.radar === "object" ? nextState.radar : null;
     const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
+    updateCameraHeight(nextState.viewer_camera_height_m === undefined ? viewerCameraHeightM : nextState.viewer_camera_height_m);
 
     Object.assign(state, nextState, inheritedView, {
       video: nextVideo,
@@ -590,8 +878,10 @@
     }
 
     updateRadarState(session.radar);
+    updateCameraHeight(session.viewer_camera_height_m);
     state.target = session.target && typeof session.target === "object" ? session.target : null;
     updateReadout(readKrpanoView() || state);
+    updateGroundRings(readKrpanoView() || state);
     if (!sameFrame(session, state)) {
       if (!loadFrameInPlace(session)) {
         window.location.href = viewerUrl(session.video, session.frame_index, readKrpanoView() || state);
@@ -714,7 +1004,17 @@
         krpanoReady = true;
         logDebug("krpano onready");
         krpano = viewer;
+        if (typeof viewer.set === "function") {
+          viewer.set("events.onloadcomplete", "js(viewerKrpanoLoadComplete())");
+          viewer.set("events.onerror", "js(viewerKrpanoLoadError())");
+          viewer.set("events.onviewchanged", "js(window.viewerOnViewChanged())");
+        }
         updateReadout(readKrpanoView());
+        updateGroundRings(readKrpanoView() || state);
+        logViewDebug(readKrpanoView() || state, "initial view");
+        if ((readKrpanoView() || state).pitch >= 70) {
+          logGroundRingSamples(readKrpanoView() || state);
+        }
         postViewerState(true);
         window.setInterval(schedulePost, 300);
       }
@@ -726,6 +1026,7 @@
   setupKeyboardNavigation();
   setupDebugLogToggle();
   setupRadarHudToggle();
+  setupGroundGridToggle();
   setupClickTargetProjection();
   updateReadout(state);
   setupKrpano();

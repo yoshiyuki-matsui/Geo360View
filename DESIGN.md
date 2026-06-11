@@ -178,7 +178,7 @@ The panel uses two tabs to reduce vertical height and make the operation order e
 The UI uses a hybrid localization policy so operators can start without a manual while the panel remains compact.
 
 - Menus, tabs, primary buttons, and checkboxes are localized.
-- Short technical labels such as `Shift`, `KP tol`, `CalFOV`, `CalDist`, `Scale`, and `Offset` remain in English/abbreviated form.
+- Short technical labels such as `Shift`, `KP tol`, `CamH`, `CalFOV`, `CalDist`, `Scale`, and `Offset` remain in English/abbreviated form.
 - Tooltips and What's This text explain the technical labels, operational cautions, and cache-vs-output distinctions in the active locale.
 - UI text uses the same locale setting as messageBar text and is managed in `messages.py` under `UI_TEXTS`.
 
@@ -201,7 +201,7 @@ This tab groups interactive checking and navigation:
 
 - `Frame` number and `Extract`
 - `Camera Point` / `Stop Click` / `Follow`
-- Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `CalFOV` / `CalDist` / `Offset`
+- Current frame, navigation mode, normal step, fast step, and radar `Range` / `Scale` / `CamH` / `CalFOV` / `CalDist` / `Offset`
 - QGIS preview information
 - QGIS preview image
 - `<<`, `<`, `>`, `>>` navigation buttons
@@ -364,8 +364,12 @@ If GeoPackage saving fails, the plugin does not remove the QGIS layers.
 Default output directory:
 
 ```text
-<video_dir>/360view_output
+<video_dir>/<video_stem>
 ```
+
+`video_stem` is derived from the selected MP4 file name without the extension and normalized to a filesystem-friendly ASCII name. For example, `VID_20250324_135428_00_033_rot170.mp4` defaults to `<video_dir>/VID_20250324_135428_00_033_rot170`.
+
+This makes the output folder identify the source video and prevents CSV, GPKG, image, and viewer-cache outputs from different videos being mixed in a shared `360view_output` directory. A user-selected output directory still takes precedence.
 
 Main outputs:
 
@@ -428,6 +432,7 @@ Stores the browser viewer state:
 - `yaw_to_camera_heading`
 - `pitch`
 - `zoom`
+- `viewer_camera_height_m`
 - `radar`
 - `target`
 - `updated_at`
@@ -522,7 +527,7 @@ fov = 90 / zoom
 
 FOV controls sector width and the ratio from `CalFOV` to the current calibrated distance. When current FOV equals `CalFOV` and `Scale=1.0`, sector depth equals `CalDist`. The final display depth is clamped to at least 1.0 m.
 
-The WEB viewer also displays a small HUD with 5 m / 10 m-equivalent range guides and a calibrated distance marker that corresponds to the QGIS-side perpendicular marker. This HUD is not exact monocular depth recovery. It gives the image side the same visual distance cue as the map radar, so the operator can estimate distance by comparing it with the 5 m / 10 m guides. The toolbar `HUD` button shows or hides it.
+The WEB viewer also displays ground range rings equivalent to the `Range` / `Range * 2` guides, a 1 m dashed auxiliary ground grid, and a calibrated distance marker that corresponds to the QGIS-side perpendicular marker. The ground rings use the job-specific `CamH` / `viewer_camera_height_m` value as the camera-center height above ground. This HUD is not exact monocular depth recovery. It gives the image side the same visual distance cue as the map radar, so the operator can estimate distance by comparing it with the main guides and the 1 m auxiliary grid. The toolbar `HUD` button shows or hides the HUD, and `Grid` toggles only the auxiliary grid.
 
 When the operator clicks the image in the WEB viewer, the viewer stores the clicked point's absolute 360 yaw, relative yaw from the clicked-time view center, and clicked-time zoom in `viewer_session.json` as `target`. QGIS projects it as a temporary RubberBand point by taking the calibrated forward distance for the clicked-time FOV, dividing it by `cos(yaw_delta)`, and projecting from the camera point toward `heading + Offset + target_yaw`. This is an experimental map-plane projection aid and does not write to a user feature layer.
 
@@ -629,6 +634,8 @@ Further tuning options:
 Planned or likely next steps:
 
 - Tune `yaw_to_camera_heading` bearing conversion, `Range`, `Scale`, and `Offset` defaults against real operation data.
+- Automate Exporter deliverable checks across CSV/GPKG/JPEG/EXIF/manifest outputs, including frame correspondence, missing frames, duplicates, and frame identity.
+- Validate the 5 m / 10 m browser range rings for shallow elevation angles with measured data or krpano spherical-coordinate APIs; their precision is not guaranteed yet in those views.
 - Consider adding a maximum sector depth clamp for high-speed sections.
 - Add radar overlay visibility, color, and opacity settings.
 - Add a dedicated Exporter for full-resolution evidence image export.
