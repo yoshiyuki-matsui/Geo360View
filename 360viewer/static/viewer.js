@@ -329,7 +329,52 @@
     };
   }
 
+  function groundPointToSphere(point) {
+    if (krpano && krpano.actions && typeof krpano.actions.spacetosphere === "function") {
+      const sphere = krpano.actions.spacetosphere(point.x, -point.y, point.z);
+      if (sphere && Number.isFinite(Number(sphere.h)) && Number.isFinite(Number(sphere.v))) {
+        return {
+          h: normalizeYaw(sphere.h),
+          v: normalizePitch(sphere.v)
+        };
+      }
+    }
+
+    const horizontalDistance = Math.hypot(point.x, point.z);
+    return {
+      h: normalizeYaw(Math.atan2(point.x, point.z) * 180 / Math.PI),
+      v: -Math.atan2(point.y, horizontalDistance) * 180 / Math.PI
+    };
+  }
+
+  function projectGroundPointWithKrpano(point, stageRect) {
+    if (!krpano || !krpano.actions || typeof krpano.actions.spheretoscreen !== "function") {
+      return null;
+    }
+    const sphere = groundPointToSphere(point);
+    const projected = krpano.actions.spheretoscreen(sphere.h, sphere.v);
+    if (!projected) {
+      return null;
+    }
+    const x = Number(projected.x);
+    const y = Number(projected.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    const marginX = stageRect.width * 1.2;
+    const marginY = stageRect.height * 1.2;
+    if (x < -marginX || x > stageRect.width + marginX || y < -marginY || y > stageRect.height + marginY) {
+      return null;
+    }
+    return { x, y };
+  }
+
   function projectGroundPoint(point, viewState, stageRect) {
+    const krpanoProjected = projectGroundPointWithKrpano(point, stageRect);
+    if (krpanoProjected) {
+      return krpanoProjected;
+    }
+
     const yaw = normalizeYaw(viewState && viewState.yaw_to_camera_heading);
     const pitch = normalizePitch(viewState && viewState.pitch);
     const zoom = normalizeZoom(viewState && viewState.zoom);
