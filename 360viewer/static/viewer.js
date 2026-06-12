@@ -7,20 +7,23 @@
     pitch: 0,
     zoom: 1,
     viewer_camera_height_m: bootstrap.viewer_camera_height_m,
-    target: null
+    target: null,
+    targets: []
   }, bootstrap.state || {});
   const GROUND_GRID_STEP_M = 1;
   const GROUND_RING_SAMPLE_COUNT = 96;
   const GROUND_GRID_SAMPLE_COUNT = 64;
+  const MAX_CLICK_TARGETS = 100;
+  const SINGLE_CLICK_DELAY_MS = 320;
 
   let krpano = null;
   let lastPosted = null;
   let postTimer = null;
+  let singleClickTimer = null;
   let krpanoReady = false;
   let krpanoImageLoaded = false;
   let debugLogVisible = false;
   let radarHudVisible = true;
-  let groundGridVisible = true;
   let lastViewDebug = null;
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
@@ -31,7 +34,6 @@
   const prevButton = document.getElementById("prevButton");
   const nextButton = document.getElementById("nextButton");
   const radarHudToggleButton = document.getElementById("radarHudToggleButton");
-  const groundGridToggleButton = document.getElementById("groundGridToggleButton");
   const debugToggleButton = document.getElementById("debugToggleButton");
   const notice = document.getElementById("notice");
   const debugLog = document.getElementById("debugLog");
@@ -54,6 +56,12 @@
   const hudOuterRing = radarHud ? radarHud.querySelector(".hud-ring-outer") : null;
   const hudPoints = radarHud ? Array.from(radarHud.querySelectorAll(".hud-point")) : [];
   let viewerCameraHeightM = normalizeCameraHeight(state.viewer_camera_height_m);
+  if (!Array.isArray(state.targets)) {
+    state.targets = [];
+  }
+  if (!state.target && state.targets.length) {
+    state.target = state.targets[state.targets.length - 1];
+  }
 
   function clamp(value, minValue, maxValue) {
     return Math.max(minValue, Math.min(maxValue, value));
@@ -81,6 +89,10 @@
       return 0;
     }
     return Math.max(-90, Math.min(90, numeric));
+  }
+
+  function signedAngleDelta(fromDegrees, toDegrees) {
+    return normalizeSignedYaw(Number(toDegrees) - Number(fromDegrees));
   }
 
   function normalizeZoom(value) {
@@ -135,8 +147,10 @@
   function updateReadout(viewState) {
     const active = viewState || state;
     const fov = 90 / normalizeZoom(active.zoom);
-    const target = state.target && Number.isFinite(Number(state.target.yaw_delta_deg))
-      ? `, click: ${Number(state.target.yaw_delta_deg).toFixed(1)}deg`
+    const targets = displayClickTargets();
+    const latestTarget = targets.length ? targets[targets.length - 1] : null;
+    const target = latestTarget && Number.isFinite(Number(latestTarget.yaw_delta_deg))
+      ? `, clicks: ${targets.length} (${Number(latestTarget.yaw_delta_deg).toFixed(1)}deg)`
       : "";
     videoLabel.textContent = `video: ${active.video}`;
     frameLabel.textContent = `frame_index: ${active.frame_index}`;
@@ -260,10 +274,6 @@
       radarHudToggleButton.textContent = radarHudVisible ? "Hide HUD" : "HUD";
       radarHudToggleButton.setAttribute("aria-expanded", radarHudVisible ? "true" : "false");
     }
-    if (groundGridToggleButton) {
-      groundGridToggleButton.textContent = groundGridVisible ? "Hide Grid" : "Grid";
-      groundGridToggleButton.setAttribute("aria-pressed", groundGridVisible ? "true" : "false");
-    }
   }
 
   function setupRadarHudToggle() {
@@ -273,18 +283,6 @@
     }
     radarHudToggleButton.addEventListener("click", () => {
       radarHudVisible = !radarHudVisible;
-      updateRadarHudVisibility();
-      updateGroundRings(readKrpanoView() || state);
-    });
-  }
-
-  function setupGroundGridToggle() {
-    updateRadarHudVisibility();
-    if (!groundGridToggleButton) {
-      return;
-    }
-    groundGridToggleButton.addEventListener("click", () => {
-      groundGridVisible = !groundGridVisible;
       updateRadarHudVisibility();
       updateGroundRings(readKrpanoView() || state);
     });
@@ -452,7 +450,7 @@
   }
 
   function buildGroundGridPath(outerRadiusM, innerRadiusM, viewState, stageRect) {
-    if (!groundGridVisible || !Number.isFinite(outerRadiusM) || outerRadiusM < GROUND_GRID_STEP_M) {
+    if (!Number.isFinite(outerRadiusM) || outerRadiusM < GROUND_GRID_STEP_M) {
       return "";
     }
     const maxGridRadiusM = Math.floor(outerRadiusM);
@@ -610,22 +608,146 @@
     updateRadarHud(readKrpanoView() || state);
   }
 
-  function updateClickTargetMarker() {
-    if (!clickTargetMarker || !state.target) {
-      if (clickTargetMarker) {
-        clickTargetMarker.hidden = true;
-      }
+  function normalizedClickTargets() {
+    if (!Array.isArray(state.targets)) {
+      return [];
+    }
+    return state.targets
+      .filter((target) => target && typeof target === "object")
+      .sort((left, right) => Number(left.order || left.id || 0) - Number(right.order || right.id || 0));
+  }
+
+  function displayClickTargets() {
+    const targets = normalizedClickTargets();
+    if (targets.length) {
+      return targets;
+    }
+    return state.target && typeof state.target === "object" ? [state.target] : [];
+  }
+
+  function setClickTargetMarker(marker, target) {
+    const projected = projectClickTargetMarker(target);
+    if (!projected) {
+      marker.hidden = true;
       return;
     }
-    const xRatio = Number(state.target.x_ratio);
-    const yRatio = Number(state.target.y_ratio);
-    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) {
+    marker.style.left = `${projected.x.toFixed(1)}px`;
+    marker.style.top = `${projected.y.toFixed(1)}px`;
+    marker.title = target.id ? `#${target.id}` : "";
+    marker.hidden = false;
+  }
+
+  function targetPitch(target) {
+    const storedPitch = Number(target.target_pitch_deg);
+    if (Number.isFinite(storedPitch)) {
+      return normalizePitch(storedPitch);
+    }
+    const viewPitch = Number(target.view_pitch);
+    const pitchDelta = Number(target.pitch_delta_deg);
+    if (Number.isFinite(viewPitch) && Number.isFinite(pitchDelta)) {
+      return normalizePitch(viewPitch + pitchDelta);
+    }
+    return null;
+  }
+
+  function targetSphere(target) {
+    const yaw = Number(target.target_yaw_to_camera_heading);
+    const pitch = targetPitch(target);
+    if (!Number.isFinite(yaw) || pitch === null) {
+      return null;
+    }
+    return {
+      h: normalizeYaw(yaw),
+      v: normalizePitch(pitch)
+    };
+  }
+
+  function projectClickTargetMarkerWithKrpano(target, stageRect) {
+    if (!krpano || !krpano.actions || typeof krpano.actions.spheretoscreen !== "function") {
+      return null;
+    }
+    const sphere = targetSphere(target);
+    if (!sphere) {
+      return null;
+    }
+    const projected = krpano.actions.spheretoscreen(sphere.h, sphere.v);
+    if (!projected) {
+      return null;
+    }
+    const x = Number(projected.x);
+    const y = Number(projected.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    const markerMarginPx = 24;
+    if (
+      x < -markerMarginPx
+      || x > stageRect.width + markerMarginPx
+      || y < -markerMarginPx
+      || y > stageRect.height + markerMarginPx
+    ) {
+      return null;
+    }
+    return { x, y };
+  }
+
+  function projectClickTargetMarkerFallback(target, viewState, stageRect) {
+    const sphere = targetSphere(target);
+    if (!sphere || !viewState || !stageRect.width || !stageRect.height) {
+      return null;
+    }
+    const yawDeltaDeg = signedAngleDelta(viewState.yaw_to_camera_heading, sphere.h);
+    if (Math.abs(yawDeltaDeg) >= 89.0) {
+      return null;
+    }
+    const zoom = normalizeZoom(viewState.zoom);
+    const horizontalFovDeg = clamp(90 / zoom, 1, 179);
+    const horizontalHalfRadians = (horizontalFovDeg / 2) * Math.PI / 180;
+    const verticalHalfRadians = Math.atan(
+      Math.tan(horizontalHalfRadians) * (stageRect.height / stageRect.width)
+    );
+    const pitchDeltaDeg = normalizePitch(sphere.v) - normalizePitch(viewState.pitch);
+    const xNdc = Math.tan(yawDeltaDeg * Math.PI / 180) / Math.tan(horizontalHalfRadians);
+    const yNdc = -Math.tan(pitchDeltaDeg * Math.PI / 180) / Math.tan(verticalHalfRadians);
+    if (!Number.isFinite(xNdc) || !Number.isFinite(yNdc) || Math.abs(xNdc) > 1.2 || Math.abs(yNdc) > 1.2) {
+      return null;
+    }
+    return {
+      x: ((xNdc + 1) / 2) * stageRect.width,
+      y: ((yNdc + 1) / 2) * stageRect.height
+    };
+  }
+
+  function projectClickTargetMarker(target) {
+    if (!panoStage) {
+      return null;
+    }
+    const stageRect = panoStage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) {
+      return null;
+    }
+    return projectClickTargetMarkerWithKrpano(target, stageRect)
+      || projectClickTargetMarkerFallback(target, readKrpanoView() || state, stageRect);
+  }
+
+  function updateClickTargetMarker() {
+    if (!clickTargetMarker || !panoStage) {
+      return;
+    }
+    panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
+    const targets = displayClickTargets();
+    if (!targets.length) {
       clickTargetMarker.hidden = true;
       return;
     }
-    clickTargetMarker.style.left = `${clamp(xRatio, 0, 1) * 100}%`;
-    clickTargetMarker.style.top = `${clamp(yRatio, 0, 1) * 100}%`;
-    clickTargetMarker.hidden = false;
+    targets.slice(0, MAX_CLICK_TARGETS).forEach((target, index) => {
+      const marker = index === 0 ? clickTargetMarker : document.createElement("div");
+      if (index > 0) {
+        marker.className = "click-target-marker click-target-marker-extra";
+        panoStage.appendChild(marker);
+      }
+      setClickTargetMarker(marker, target);
+    });
   }
 
   function currentSessionState() {
@@ -633,6 +755,10 @@
     current.viewer_camera_height_m = viewerCameraHeightM;
     if (state.target) {
       current.target = state.target;
+    }
+    const targets = normalizedClickTargets();
+    if (targets.length) {
+      current.targets = targets.slice(0, MAX_CLICK_TARGETS);
     }
     return current;
   }
@@ -650,6 +776,22 @@
     const yRatio = clamp((event.clientY - rect.top) / rect.height, 0, 1);
     const current = readKrpanoView() || state;
     const zoom = normalizeZoom(current.zoom);
+    const krpanoSphere = screenClickSphere(event, rect, current);
+    if (krpanoSphere) {
+      return {
+        x_ratio: xRatio,
+        y_ratio: yRatio,
+        yaw_delta_deg: krpanoSphere.yawDeltaDeg,
+        pitch_delta_deg: krpanoSphere.pitchDeltaDeg,
+        target_yaw_to_camera_heading: krpanoSphere.targetYaw,
+        target_pitch_deg: krpanoSphere.targetPitch,
+        view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
+        view_pitch: normalizePitch(current.pitch),
+        view_zoom: zoom,
+        projection: "center_plane"
+      };
+    }
+
     const horizontalFovDeg = clamp(90 / zoom, 1, 179);
     const horizontalHalfRadians = (horizontalFovDeg / 2) * Math.PI / 180;
     const verticalHalfRadians = Math.atan(
@@ -661,6 +803,7 @@
     const yawDeltaDeg = Math.atan(xNdc * Math.tan((horizontalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
     const pitchDeltaDeg = -Math.atan(yNdc * Math.tan((verticalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
     const targetYaw = normalizeYaw(Number(current.yaw_to_camera_heading) + yawDeltaDeg);
+    const targetPitch = normalizePitch(Number(current.pitch) + pitchDeltaDeg);
 
     return {
       x_ratio: xRatio,
@@ -668,6 +811,7 @@
       yaw_delta_deg: normalizeSignedYaw(yawDeltaDeg),
       pitch_delta_deg: pitchDeltaDeg,
       target_yaw_to_camera_heading: targetYaw,
+      target_pitch_deg: targetPitch,
       view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
       view_pitch: normalizePitch(current.pitch),
       view_zoom: zoom,
@@ -675,22 +819,96 @@
     };
   }
 
+  function screenClickSphere(event, stageRect, viewState) {
+    if (!krpano || !krpano.actions || typeof krpano.actions.screentosphere !== "function") {
+      return null;
+    }
+    try {
+      const sphere = krpano.actions.screentosphere(event.clientX - stageRect.left, event.clientY - stageRect.top);
+      if (!sphere) {
+        return null;
+      }
+      const targetYaw = normalizeYaw(sphere.h);
+      const targetPitch = normalizePitch(sphere.v);
+      return {
+        targetYaw,
+        targetPitch,
+        yawDeltaDeg: signedAngleDelta(viewState.yaw_to_camera_heading, targetYaw),
+        pitchDeltaDeg: targetPitch - normalizePitch(viewState.pitch)
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
   function setupClickTargetProjection() {
     if (!panoStage) {
       return;
     }
+    function clearSingleClickTimer() {
+      if (singleClickTimer) {
+        window.clearTimeout(singleClickTimer);
+        singleClickTimer = null;
+      }
+    }
+
+    function commitSingleClickTarget(target) {
+      state.target = target;
+      updateReadout(readKrpanoView() || state);
+      postViewerState(true);
+      logDebug(`target click yaw=${target.target_yaw_to_camera_heading.toFixed(2)} delta=${target.yaw_delta_deg.toFixed(2)}`);
+    }
+
+    function nextTargetId() {
+      return normalizedClickTargets().reduce((maxId, target) => {
+        return Math.max(maxId, Number(target.id) || Number(target.order) || 0);
+      }, 0) + 1;
+    }
+
+    function appendClickTarget(target) {
+      const id = nextTargetId();
+      const savedTarget = Object.assign({}, target, {
+        id,
+        order: id
+      });
+      const targets = normalizedClickTargets();
+      targets.push(savedTarget);
+      state.targets = targets.slice(-MAX_CLICK_TARGETS);
+      state.target = savedTarget;
+      updateReadout(readKrpanoView() || state);
+      postViewerState(true);
+      logDebug(`target dblclick #${id} yaw=${savedTarget.target_yaw_to_camera_heading.toFixed(2)} delta=${savedTarget.yaw_delta_deg.toFixed(2)}`);
+    }
+
     panoStage.addEventListener("click", (event) => {
       if (event.defaultPrevented || event.button !== 0) {
+        return;
+      }
+      if (event.detail > 1) {
         return;
       }
       const target = screenClickTarget(event);
       if (!target) {
         return;
       }
-      state.target = target;
-      updateReadout(readKrpanoView() || state);
-      postViewerState(true);
-      logDebug(`target click yaw=${target.target_yaw_to_camera_heading.toFixed(2)} delta=${target.yaw_delta_deg.toFixed(2)}`);
+      clearSingleClickTimer();
+      singleClickTimer = window.setTimeout(() => {
+        singleClickTimer = null;
+        commitSingleClickTarget(target);
+      }, SINGLE_CLICK_DELAY_MS);
+    }, true);
+
+    panoStage.addEventListener("dblclick", (event) => {
+      if (event.defaultPrevented || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      clearSingleClickTimer();
+      const target = screenClickTarget(event);
+      if (!target) {
+        return;
+      }
+      appendClickTarget(target);
     }, true);
   }
 
@@ -807,6 +1025,7 @@
     const currentView = readKrpanoView() || state;
     const inheritedView = normalizedView(currentView);
     const nextRadar = nextState.radar && typeof nextState.radar === "object" ? nextState.radar : null;
+    const nextTargets = Array.isArray(nextState.targets) ? nextState.targets : [];
     const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
     updateCameraHeight(nextState.viewer_camera_height_m === undefined ? viewerCameraHeightM : nextState.viewer_camera_height_m);
 
@@ -815,7 +1034,8 @@
       frame_index: nextFrame
     });
     state.radar = nextRadar;
-    state.target = nextTarget;
+    state.targets = nextTargets;
+    state.target = nextTarget || (nextTargets.length ? nextTargets[nextTargets.length - 1] : null);
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
     postViewerState(true);
@@ -924,7 +1144,10 @@
 
     updateRadarState(session.radar);
     updateCameraHeight(session.viewer_camera_height_m);
-    state.target = session.target && typeof session.target === "object" ? session.target : null;
+    state.targets = Array.isArray(session.targets) ? session.targets : [];
+    state.target = session.target && typeof session.target === "object"
+      ? session.target
+      : (state.targets.length ? state.targets[state.targets.length - 1] : null);
     updateReadout(readKrpanoView() || state);
     updateGroundRings(readKrpanoView() || state);
     if (!sameFrame(session, state)) {
@@ -1071,7 +1294,6 @@
   setupKeyboardNavigation();
   setupDebugLogToggle();
   setupRadarHudToggle();
-  setupGroundGridToggle();
   setupClickTargetProjection();
   updateReadout(state);
   setupKrpano();

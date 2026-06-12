@@ -7,5 +7,7 @@
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
   "viewer_cache_dir": "viewer_cache",
-  "viewer_camera_height_m": 1.5
+  "viewer_camera_height_m": 1.5,
+  "viewer_browser_app_window": true,
+  "viewer_browser_path": ""
 }

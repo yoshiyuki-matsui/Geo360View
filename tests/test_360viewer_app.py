@@ -91,10 +91,75 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["target"]["yaw_delta_deg"], -170.0)
         self.assertEqual(state["target"]["pitch_delta_deg"], 90.0)
         self.assertEqual(state["target"]["target_yaw_to_camera_heading"], 350.0)
+        self.assertEqual(state["target"]["target_pitch_deg"], 0.0)
         self.assertEqual(state["target"]["view_yaw_to_camera_heading"], 5.0)
         self.assertEqual(state["target"]["view_pitch"], -90.0)
         self.assertEqual(state["target"]["view_zoom"], 0.01)
         self.assertEqual(state["target"]["projection"], "center_plane")
+
+    def test_validate_state_payload_accepts_multiple_targets(self):
+        """ダブルクリック複数点は順序ID付きtargetsとして保存する。"""
+        state = self.app.validate_state_payload({
+            "video": "abc.mp4",
+            "frame_index": 12,
+            "yaw_to_camera_heading": 10,
+            "pitch": 0,
+            "zoom": 1,
+            "targets": [
+                {
+                    "x_ratio": 0.25,
+                    "y_ratio": 0.5,
+                    "yaw_delta_deg": -3,
+                    "target_pitch_deg": 6,
+                    "target_yaw_to_camera_heading": 7,
+                    "view_zoom": 1,
+                },
+                {
+                    "id": 8,
+                    "order": 8,
+                    "x_ratio": 0.75,
+                    "y_ratio": 0.5,
+                    "yaw_delta_deg": 4,
+                    "target_yaw_to_camera_heading": 14,
+                    "view_zoom": 1,
+                },
+            ],
+        })
+
+        self.assertEqual(len(state["targets"]), 2)
+        self.assertEqual(state["targets"][0]["id"], 1)
+        self.assertEqual(state["targets"][0]["order"], 1)
+        self.assertEqual(state["targets"][0]["target_pitch_deg"], 6.0)
+        self.assertEqual(state["targets"][1]["id"], 8)
+        self.assertEqual(state["targets"][1]["order"], 8)
+        self.assertEqual(state["target"], state["targets"][1])
+
+    def test_validate_target_payload_accepts_restored_target_without_screen_ratio(self):
+        """QGIS側で復元したtargetは画面クリック比率が無くても受け取れる。"""
+        state = self.app.validate_state_payload({
+            "video": "abc.mp4",
+            "frame_index": 12,
+            "yaw_to_camera_heading": 10,
+            "pitch": 0,
+            "zoom": 1,
+            "targets": [
+                {
+                    "id": 3,
+                    "order": 3,
+                    "yaw_delta_deg": 4,
+                    "target_yaw_to_camera_heading": 14,
+                    "target_pitch_deg": -2,
+                    "view_yaw_to_camera_heading": 10,
+                    "view_pitch": 0,
+                    "view_zoom": 1.2,
+                },
+            ],
+        })
+
+        self.assertEqual(len(state["targets"]), 1)
+        self.assertEqual(state["targets"][0]["x_ratio"], 0.5)
+        self.assertEqual(state["targets"][0]["y_ratio"], 0.5)
+        self.assertEqual(state["targets"][0]["target_yaw_to_camera_heading"], 14.0)
 
     def test_write_session_is_atomic_json_write(self):
         """viewer_session.jsonは一時ファイルから置換され、有効なJSONとして残る。"""
@@ -172,6 +237,30 @@ class ViewerAppValidationTests(unittest.TestCase):
         })
 
         self.assertEqual(state["viewer_camera_height_m"], 2.4)
+
+    def test_navigation_payload_accepts_restored_targets_from_qgis(self):
+        """QGISから渡された保存済みクリック点をviewer_session.jsonへ復元する。"""
+        state = self.app.state_from_navigation_payload({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "targets": [
+                {
+                    "id": 2,
+                    "order": 2,
+                    "yaw_delta_deg": -6,
+                    "target_yaw_to_camera_heading": 82,
+                    "target_pitch_deg": -4,
+                    "view_yaw_to_camera_heading": 88,
+                    "view_pitch": -2,
+                    "view_zoom": 1.5,
+                },
+            ],
+        })
+
+        self.assertEqual(len(state["targets"]), 1)
+        self.assertEqual(state["target"], state["targets"][0])
+        self.assertEqual(state["targets"][0]["id"], 2)
+        self.assertEqual(state["targets"][0]["x_ratio"], 0.5)
 
 
 if __name__ == "__main__":

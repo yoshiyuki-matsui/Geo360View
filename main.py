@@ -4,6 +4,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import os
+import sqlite3
 
 from qgis.PyQt import QtGui, QtWidgets
 from qgis.PyQt.QtWidgets import (
@@ -11,7 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
-    QEvent, QTimer, QVariant, Qt
+    QEvent, QSettings, QTimer, QVariant, Qt
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
@@ -52,6 +53,10 @@ from .viewer_controller import ViewerControllerMixin
 
 QAction = getattr(QtWidgets, "QAction", None) or QtGui.QAction
 
+GPKG_FRAME_LAYER_NAME = "video_gpx_points"
+GPKG_TARGET_LAYER_NAME = "click_targets_360"
+GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
+
 
 
 class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidget):
@@ -65,6 +70,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.gpx_file = ""
         self.video_file = ""
         self.kp_file = ""
+        self.database_file = ""
+        self.database_restore_mode = False
         self.output_dir = ""
         self.output_dir_user_selected = False
         self.last_rows = []
@@ -85,10 +92,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_camera_height_dirty = False
         self.created_layer_ids = []
         self.frame_layer_id = None
+        self.target_layer_id = None
+        self.loaded_gpkg_path = ""
+        self.saved_viewer_target_keys = set()
         self.session_closing = False
         self.current_frame = None
         self.viewer_session_timer = None
         self.last_viewer_session_signature = None
+        self.radar_grid_band = None
         self.radar_circle_band = None
         self.radar_outer_circle_band = None
         self.radar_sector_band = None
@@ -292,6 +303,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.video", self.video_label, self.video_button)
         set_fixed_width(self.video_button, 72)
 
+        self.database_label = QLabel("GPKG:")
+        self.database_path = self.makePathLabel(self.uiText("ui.path.no_database"))
+        self.database_button = QPushButton(self.uiText("ui.button.load_database"))
+        self.database_button.clicked.connect(self.selectDatabase)
+        self.applyHelp("ui.help.database", self.database_label, self.database_button)
+        set_fixed_width(self.database_button, 72)
+
         self.kp_label = QLabel("KP CSV:")
         self.kp_path = self.makePathLabel(self.uiText("ui.path.no_kp"))
         self.kp_button = QPushButton(self.uiText("ui.button.browse"))
@@ -299,7 +317,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.kp", self.kp_label, self.kp_button)
         set_fixed_width(self.kp_button, 72)
 
-        for label in (self.gpx_label, self.video_label, self.kp_label):
+        for label in (self.gpx_label, self.video_label, self.database_label, self.kp_label):
             label.setMinimumWidth(52)
 
         self.kp_tolerance_label = QLabel("KP tol:")
@@ -341,7 +359,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.extract", self.extract_button)
         set_fixed_width(self.extract_button, 72)
         self.follow_frame_checkbox = QCheckBox(self.uiText("ui.checkbox.follow"))
-        self.follow_frame_checkbox.setChecked(False)
+        self.follow_frame_checkbox.setChecked(True)
         self.applyHelp("ui.help.follow", self.follow_frame_checkbox)
 
         self.nav_label = QLabel("Nav:")
@@ -349,6 +367,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode = QComboBox()
         self.nav_mode.addItem("Frame step", "frame")
         self.nav_mode.addItem("Layer point", "layer")
+        self.nav_mode.addItem("Picked point", "picked")
         self.nav_mode.addItem("KP matched CSV", "kp")
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 126)
@@ -490,6 +509,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         control_layout.setContentsMargins(4, 4, 4, 4)
         control_layout.setSpacing(4)
 
+        compact_row(load_layout, self.database_label, self.database_path, self.database_button)
         compact_row(load_layout, self.gpx_label, self.gpx_path, self.gpx_button)
         compact_row(load_layout, self.video_label, self.video_path, self.video_button)
         compact_row(load_layout, self.kp_label, self.kp_path, self.kp_button)
@@ -694,17 +714,85 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         label.setText(self.compactPathText(path, fallback))
         label.setToolTip(path or "")
 
+    def setInputWidgetsEnabled(self, enabled):
+        """通常処理入力系UIの有効/無効をまとめて切り替える。"""
+        for widget in (
+            self.gpx_button,
+            self.video_button,
+            self.kp_button,
+            self.output_button,
+            self.frame_shift,
+            self.kp_tolerance,
+            self.process_button,
+        ):
+            widget.setEnabled(bool(enabled))
+
+    def setDatabaseRestoreMode(self, enabled):
+        """GPKG復元後は段取り替え系操作を禁止する。"""
+        self.database_restore_mode = bool(enabled)
+        if getattr(self, "_gui_initialized", False):
+            self.setInputWidgetsEnabled(not self.database_restore_mode)
+            self.database_button.setEnabled(not self.database_restore_mode)
+
+    def dialogSettingsKey(self, name):
+        """ファイル選択ダイアログの最終位置保存キーを返す。"""
+        return f"{PLUGIN_TITLE}/dialogs/{name}"
+
+    def existingDialogDirectory(self, path):
+        """ファイル/フォルダ候補から、存在する開始ディレクトリを返す。"""
+        if not path:
+            return ""
+        text = str(path).strip()
+        if not text:
+            return ""
+        if os.path.isdir(text):
+            return text
+        parent = os.path.dirname(text)
+        if parent and os.path.isdir(parent):
+            return parent
+        return ""
+
+    def dialogStartDir(self, name, *fallbacks):
+        """前回位置と現在状態からファイル選択ダイアログの開始位置を決める。"""
+        settings = QSettings()
+        candidates = list(fallbacks)
+        candidates.append(settings.value(self.dialogSettingsKey(name), ""))
+        candidates.append(settings.value(self.dialogSettingsKey("last"), ""))
+        candidates.append(os.path.expanduser("~"))
+        for candidate in candidates:
+            directory = self.existingDialogDirectory(candidate)
+            if directory:
+                return directory
+        return ""
+
+    def rememberDialogPath(self, name, path):
+        """選択したファイル/フォルダの親ディレクトリを次回用に保存する。"""
+        directory = self.existingDialogDirectory(path)
+        if not directory:
+            return
+        settings = QSettings()
+        settings.setValue(self.dialogSettingsKey(name), directory)
+        settings.setValue(self.dialogSettingsKey("last"), directory)
+
     def selectGPX(self):
         """GPXファイルを選択し、入力状態を更新する。"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select GPX File", "", "GPX Files (*.gpx)")
+        if self.database_restore_mode:
+            return
+        start_dir = self.dialogStartDir("gpx", self.gpx_file, self.video_file, self.output_dir)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select GPX File", start_dir, "GPX Files (*.gpx)")
         if file_path:
+            self.rememberDialogPath("gpx", file_path)
             self.gpx_file = file_path
             self.setPathLabel(self.gpx_path, file_path, self.uiText("ui.path.no_gpx"))
 
     def selectVideo(self):
         """MP4動画を選択し、出力先既定値とビューア設定を更新する。"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "MP4 Files (*.mp4)")
+        if self.database_restore_mode:
+            return
+        start_dir = self.dialogStartDir("video", self.video_file, self.gpx_file, self.output_dir)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", start_dir, "MP4 Files (*.mp4)")
         if file_path:
+            self.rememberDialogPath("video", file_path)
             self.video_file = file_path
             self.setPathLabel(self.video_path, file_path, self.uiText("ui.path.no_video"))
             self.viewer_browser_opened = False
@@ -718,20 +806,39 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def selectKP(self):
         """KPマスタCSVを選択する。KP未指定でも通常処理は可能。"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select KP CSV", "", "CSV Files (*.csv)")
+        if self.database_restore_mode:
+            return
+        start_dir = self.dialogStartDir("kp", self.kp_file, self.gpx_file, self.video_file, self.output_dir)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select KP CSV", start_dir, "CSV Files (*.csv)")
         if file_path:
+            self.rememberDialogPath("kp", file_path)
             self.kp_file = file_path
             self.setPathLabel(self.kp_path, file_path, self.uiText("ui.path.no_kp"))
 
     def selectOutputDir(self):
         """CSV/画像/セッションJSONの出力先ディレクトリを選択する。"""
-        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory", self.defaultOutputDir())
+        if self.database_restore_mode:
+            return
+        start_dir = self.dialogStartDir("output", self.output_dir, self.defaultOutputDir(), self.video_file)
+        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory", start_dir)
         if directory:
+            self.rememberDialogPath("output", directory)
             self.output_dir = directory
             self.output_dir_user_selected = True
             self.setPathLabel(self.output_path, directory, self.uiText("ui.path.default_output"))
             self.loadViewerSessionCameraHeight(force=True)
             self.writeViewerRuntimeConfig(show_error=False)
+
+    def selectDatabase(self):
+        """既存GeoPackageを選択し、標準内部レイヤを作業用メモリレイヤへ読み込む。"""
+        if self.database_restore_mode:
+            return
+        start_dir = self.dialogStartDir("gpkg", self.database_file, self.loaded_gpkg_path, self.resolvedOutputDir())
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select GeoPackage", start_dir, "GeoPackage (*.gpkg)")
+        if not file_path:
+            return
+        self.rememberDialogPath("gpkg", file_path)
+        self.loadSessionDatabase(file_path)
 
     def defaultOutputDir(self):
         """選択動画名を既定出力ディレクトリ名にし、動画由来を明示する。"""
@@ -929,6 +1036,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except OSError:
             return False
 
+    def writeViewerSessionState(self, state):
+        """QGIS側で補完したビューア状態をviewer_session.jsonへ原子的に書き戻す。"""
+        path = self.viewerSessionPath()
+        state = dict(state)
+        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+            os.replace(tmp_path, path)
+            return state
+        except OSError:
+            return None
+
     def onViewerCameraHeightChanged(self, _value):
         """カメラ高さ変更をランタイム設定と開いているビューアへ反映する。"""
         self.setViewerCameraHeightValue(self.viewerCameraHeightValue(), mark_dirty=True)
@@ -943,26 +1066,58 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         if self.frame_layer_id:
             layer = project.mapLayer(self.frame_layer_id)
-            if layer is not None and layer.fields().indexFromName("frame") >= 0:
+            if self.isFrameReferenceLayer(layer):
                 return layer
 
         for layer_id in reversed(self.created_layer_ids):
             layer = project.mapLayer(layer_id)
-            if layer is not None and layer.fields().indexFromName("frame") >= 0:
+            if self.isFrameReferenceLayer(layer):
                 self.frame_layer_id = layer.id()
                 return layer
 
         if self.frame_click_tool is not None and self.frame_click_tool.layer is not None:
             layer = self.frame_click_tool.layer
-            if layer.fields().indexFromName("frame") >= 0:
+            if self.isFrameReferenceLayer(layer):
                 return layer
 
         layer = self.iface.activeLayer()
-        if layer is None:
-            return None
-        if layer.fields().indexFromName("frame") < 0:
+        if not self.isFrameReferenceLayer(layer):
             return None
         return layer
+
+    def isFrameReferenceLayer(self, layer):
+        """フレーム参照に使えるレイヤか確認する。クリック点保存レイヤは除外する。"""
+        fields = self.layerFields(layer)
+        if fields is None:
+            return False
+        return fields.indexFromName("frame") >= 0 and fields.indexFromName("target_id") < 0
+
+    def isViewerTargetLayer(self, layer):
+        """360クリック投影点レイヤとして扱えるスキーマか確認する。"""
+        fields = self.layerFields(layer)
+        if fields is None:
+            return False
+        return (
+            fields.indexFromName("frame") >= 0
+            and fields.indexFromName("target_id") >= 0
+            and fields.indexFromName("target_yaw") >= 0
+        )
+
+    def layerFields(self, layer):
+        """ベクタレイヤ以外ではNoneを返してfields()アクセスを安全化する。"""
+        if layer is None or not hasattr(layer, "fields"):
+            return None
+        try:
+            return layer.fields()
+        except Exception:
+            return None
+
+    def isMemoryLayer(self, layer):
+        """QGISメモリレイヤかを安全に判定する。"""
+        try:
+            return layer.providerType() == "memory"
+        except Exception:
+            return False
 
     def layerFrames(self, layer):
         """指定レイヤからframe属性を集め、重複排除して昇順で返す。"""
@@ -994,6 +1149,704 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             except Exception:
                 continue
         return None
+
+    def gpkgLayer(self, gpkg_path, layer_name, display_name):
+        """GeoPackage内の指定レイヤをQGISレイヤとして開く。"""
+        layer = QgsVectorLayer(f"{gpkg_path}|layername={layer_name}", display_name, "ogr")
+        try:
+            return layer if layer.isValid() else None
+        except Exception:
+            return None
+
+    def cloneLayerToMemory(self, source_layer, display_name):
+        """GPKGレイヤを編集用ではない一時メモリレイヤへコピーする。"""
+        crs_authid = "EPSG:4326"
+        try:
+            authid = source_layer.crs().authid()
+            if authid:
+                crs_authid = authid
+        except Exception:
+            pass
+
+        layer = QgsVectorLayer(f"Point?crs={crs_authid}", display_name, "memory")
+        pr = layer.dataProvider()
+        source_fields = source_layer.fields()
+        copied_fields = [
+            field for field in source_fields
+            if str(field.name()).lower() not in ("fid", "ogc_fid")
+        ]
+        pr.addAttributes(copied_fields)
+        layer.updateFields()
+
+        features = []
+        for source_feature in source_layer.getFeatures():
+            feature = QgsFeature(layer.fields())
+            try:
+                feature.setGeometry(source_feature.geometry())
+            except Exception:
+                pass
+            attributes = []
+            for field in layer.fields():
+                attributes.append(self.targetFeatureValue(source_feature, field.name()))
+            feature.setAttributes(attributes)
+            features.append(feature)
+
+        if features:
+            pr.addFeatures(features)
+        layer.updateExtents()
+        return layer
+
+    def layerFeatureCount(self, layer):
+        """featureCountが使えない場合も安全に件数を返す。"""
+        if layer is None:
+            return 0
+        try:
+            return int(layer.featureCount())
+        except Exception:
+            count = 0
+            for _feature in layer.getFeatures():
+                count += 1
+            return count
+
+    def firstLayerValue(self, layer, field_name):
+        """指定フィールドの最初の非空値を返す。"""
+        if layer is None:
+            return None
+        for feature in layer.getFeatures():
+            value = self.targetFeatureValue(feature, field_name)
+            if value not in (None, ""):
+                return value
+        return None
+
+    def jobMetadataPayload(self):
+        """GPKGへ残すジョブ入力・校正パラメータを返す。"""
+        process_config = getattr(self, "last_process_config", None)
+        return {
+            "metadata_version": 1,
+            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "gpx_file": process_config.gpx_file if process_config else self.gpx_file,
+            "video_file": process_config.video_file if process_config else self.video_file,
+            "kp_file": (process_config.kp_file or "") if process_config else self.kp_file,
+            "output_dir": self.resolvedOutputDir(),
+            "frame_shift": int(process_config.frame_shift) if process_config else int(self.frame_shift.value()),
+            "kp_tolerance_m": float(process_config.kp_tolerance_m) if process_config else float(self.kp_tolerance.value()),
+            "radar_range_m": float(self.radar_radius.value()),
+            "radar_scale": float(self.radar_scale.value()),
+            "radar_cal_fov_deg": float(self.radar_cal_fov.value()),
+            "radar_cal_dist_m": float(self.radar_cal_distance.value()),
+            "radar_offset_deg": int(self.radar_offset.currentData() or 0),
+            "viewer_camera_height_m": float(self.viewerCameraHeightValue()),
+            "nav_step": int(self.nav_step.value()),
+            "nav_fast_step": int(self.nav_fast_step.value()),
+            "follow_frame": bool(self.follow_frame_checkbox.isChecked()),
+        }
+
+    def writeJobMetadataToGpkg(self, gpkg_path):
+        """GPKG内のプラグイン専用テーブルへジョブ状態を保存する。"""
+        payload = self.jobMetadataPayload()
+        with sqlite3.connect(gpkg_path) as conn:
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {GPKG_JOB_METADATA_TABLE} (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(f"DELETE FROM {GPKG_JOB_METADATA_TABLE}")
+            conn.executemany(
+                f"INSERT INTO {GPKG_JOB_METADATA_TABLE} (key, value) VALUES (?, ?)",
+                [(str(key), json.dumps(value, ensure_ascii=False)) for key, value in payload.items()],
+            )
+            conn.commit()
+
+    def readJobMetadataFromGpkg(self, gpkg_path):
+        """GPKG内のジョブメタデータを読む。未対応GPKGでは空dictを返す。"""
+        try:
+            with sqlite3.connect(gpkg_path) as conn:
+                rows = conn.execute(
+                    f"SELECT key, value FROM {GPKG_JOB_METADATA_TABLE}"
+                ).fetchall()
+        except sqlite3.Error:
+            return {}
+
+        metadata = {}
+        for key, raw_value in rows:
+            try:
+                metadata[str(key)] = json.loads(raw_value)
+            except (TypeError, json.JSONDecodeError):
+                metadata[str(key)] = raw_value
+        return metadata
+
+    def metadataText(self, metadata, key):
+        """メタデータの文字列値を取得する。"""
+        value = metadata.get(key) if isinstance(metadata, dict) else None
+        return str(value).strip() if value not in (None, "") else ""
+
+    def setComboData(self, combo, value):
+        """指定dataを持つcombo項目へ切り替える。"""
+        for index in range(combo.count()):
+            if combo.itemData(index) == value:
+                combo.setCurrentIndex(index)
+                return True
+        return False
+
+    def setSpinValueFromMetadata(self, widget, metadata, key, as_int=False):
+        """メタデータの数値をspin boxへ反映する。"""
+        value = metadata.get(key) if isinstance(metadata, dict) else None
+        numeric = _parse_float(value)
+        if numeric is None:
+            return False
+        widget.setValue(int(round(numeric)) if as_int else float(numeric))
+        return True
+
+    def applyJobMetadata(self, metadata):
+        """GPKGメタデータからパネル上の入力状態を復元する。"""
+        if not metadata:
+            return False
+
+        self.setSpinValueFromMetadata(self.frame_shift, metadata, "frame_shift", as_int=True)
+        self.setSpinValueFromMetadata(self.kp_tolerance, metadata, "kp_tolerance_m")
+        self.setSpinValueFromMetadata(self.radar_radius, metadata, "radar_range_m")
+        self.setSpinValueFromMetadata(self.radar_scale, metadata, "radar_scale")
+        self.setSpinValueFromMetadata(self.radar_cal_fov, metadata, "radar_cal_fov_deg")
+        self.setSpinValueFromMetadata(self.radar_cal_distance, metadata, "radar_cal_dist_m")
+        self.setSpinValueFromMetadata(self.nav_step, metadata, "nav_step", as_int=True)
+        self.setSpinValueFromMetadata(self.nav_fast_step, metadata, "nav_fast_step", as_int=True)
+
+        offset = _parse_float(metadata.get("radar_offset_deg"))
+        if offset is not None:
+            self.setComboData(self.radar_offset, int(offset))
+
+        if "viewer_camera_height_m" in metadata:
+            self.setViewerCameraHeightValue(metadata.get("viewer_camera_height_m"))
+
+        if "follow_frame" in metadata:
+            self.follow_frame_checkbox.setChecked(self.parseViewerBool(metadata.get("follow_frame")))
+        return True
+
+    def inferVideoPathFromDatabase(self, gpkg_path, target_layer=None):
+        """GPKGの位置や属性から同じフォルダのMP4候補を推定する。"""
+        video_name = self.firstLayerValue(target_layer, "video")
+        output_dir = os.path.dirname(os.path.abspath(gpkg_path))
+        parent_dir = os.path.dirname(output_dir)
+        if not video_name:
+            video_name = os.path.basename(output_dir) + ".mp4"
+        candidate = os.path.join(parent_dir, str(video_name))
+        return candidate if os.path.isfile(candidate) else ""
+
+    def inferGpxPathFromDatabase(self, gpkg_path):
+        """GPKGの位置から同名GPX候補だけを控えめに推定する。"""
+        output_dir = os.path.dirname(os.path.abspath(gpkg_path))
+        parent_dir = os.path.dirname(output_dir)
+        candidate = os.path.join(parent_dir, os.path.basename(output_dir) + ".gpx")
+        return candidate if os.path.isfile(candidate) else ""
+
+    def rebuildFramePositionCacheFromLayer(self, layer):
+        """読み込んだ撮影点レイヤからframe->緯度経度キャッシュを復元する。"""
+        self.frame_position_by_frame = {}
+        if layer is None:
+            return
+        for feature in layer.getFeatures():
+            frame_value = self.targetFeatureFloat(feature, "frame")
+            if frame_value is None:
+                continue
+            lat = self.targetFeatureFloat(feature, "aligned_latitude")
+            lon = self.targetFeatureFloat(feature, "aligned_longitude")
+            if lat is None or lon is None:
+                lat = self.targetFeatureFloat(feature, "latitude")
+                lon = self.targetFeatureFloat(feature, "longitude")
+            if lat is None or lon is None:
+                try:
+                    point = feature.geometry().asPoint()
+                    lon = float(point.x())
+                    lat = float(point.y())
+                except Exception:
+                    continue
+            self.frame_position_by_frame[int(frame_value)] = (float(lat), float(lon))
+
+    def firstFrameInLayer(self, layer):
+        """撮影点レイヤ内の最小frameを返す。"""
+        frames = self.layerFrames(layer)
+        return frames[0] if frames else None
+
+    def saveAndRemoveGeneratedLayersBeforeDatabaseLoad(self):
+        """DB読込前に既存の一時レイヤを退避してから取り除く。"""
+        if not self.generatedLayers():
+            return True
+        saved_path, _saved_count, save_error = self.saveGeneratedLayers()
+        if save_error:
+            self.notifyWarning("save_generated_layers_failed", path=saved_path, error=save_error)
+            return False
+        self.removeGeneratedLayers()
+        return True
+
+    def loadSessionDatabase(self, gpkg_path):
+        """GPKGの標準内部レイヤを一時レイヤへ読み替えて作業状態を復元する。"""
+        gpkg_path = os.path.abspath(str(gpkg_path))
+        if not os.path.isfile(gpkg_path):
+            self.notifyWarning("database_load_failed", error=f"file not found: {gpkg_path}")
+            return False
+        if not self.saveAndRemoveGeneratedLayersBeforeDatabaseLoad():
+            return False
+        job_metadata = self.readJobMetadataFromGpkg(gpkg_path)
+
+        frame_source = self.gpkgLayer(gpkg_path, GPKG_FRAME_LAYER_NAME, "Video GPX Points")
+        if frame_source is None:
+            self.notifyWarning("database_load_failed", error=f"layer not found: {GPKG_FRAME_LAYER_NAME}")
+            return False
+        target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, "360 Click Targets")
+
+        frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points")
+        target_layer = self.cloneLayerToMemory(target_source, "360 Click Targets") if target_source is not None else None
+
+        project = QgsProject.instance()
+        project.addMapLayer(frame_layer)
+        self.created_layer_ids = [frame_layer.id()]
+        self.frame_layer_id = frame_layer.id()
+
+        if target_layer is not None:
+            project.addMapLayer(target_layer)
+            self.created_layer_ids.append(target_layer.id())
+            self.target_layer_id = target_layer.id()
+        else:
+            self.target_layer_id = None
+
+        self.database_file = gpkg_path
+        self.loaded_gpkg_path = gpkg_path
+        self.output_dir = os.path.dirname(gpkg_path)
+        self.output_dir_user_selected = True
+        self.setPathLabel(self.database_path, gpkg_path, self.uiText("ui.path.no_database"))
+        self.setPathLabel(self.output_path, self.output_dir, self.uiText("ui.path.default_output"))
+
+        metadata_video = self.metadataText(job_metadata, "video_file")
+        restored_video = metadata_video if metadata_video and os.path.isfile(metadata_video) else ""
+        if not restored_video:
+            restored_video = self.inferVideoPathFromDatabase(gpkg_path, target_layer)
+        restored_gpx = self.metadataText(job_metadata, "gpx_file") or self.inferGpxPathFromDatabase(gpkg_path)
+        restored_kp = self.metadataText(job_metadata, "kp_file")
+        self.video_file = restored_video
+        self.gpx_file = restored_gpx
+        self.kp_file = restored_kp
+        self.setPathLabel(self.video_path, restored_video, self.uiText("ui.path.no_video"))
+        self.setPathLabel(self.gpx_path, restored_gpx, self.uiText("ui.path.no_gpx"))
+        self.setPathLabel(self.kp_path, restored_kp, self.uiText("ui.path.no_kp"))
+        self.applyJobMetadata(job_metadata)
+
+        self.last_rows = []
+        self.saved_viewer_target_keys = set()
+        self.rebuildFramePositionCacheFromLayer(frame_layer)
+        picked_frames = self.pickedFrames()
+        first_frame = picked_frames[0] if picked_frames else self.firstFrameInLayer(frame_layer)
+        self.setCurrentFrame(first_frame)
+        self.setNavigationModeByData("picked" if picked_frames else "layer")
+        if "viewer_camera_height_m" not in job_metadata:
+            self.loadViewerSessionCameraHeight(force=True)
+        self.writeViewerRuntimeConfig(show_error=False)
+        if first_frame is not None and self.video_file:
+            initial_state = {
+                "video": os.path.basename(self.video_file),
+                "frame_index": int(first_frame),
+                "yaw_to_camera_heading": 0.0,
+                "pitch": 0.0,
+                "zoom": 1.0,
+                "viewer_camera_height_m": self.viewerCameraHeightValue(),
+            }
+            picked_view = self.viewerViewForPickedFrame(first_frame) if picked_frames else None
+            if picked_view:
+                initial_state.update(picked_view)
+            self.writeViewerSessionState(initial_state)
+        else:
+            self.writeViewerCameraHeightSessionValue()
+        self.setDatabaseRestoreMode(True)
+
+        self.notifyInfo(
+            "database_loaded",
+            frame_layer=self.layerFeatureCount(frame_layer),
+            target_layer=self.layerFeatureCount(target_layer),
+            path=gpkg_path,
+        )
+        return True
+
+    def viewerTargetLayer(self):
+        """360クリック投影点を書き込む自前メモリレイヤを返す。"""
+        project = QgsProject.instance()
+        if self.target_layer_id:
+            layer = project.mapLayer(self.target_layer_id)
+            if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
+                return layer
+
+        for layer_id in reversed(self.created_layer_ids):
+            layer = project.mapLayer(layer_id)
+            if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
+                self.target_layer_id = layer.id()
+                return layer
+        return None
+
+    def ensureViewerTargetLayer(self):
+        """360クリック投影点保存用のメモリレイヤを必要に応じて作成する。"""
+        layer = self.viewerTargetLayer()
+        if layer is not None:
+            return layer
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "360 Click Targets", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("video", QVariant.String),
+            QgsField("frame", QVariant.Int),
+            QgsField("target_id", QVariant.Int),
+            QgsField("target_order", QVariant.Int),
+            QgsField("latitude", QVariant.Double),
+            QgsField("longitude", QVariant.Double),
+            QgsField("distance_m", QVariant.Double),
+            QgsField("forward_m", QVariant.Double),
+            QgsField("bearing_deg", QVariant.Double),
+            QgsField("yaw_delta", QVariant.Double),
+            QgsField("target_yaw", QVariant.Double),
+            QgsField("target_pitch", QVariant.Double),
+            QgsField("view_yaw", QVariant.Double),
+            QgsField("view_pitch", QVariant.Double),
+            QgsField("view_zoom", QVariant.Double),
+            QgsField("source_lat", QVariant.Double),
+            QgsField("source_lon", QVariant.Double),
+            QgsField("projection", QVariant.String),
+            QgsField("created_at", QVariant.String),
+        ])
+        layer.updateFields()
+        QgsProject.instance().addMapLayer(layer)
+        self.created_layer_ids.append(layer.id())
+        self.target_layer_id = layer.id()
+        return layer
+
+    def targetFeatureValue(self, feature, field_name):
+        """フィールドが無い/読めない場合はNoneとして扱って属性値を返す。"""
+        try:
+            return feature[field_name]
+        except Exception:
+            return None
+
+    def targetFeatureFloat(self, feature, field_name):
+        """クリックターゲット属性からfloat値を安全に取り出す。"""
+        return _parse_float(self.targetFeatureValue(feature, field_name))
+
+    def normalizedPath(self, path):
+        """レイヤsource比較用にパス表記を正規化する。"""
+        if not path:
+            return ""
+        try:
+            return os.path.normcase(os.path.abspath(str(path)))
+        except (TypeError, ValueError):
+            return ""
+
+    def layerSourcePath(self, layer):
+        """QGISレイヤsourceからGeoPackageファイル部分だけを取り出す。"""
+        try:
+            source = layer.source()
+        except Exception:
+            return ""
+        return str(source).split("|", 1)[0]
+
+    def isCurrentGpkgTargetLayer(self, layer):
+        """現在ジョブのtmp.gpkg内click_targets_360レイヤかを判定する。"""
+        if not self.isViewerTargetLayer(layer):
+            return False
+        source = ""
+        try:
+            source = str(layer.source())
+        except Exception:
+            source = ""
+        if GPKG_TARGET_LAYER_NAME not in source and GPKG_TARGET_LAYER_NAME not in str(layer.name()):
+            return False
+        return self.normalizedPath(self.layerSourcePath(layer)) == self.normalizedPath(self.generatedLayerBackupPath())
+
+    def isNamedViewerTargetLayer(self, layer):
+        """表示名/source上もclick_targets_360相当と判断できるか確認する。"""
+        if not self.isViewerTargetLayer(layer):
+            return False
+        try:
+            name = str(layer.name())
+        except Exception:
+            name = ""
+        try:
+            source = str(layer.source())
+        except Exception:
+            source = ""
+        text = f"{name}\n{source}".lower()
+        return "360 click targets" in text or GPKG_TARGET_LAYER_NAME.lower() in text
+
+    def layerHasVideoFrameTarget(self, layer, video_name, frame_num=None):
+        """指定動画/任意フレームのクリック点を持つレイヤか確認する。"""
+        if not self.isViewerTargetLayer(layer):
+            return False
+        if not video_name:
+            return True
+
+        for feature in layer.getFeatures():
+            feature_video = self.targetFeatureValue(feature, "video")
+            if str(feature_video) != str(video_name):
+                continue
+            if frame_num is None:
+                return True
+            frame_value = self.targetFeatureFloat(feature, "frame")
+            if frame_value is not None and int(frame_value) == int(frame_num):
+                return True
+        return False
+
+    def viewerTargetReadLayers(self, frame_num=None):
+        """復元参照に使うクリック点レイヤを現在ジョブに絞って返す。"""
+        project = QgsProject.instance()
+        current_video = os.path.basename(self.video_file or "")
+        if not current_video:
+            return []
+        layers = []
+        seen = set()
+
+        def add_layer(layer):
+            """重複とスキーマ不一致を避けて候補へ追加する。"""
+            if not self.isViewerTargetLayer(layer):
+                return
+            layer_id = layer.id()
+            if layer_id in seen:
+                return
+            layers.append(layer)
+            seen.add(layer_id)
+
+        write_layer = self.viewerTargetLayer()
+        if write_layer is not None and self.layerHasVideoFrameTarget(write_layer, current_video, frame_num):
+            add_layer(write_layer)
+
+        for layer in reversed(list(project.mapLayers().values())):
+            if self.isCurrentGpkgTargetLayer(layer):
+                add_layer(layer)
+
+        for layer in reversed(list(project.mapLayers().values())):
+            if not self.isNamedViewerTargetLayer(layer):
+                continue
+            if not self.layerHasVideoFrameTarget(layer, current_video, frame_num):
+                continue
+            add_layer(layer)
+
+        return layers
+
+    def restoredViewerTargetPayload(self, feature, fallback_order):
+        """保存済みクリック点レコードをviewer_session.jsonのtarget形式へ戻す。"""
+        target_yaw = self.targetFeatureFloat(feature, "target_yaw")
+        target_pitch = self.targetFeatureFloat(feature, "target_pitch")
+        if target_yaw is None or target_pitch is None:
+            return None
+
+        view_yaw = self.targetFeatureFloat(feature, "view_yaw")
+        if view_yaw is None:
+            view_yaw = target_yaw
+        view_pitch = self.targetFeatureFloat(feature, "view_pitch")
+        if view_pitch is None:
+            view_pitch = target_pitch
+        view_zoom = self.targetFeatureFloat(feature, "view_zoom")
+        if view_zoom is None:
+            view_zoom = 1.0
+
+        yaw_delta = self.targetFeatureFloat(feature, "yaw_delta")
+        if yaw_delta is None:
+            yaw_delta = self.signedAngleDelta(view_yaw, target_yaw)
+
+        target_id = self.targetFeatureFloat(feature, "target_id")
+        target_order = self.targetFeatureFloat(feature, "target_order")
+        target_id = int(target_id) if target_id is not None else int(fallback_order)
+        target_order = int(target_order) if target_order is not None else target_id
+        projection = self.targetFeatureValue(feature, "projection") or "center_plane"
+
+        return {
+            "id": target_id,
+            "order": target_order,
+            "x_ratio": 0.5,
+            "y_ratio": 0.5,
+            "yaw_delta_deg": self.signedAngleDelta(0.0, yaw_delta),
+            "pitch_delta_deg": max(-90.0, min(90.0, float(target_pitch) - float(view_pitch))),
+            "target_yaw_to_camera_heading": float(target_yaw) % 360.0,
+            "target_pitch_deg": max(-90.0, min(90.0, float(target_pitch))),
+            "view_yaw_to_camera_heading": float(view_yaw) % 360.0,
+            "view_pitch": max(-90.0, min(90.0, float(view_pitch))),
+            "view_zoom": max(0.01, float(view_zoom)),
+            "projection": str(projection),
+        }
+
+    def viewerTargetsForFrame(self, frame_num):
+        """指定フレームに保存済みのクリック点をビューア復元用payloadとして返す。"""
+        target_frame = int(frame_num)
+        layers = self.viewerTargetReadLayers(target_frame)
+        if not layers:
+            return []
+
+        current_video = os.path.basename(self.video_file or "")
+        targets = []
+        seen_ids = set()
+
+        for layer in layers:
+            for feature in layer.getFeatures():
+                frame_value = self.targetFeatureFloat(feature, "frame")
+                if frame_value is None or int(frame_value) != target_frame:
+                    continue
+
+                feature_video = self.targetFeatureValue(feature, "video")
+                if current_video and feature_video and str(feature_video) != current_video:
+                    continue
+
+                target = self.restoredViewerTargetPayload(feature, len(targets) + 1)
+                if not target:
+                    continue
+                target_id = int(target.get("id") or target.get("order") or 0)
+                if target_id in seen_ids:
+                    continue
+                seen_ids.add(target_id)
+                targets.append(target)
+
+        targets.sort(key=lambda item: (int(item.get("order") or 0), int(item.get("id") or 0)))
+        return targets
+
+    def viewerViewForPickedFrame(self, frame_num):
+        """Picked point移動時に、保存済みクリック時視点をビューア中心へ戻す。"""
+        targets = self.viewerTargetsForFrame(frame_num)
+        if not targets:
+            return None
+        target = targets[-1]
+        view_yaw = _parse_float(target.get("view_yaw_to_camera_heading"))
+        view_pitch = _parse_float(target.get("view_pitch"))
+        view_zoom = _parse_float(target.get("view_zoom"))
+        if view_yaw is None or view_pitch is None or view_zoom is None:
+            return None
+        return {
+            "yaw_to_camera_heading": float(view_yaw) % 360.0,
+            "pitch": max(-90.0, min(90.0, float(view_pitch))),
+            "zoom": max(0.01, float(view_zoom)),
+        }
+
+    def restoreViewerTargetsForState(self, state):
+        """現在sessionに点が無ければ、保存済みクリック点を補完して返す。"""
+        if not isinstance(state, dict):
+            return state
+        current_video = os.path.basename(self.video_file or "")
+        if not current_video or state.get("video") != current_video:
+            return state
+        if isinstance(state.get("targets"), list) and state.get("targets"):
+            return state
+        if isinstance(state.get("target"), dict):
+            return state
+
+        frame_index = self.sessionFrameIndex(state)
+        if frame_index is None:
+            return state
+        targets = self.viewerTargetsForFrame(frame_index)
+        if not targets:
+            return state
+
+        restored_state = dict(state)
+        restored_state["targets"] = targets
+        restored_state["target"] = targets[-1]
+        written_state = self.writeViewerSessionState(restored_state)
+        return written_state if isinstance(written_state, dict) else restored_state
+
+    def viewerTargetKey(self, video_name, frame_index, projection):
+        """同一クリック点の重複登録を避けるためのキーを返す。"""
+        target_id = projection.get("id")
+        if target_id is None:
+            target_id = projection.get("order")
+        if target_id is not None:
+            try:
+                return (str(video_name), int(frame_index), int(target_id))
+            except (TypeError, ValueError):
+                pass
+
+        point = projection.get("point")
+        lon = round(float(point.x()), 8) if point is not None else 0.0
+        lat = round(float(point.y()), 8) if point is not None else 0.0
+        yaw = round(float(projection.get("target_yaw_to_camera_heading") or 0.0), 3)
+        return (str(video_name), int(frame_index), yaw, lon, lat)
+
+    def registeredViewerTargetKeys(self, layer):
+        """既存レイヤ内容から登録済みキー集合を復元する。"""
+        keys = set(getattr(self, "saved_viewer_target_keys", set()))
+        if keys:
+            return keys
+
+        frame_idx = layer.fields().indexFromName("frame")
+        video_idx = layer.fields().indexFromName("video")
+        target_idx = layer.fields().indexFromName("target_id")
+        if frame_idx < 0 or video_idx < 0 or target_idx < 0:
+            return keys
+
+        for feature in layer.getFeatures():
+            try:
+                keys.add((
+                    str(feature.attribute(video_idx)),
+                    int(feature.attribute(frame_idx)),
+                    int(feature.attribute(target_idx)),
+                ))
+            except Exception:
+                continue
+        self.saved_viewer_target_keys = keys
+        return keys
+
+    def storeViewerTargetProjections(self, state, source_lat, source_lon, target_projections):
+        """360クリック投影点を緯度経度geometryと属性として自前レイヤへ保存する。"""
+        storable_projections = [
+            projection for projection in target_projections
+            if projection.get("id") is not None or projection.get("order") is not None
+        ]
+        if not storable_projections:
+            return
+
+        frame_index = self.sessionFrameIndex(state)
+        if frame_index is None:
+            return
+        video_name = state.get("video") or os.path.basename(self.video_file or "")
+
+        layer = self.ensureViewerTargetLayer()
+        existing_keys = self.registeredViewerTargetKeys(layer)
+        features = []
+        now_text = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        for projection in storable_projections:
+            point = projection.get("point")
+            if point is None:
+                continue
+            key = self.viewerTargetKey(video_name, frame_index, projection)
+            if key in existing_keys:
+                continue
+            target_id = projection.get("id")
+            target_order = projection.get("order", target_id)
+            feat = QgsFeature(layer.fields())
+            feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(point.x(), point.y())))
+            values = {
+                "video": str(video_name),
+                "frame": int(frame_index),
+                "target_id": int(target_id) if target_id is not None else None,
+                "target_order": int(target_order) if target_order is not None else None,
+                "latitude": float(point.y()),
+                "longitude": float(point.x()),
+                "distance_m": float(projection.get("distance_m")) if projection.get("distance_m") is not None else None,
+                "forward_m": float(projection.get("forward_distance_m")) if projection.get("forward_distance_m") is not None else None,
+                "bearing_deg": float(projection.get("bearing")) if projection.get("bearing") is not None else None,
+                "yaw_delta": float(projection.get("yaw_delta_deg")) if projection.get("yaw_delta_deg") is not None else None,
+                "target_yaw": float(projection.get("target_yaw_to_camera_heading")) if projection.get("target_yaw_to_camera_heading") is not None else None,
+                "target_pitch": float(projection.get("target_pitch_deg")) if projection.get("target_pitch_deg") is not None else None,
+                "view_yaw": float(projection.get("view_yaw_to_camera_heading")) if projection.get("view_yaw_to_camera_heading") is not None else None,
+                "view_pitch": float(projection.get("view_pitch")) if projection.get("view_pitch") is not None else None,
+                "view_zoom": float(projection.get("view_zoom")) if projection.get("view_zoom") is not None else None,
+                "source_lat": float(source_lat),
+                "source_lon": float(source_lon),
+                "projection": str(projection.get("projection") or "center_plane"),
+                "created_at": now_text,
+            }
+            feat.setAttributes([values.get(field.name()) for field in layer.fields()])
+            features.append(feat)
+            existing_keys.add(key)
+
+        if not features:
+            return
+        layer.dataProvider().addFeatures(features)
+        layer.updateExtents()
+        layer.triggerRepaint()
+        self.saved_viewer_target_keys = existing_keys
 
     def matchedFrameCsvPaths(self):
         """KPマッチ済みフレームCSVの探索候補パスを返す。"""
@@ -1036,6 +1889,21 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     return sorted(set(frames)), path
 
         return [], None
+
+    def pickedFrames(self):
+        """360クリック点が存在するframe一覧を返す。"""
+        frames = []
+        for layer in self.viewerTargetReadLayers():
+            for feature in layer.getFeatures():
+                frame_value = self.targetFeatureFloat(feature, "frame")
+                if frame_value is None:
+                    continue
+                video_name = os.path.basename(self.video_file or "")
+                feature_video = self.targetFeatureValue(feature, "video")
+                if video_name and feature_video and str(feature_video) != video_name:
+                    continue
+                frames.append(int(frame_value))
+        return sorted(set(frames))
 
     def steppedFrame(self, frames, current_frame, direction, step_count):
         """ソート済みフレーム列から、現在位置を基準に指定ステップ先を返す。"""
@@ -1103,6 +1971,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return None, None
             return target, self.findFeatureByFrame(target)
 
+        if mode == "picked":
+            frames = self.pickedFrames()
+            if not frames:
+                self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
+                return None, None
+            target = self.steppedFrame(frames, current_frame, direction, step_count)
+            if target is None:
+                self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
+                return None, None
+            return target, self.findFeatureByFrame(target)
+
         layer = self.activeFrameLayer()
         if layer is None:
             self.notifyWarning("video_gpx_layer_missing")
@@ -1157,8 +2036,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             removed_count += 1
             if layer_id == self.frame_layer_id:
                 self.frame_layer_id = None
+            if layer_id == self.target_layer_id:
+                self.target_layer_id = None
 
         self.created_layer_ids = remaining_layer_ids
+        self.saved_viewer_target_keys = set()
         return removed_count
 
     def generatedLayerBackupPath(self):
@@ -1174,6 +2056,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if layer is not None:
                 layers.append(layer)
         return layers
+
+    def generatedLayerBackupName(self, layer, base_layer_name, index):
+        """tmp.gpkg内の保存レイヤ名を役割に応じて決める。"""
+        fields = self.layerFields(layer)
+        if fields is None:
+            return _safe_gpkg_layer_name(f"{base_layer_name}_{index:02d}")
+        if fields.indexFromName("target_id") >= 0:
+            return GPKG_TARGET_LAYER_NAME
+        if fields.indexFromName("frame") >= 0:
+            return GPKG_FRAME_LAYER_NAME
+        return _safe_gpkg_layer_name(f"{base_layer_name}_{index:02d}")
 
     def gpkgOverwriteAction(self, overwrite_file):
         """QGISバージョン差を吸収してGeoPackage上書きアクションを返す。"""
@@ -1232,13 +2125,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         try:
             os.makedirs(output_dir, exist_ok=True)
             for index, layer in enumerate(layers, start=1):
-                layer_name = base_layer_name if index == 1 else f"{base_layer_name}_{index:02d}"
+                layer_name = self.generatedLayerBackupName(layer, base_layer_name, index)
                 self.writeLayerToGpkg(
                     layer,
                     gpkg_path,
                     layer_name,
-                    overwrite_file=(index == 1)
+                    overwrite_file=(index == 1 and not os.path.isfile(gpkg_path))
                 )
+            self.writeJobMetadataToGpkg(gpkg_path)
         except Exception as e:
             return gpkg_path, 0, str(e)
 
@@ -1249,6 +2143,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.last_rows = []
         self.frame_position_by_frame = {}
         self.frame_layer_id = None
+        self.target_layer_id = None
+        self.database_file = ""
+        self.loaded_gpkg_path = ""
+        self.setDatabaseRestoreMode(False)
+        self.saved_viewer_target_keys = set()
         self.setCurrentFrame(None)
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
@@ -1328,6 +2227,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def processData(self):
         """GPX/動画同期workerを開始する。結果はaddLayerで受け取る。"""
+        if self.database_restore_mode:
+            return
         config = self.collectProcessConfig()
         if config is None:
             print("Error: Process input validation failed.")

@@ -25,7 +25,7 @@ OpenCV + Python standard-library HTTP server + krpano based proof of concept for
 ### session.json / viewer_session.json
 The configured session file stores the last viewer state so the page and QGIS plugin can restore or monitor it. In standalone mode this defaults to `session.json`; when started from QGIS it is written as `viewer_session.json` under the plugin output directory.
 
-It records the current `video`, `frame_index`, `yaw_to_camera_heading`, `pitch`, `zoom`, job-specific `viewer_camera_height_m`, optional `target`, and `updated_at` timestamp.
+It records the current `video`, `frame_index`, `yaw_to_camera_heading`, `pitch`, `zoom`, job-specific `viewer_camera_height_m`, optional `target`, optional ordered `targets`, and `updated_at` timestamp.
 
 The QGIS plugin polls this file to draw the map radar overlay.
 
@@ -34,12 +34,18 @@ object. It contains range values used by the browser HUD. The HUD is a visual
 distance guide, not exact monocular depth reconstruction: it mirrors the
 QGIS-side range marker so operators can compare the current view with the
 main range guides and the 1 m dashed auxiliary grid by eye. Use the `HUD`
-toolbar button to show or hide the HUD, and `Grid` to toggle only the 1 m grid.
+toolbar button to show or hide the range HUD and ground grid together.
+The grid is a ground-surface guide. Compare it with feet, signpost bases, road
+markings, curb stones, manholes, or other points on the ground, not with elevated
+objects such as sign faces, walls, or overhead wires.
 
-Clicking the panorama stores a `target` object in the session state. The target
-contains the clicked 360 yaw, relative yaw from the view center, and clicked-time
-zoom. QGIS can use it with the calibrated radar distance to draw a temporary
-map-plane projection point.
+Clicking the panorama stores a `target` object in the session state. Double-clicking
+also appends the point to the ordered `targets` list. The target values contain
+the clicked 360 yaw/pitch, relative yaw from the view center, and clicked-time
+zoom. Browser markers are reprojected from the stored yaw/pitch into the current
+view, while QGIS can use the same values with the calibrated radar distance to
+draw temporary map-plane projection points and append them to the `360 Click
+Targets` memo layer.
 
 ## Setup
 
@@ -101,12 +107,15 @@ frame_index,image_path
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
   "viewer_cache_dir": "viewer_cache",
-  "viewer_camera_height_m": 1.5
+  "viewer_camera_height_m": 1.5,
+  "viewer_browser_app_window": true,
+  "viewer_browser_path": ""
 }
 ```
 
 Relative paths are resolved from this prototype directory.
 `viewer_jpeg_quality` controls the on-the-fly JPEG returned by `/frames/...jpg`; lower values reduce browser decode and transfer cost. `viewer_progressive_jpeg` enables progressive JPEG encoding when the OpenCV build supports it. `viewer_max_width` downsizes extracted frames for interactive viewing; use `0` to keep the original width. `viewer_cache_dir` stores encoded viewer JPEGs so revisited frames do not require MP4 decoding again. `viewer_camera_height_m` is the default camera-center height used for standalone sessions; QGIS jobs store their value in `viewer_session.json`.
+When QGIS opens the viewer, `viewer_browser_app_window` tries to launch Edge/Chrome as a standalone app window. `viewer_browser_path` can be set to a specific `msedge.exe` or `chrome.exe` path when automatic detection does not find the browser. If app-window launch fails, QGIS falls back to the system default browser.
 
 ## Run
 
@@ -164,6 +173,6 @@ Example:
 - Prev/Next moves only to frames listed in `<video_stem>_matched_frames.csv`.
 - Left/Right arrow keys perform the same Prev/Next navigation while the browser viewer has focus.
 - The debug log is collapsed by default. Use the `Log` toolbar button to show or hide it.
-- The range HUD is shown by default when QGIS provides radar values. Use `HUD` to show or hide it, and `Grid` to toggle only the 1 m dashed auxiliary grid.
-- Clicking the panorama marks the clicked screen position and updates `target` in the session file for QGIS-side projection.
+- The range HUD is shown by default when QGIS provides radar values. Use `HUD` to show or hide the range HUD and 1 m dashed auxiliary grid together.
+- Clicking the panorama marks the clicked screen position and updates `target`; double-clicking appends ordered `targets` for QGIS-side multi-point projection.
 - If krpano is missing, the page reports the missing file and shows a non-interactive extracted image fallback if the video exists.

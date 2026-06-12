@@ -48,7 +48,7 @@ node --check 360viewer/static/viewer.js
 
 - 動画名入力の安全性
 - `viewer_session.json` へ保存する視点状態の検証
-- 360クリック投影用 `target` の正規化
+- 360クリック投影用 `target` / `targets` の正規化
 - セッションJSONの原子的書き込み
 - QGISナビゲーション時の視点継承
 
@@ -198,9 +198,12 @@ QGIS実機で確認する主要観点:
 - `Exit` 後にレーダRubberBandが残らない。
 - WEBビューアの画像送りでyaw/pitch/zoomを継承する。
 - WEBビューアクリック点がQGIS地図上の緑点として投影される。
+- WEBビューアのダブルクリック複数点がQGIS地図上の複数緑点として投影される。
+- WEBビューアクリック投影点が `360 Click Targets` レイヤの属性テーブルへ緯度経度付きで保存される。
+- `tmp.gpkg` 内部レイヤ名が退避ファイル名 `tmp` ではなく、`video_gpx_points` / `click_targets_360` になる。
 - `CalFOV` / `CalDist` / `Scale` を変えた時、QGIS側垂線、クリック投影点、WEB HUDが同じ前提で変化する。
 - `CamH` を変えた時、`viewer_session.json` への保存とWEB HUDの地面範囲円が更新される。
-- WEB HUDの1m破線補助グリッドを `Grid` ボタンで主円とは独立して切り替えられる。
+- WEB HUDの1m破線補助グリッドが主円と同じHUD表示状態で切り替わり、QGIS地図側にも同じ1m補助円が出る。
 - `Follow` ON/OFFで地図再中心化の挙動が切り替わる。
 - 操作パネルの主要ボタン、タブ、messageBar、tooltipが同じlocaleで表示される。
 - パネル上の `Frame ... 保存/既存` 表示とプレビュー画像tooltipで、`images/` と `viewer_cache/` のどちらを見ているか切り分けられる。

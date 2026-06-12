@@ -435,6 +435,7 @@ Stores the browser viewer state:
 - `viewer_camera_height_m`
 - `radar`
 - `target`
+- `targets`
 - `updated_at`
 
 QGIS polls this file every 500 ms and draws a temporary radar overlay on the map.
@@ -527,9 +528,11 @@ fov = 90 / zoom
 
 FOV controls sector width and the ratio from `CalFOV` to the current calibrated distance. When current FOV equals `CalFOV` and `Scale=1.0`, sector depth equals `CalDist`. The final display depth is clamped to at least 1.0 m.
 
-The WEB viewer also displays ground range rings equivalent to the `Range` / `Range * 2` guides, a 1 m dashed auxiliary ground grid, and a calibrated distance marker that corresponds to the QGIS-side perpendicular marker. The ground rings use the job-specific `CamH` / `viewer_camera_height_m` value as the camera-center height above ground. This HUD is not exact monocular depth recovery. It gives the image side the same visual distance cue as the map radar, so the operator can estimate distance by comparing it with the main guides and the 1 m auxiliary grid. The toolbar `HUD` button shows or hides the HUD, and `Grid` toggles only the auxiliary grid.
+The WEB viewer also displays ground range rings equivalent to the `Range` / `Range * 2` guides, a 1 m dashed auxiliary ground grid, and a calibrated distance marker that corresponds to the QGIS-side perpendicular marker. The ground rings use the job-specific `CamH` / `viewer_camera_height_m` value as the camera-center height above ground. This HUD is not exact monocular depth recovery. It gives the image side the same visual distance cue as the map radar, so the operator can estimate distance by comparing it with the main guides and the 1 m auxiliary grid. The comparison target is a point on the ground surface, such as a person's feet, a signpost base, road markings, curb stones, or manholes. The toolbar `HUD` button shows or hides the main guides, 1 m auxiliary grid, and calibrated distance marker together.
 
-When the operator clicks the image in the WEB viewer, the viewer stores the clicked point's absolute 360 yaw, relative yaw from the clicked-time view center, and clicked-time zoom in `viewer_session.json` as `target`. QGIS projects it as a temporary RubberBand point by taking the calibrated forward distance for the clicked-time FOV, dividing it by `cos(yaw_delta)`, and projecting from the camera point toward `heading + Offset + target_yaw`. This is an experimental map-plane projection aid and does not write to a user feature layer.
+The 1 m auxiliary grid is intended to make approximate ground-distance judgement easier, not to guarantee survey accuracy. When krpano is available, the WEB viewer prefers krpano's `spacetosphere` / `spheretoscreen` coordinate conversion for ground-surface projection so the grid follows the same spherical projection as the panorama view.
+
+When the operator clicks the image in the WEB viewer, the viewer stores the clicked point's absolute 360 yaw/pitch, relative yaw from the clicked-time view center, and clicked-time zoom in `viewer_session.json` as `target`. A double-click also appends the point to `targets` as an ordered memo point list. The WEB marker is reprojected from the stored absolute yaw/pitch into the current view, so it follows the same panorama location when the operator changes yaw, pitch, or zoom. QGIS projects the point as a temporary RubberBand by taking the calibrated forward distance for the clicked-time FOV, dividing it by `cos(yaw_delta)`, and projecting from the camera point toward `heading + Offset + target_yaw`. When `targets` exists, QGIS draws all points; otherwise it falls back to the legacy single `target`. Projected points are appended to the `360 Click Targets` memo layer with latitude/longitude attributes. This is an experimental map-plane projection aid and does not write to a final user feature layer.
 
 When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
 

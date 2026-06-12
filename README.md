@@ -12,6 +12,8 @@ The current implementation focuses on:
 - Launching a local 360 viewer from QGIS without Flask.
 - Showing the selected frame in a browser-based krpano viewer when a map point is clicked.
 - Preserving browser viewer yaw/pitch/zoom when switching frames.
-- Drawing a temporary QGIS radar overlay from `viewer_session.json` with a radius circle, field-of-view sector, direction line, and perpendicular line.
+- Drawing temporary QGIS and 360-viewer distance guides, including 1 m ground-grid helpers.
+- Saving and restoring a GPKG work session with camera points, 360 click targets, job metadata, calibration parameters, and picked-point view state.
+- Opening the 360 viewer in a dedicated Edge/Chrome app window when available.
 
-See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version.
+See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version. See [CHANGELOG.md](CHANGELOG.md) for version history.

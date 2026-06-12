@@ -1,6 +1,6 @@
 # GPXVideoProcessor 設計メモ
 
-更新日: 2026-06-07
+更新日: 2026-06-12
 
 ## 目的
 
@@ -51,9 +51,11 @@ GPXVideoProcessor/
 │   ├── quality_assurance.md     品質保証方針・退行テスト・手動確認観点
 │   ├── qgis_manual_test_checklist.md QGIS実機の機能別手動テスト項目
 │   ├── rader_spec.md            レーダ表示の実寸準拠仕様
+│   ├── session_2026-06-12_resume_picker_notes.md Resume/Picker PoC作業記録
 │   ├── tenkaku_ninja_operations.md TenkakuNinja由来の大量JPEG運用ノウハウ
 │   └── yolo_georeference_spec.md YOLO検出結果の緯度経度化 将来仕様メモ
 ├── metadata.txt                 QGISプラグイン定義
+├── CHANGELOG.md                 主要変更履歴
 ├── README.md
 ├── DESIGN.md                    英語版設計メモ
 └── DESIGN.ja.md                 日本語版設計メモ
@@ -442,6 +444,7 @@ WEBビューアの現在状態です。
 - `viewer_camera_height_m`
 - `radar`
 - `target`
+- `targets`
 - `updated_at`
 
 QGIS側はこのJSONを500ms間隔でポーリングし、地図上に視線方向レーダを描画します。
@@ -534,9 +537,11 @@ fov = 90 / zoom
 
 FOVは扇形の広がりと、`CalFOV` からの距離倍率計算に使います。現在FOVが `CalFOV` と同じで `Scale=1.0` の場合、奥行きは `CalDist` と一致します。最終表示は最低1.0mを維持します。
 
-WEBビューアにも、`Range` / `Range * 2` 相当の地面範囲円、1m間隔の破線補助グリッド、QGIS側の先端垂線に対応する校正距離線をHUDとして表示します。地面範囲円はジョブ条件 `CamH` / `viewer_camera_height_m` をカメラ中心の地上高として投影します。このHUDは単眼360画像から実距離を厳密に復元するものではなく、QGIS側レーダと同じ距離目安を画像側にも重ね、ユーザが主円と1m補助グリッドの比較で目測できるようにする補助表示です。ツールバーの `HUD` ボタンでHUD全体を、`Grid` ボタンで補助グリッドだけを表示/非表示に切り替えます。
+WEBビューアにも、`Range` / `Range * 2` 相当の地面範囲円、1m間隔の破線補助グリッド、QGIS側の先端垂線に対応する校正距離線をHUDとして表示します。地面範囲円はジョブ条件 `CamH` / `viewer_camera_height_m` をカメラ中心の地上高として投影します。このHUDは単眼360画像から実距離を厳密に復元するものではなく、QGIS側レーダと同じ距離目安を画像側にも重ね、ユーザが主円と1m補助グリッドの比較で目測できるようにする補助表示です。比較対象は地表面上の点、たとえば足元、標識柱の根元、路面標示、縁石、マンホールなどです。ツールバーの `HUD` ボタンで主円、1m補助グリッド、校正距離線をまとめて表示/非表示に切り替えます。
 
-WEBビューア上で画像をクリックすると、クリック時点の360空間上の絶対yaw、ビューア中心からの相対yaw、クリック時zoomを `viewer_session.json` の `target` に保存します。QGIS側は、クリック時FOVから求めた前方距離を `cos(yaw_delta)` で補正し、撮影点から `heading + Offset + target_yaw` 方向へ一時投影点を描きます。これは地物レイヤへ書き込むものではなく、360クリック点と地図平面の対応を試すためのRubberBand表示です。
+1m補助グリッドは、測量精度を保証するためではなく、5m/10mなどの主円だけでは掴みにくい距離感を細かく読むために追加しています。WEBビューア上の地表面投影は、krpanoが使える場合は `spacetosphere` / `spheretoscreen` を優先して、ビューア本体の球面投影と同じ座標系へ寄せます。
+
+WEBビューア上で画像をクリックすると、クリック時点の360空間上の絶対yaw/pitch、ビューア中心からの相対yaw、クリック時zoomを `viewer_session.json` の `target` に保存します。ダブルクリックした場合は、クリック順の複数メモ点として `targets` 配列にも追加します。WEB上のマーカーは保存した絶対yaw/pitchを現在視点へ再投影するため、視点を変えても同じ360球面位置に追従します。QGIS側は、クリック時FOVから求めた前方距離を `cos(yaw_delta)` で補正し、撮影点から `heading + Offset + target_yaw` 方向へ一時投影点を描きます。`targets` がある場合は全点を描画し、ない場合は従来の単一 `target` を描画します。投影できた点は `360 Click Targets` レイヤへ緯度経度付きで追記します。これは本登録レイヤではなく、360クリック点と地図平面の対応を試すためのメモレイヤです。
 
 画像を別フレームへ切り替える場合、WEBビューアは切替直前の `yaw_to_camera_heading`, `pitch`, `zoom` を新しいフレームへ継承します。
 

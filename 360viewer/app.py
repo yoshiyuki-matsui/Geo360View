@@ -29,6 +29,7 @@ DEFAULT_VIEW = {
 DEFAULT_CAMERA_HEIGHT_M = 1.5
 MIN_CAMERA_HEIGHT_M = 0.1
 MAX_CAMERA_HEIGHT_M = 20.0
+MAX_VIEWER_TARGETS = 100
 
 
 class ConfigError(RuntimeError):
@@ -326,6 +327,11 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
     target = validate_target_payload(payload.get("target"))
     if target:
         state["target"] = target
+    targets = validate_targets_payload(payload.get("targets"))
+    if targets:
+        state["targets"] = targets
+        if not target:
+            state["target"] = targets[-1]
     return state
 
 
@@ -340,13 +346,14 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         return None
 
     try:
-        x_ratio = max(0.0, min(1.0, parse_float(payload.get("x_ratio"), "target.x_ratio")))
-        y_ratio = max(0.0, min(1.0, parse_float(payload.get("y_ratio"), "target.y_ratio")))
+        x_ratio = max(0.0, min(1.0, parse_float(payload.get("x_ratio"), "target.x_ratio", 0.5)))
+        y_ratio = max(0.0, min(1.0, parse_float(payload.get("y_ratio"), "target.y_ratio", 0.5)))
         yaw_delta_deg = normalize_signed_yaw(parse_float(payload.get("yaw_delta_deg"), "target.yaw_delta_deg", 0.0))
         pitch_delta_deg = max(-90.0, min(90.0, parse_float(payload.get("pitch_delta_deg"), "target.pitch_delta_deg", 0.0)))
         target_yaw = normalize_yaw(parse_float(payload.get("target_yaw_to_camera_heading"), "target.target_yaw_to_camera_heading"))
         view_yaw = normalize_yaw(parse_float(payload.get("view_yaw_to_camera_heading"), "target.view_yaw_to_camera_heading", target_yaw - yaw_delta_deg))
         view_pitch = max(-90.0, min(90.0, parse_float(payload.get("view_pitch"), "target.view_pitch", 0.0)))
+        target_pitch = max(-90.0, min(90.0, parse_float(payload.get("target_pitch_deg"), "target.target_pitch_deg", view_pitch + pitch_delta_deg)))
         view_zoom = max(0.01, parse_float(payload.get("view_zoom"), "target.view_zoom", DEFAULT_VIEW["zoom"]))
     except ApiError:
         return None
@@ -355,17 +362,49 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
     if projection not in {"center_plane", "constant_distance"}:
         projection = "center_plane"
 
-    return {
+    target = {
         "x_ratio": x_ratio,
         "y_ratio": y_ratio,
         "yaw_delta_deg": yaw_delta_deg,
         "pitch_delta_deg": pitch_delta_deg,
         "target_yaw_to_camera_heading": target_yaw,
+        "target_pitch_deg": target_pitch,
         "view_yaw_to_camera_heading": view_yaw,
         "view_pitch": view_pitch,
         "view_zoom": view_zoom,
         "projection": projection,
     }
+    try:
+        target_id = int(payload.get("id"))
+        if target_id > 0:
+            target["id"] = target_id
+    except (TypeError, ValueError):
+        pass
+    try:
+        order = int(payload.get("order"))
+        if order > 0:
+            target["order"] = order
+    except (TypeError, ValueError):
+        pass
+    return target
+
+
+def validate_targets_payload(payload: Any) -> list[dict[str, Any]]:
+    """複数クリックターゲット配列を検証し、順序IDを補完する。"""
+    if not isinstance(payload, list):
+        return []
+
+    targets = []
+    for item in payload[:MAX_VIEWER_TARGETS]:
+        target = validate_target_payload(item)
+        if not target:
+            continue
+        if "id" not in target:
+            target["id"] = len(targets) + 1
+        if "order" not in target:
+            target["order"] = len(targets) + 1
+        targets.append(target)
+    return targets
 
 
 def validate_radar_payload(payload: Any) -> dict[str, float] | None:
@@ -437,6 +476,10 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
         state["radar"] = radar
+    targets = validate_targets_payload(payload.get("targets"))
+    if targets:
+        state["targets"] = targets
+        state["target"] = targets[-1]
     return state
 
 
@@ -494,7 +537,6 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
       <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
-      <button id="groundGridToggleButton" class="grid-toggle" type="button" aria-pressed="true">Grid</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
@@ -764,6 +806,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
             and isinstance(session.get("target"), dict)
         ):
             state["target"] = session["target"]
+        if (
+            same_video_frame(session, video, frame_index)
+            and isinstance(session.get("targets"), list)
+        ):
+            state["targets"] = session["targets"]
         state = write_session(state)
         frames = load_matched_frames(video)
         prev_frame, next_frame = neighbor_frames(frames, frame_index)

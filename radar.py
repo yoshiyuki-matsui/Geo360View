@@ -5,7 +5,7 @@ import math
 import os
 
 from qgis.PyQt import QtGui
-from qgis.PyQt.QtCore import QTimer
+from qgis.PyQt.QtCore import QTimer, Qt
 try:
     from qgis.PyQt import sip
 except ImportError:  # pragma: no cover - QGIS配布差異への保険
@@ -29,6 +29,8 @@ RADAR_MIN_DISTANCE_M = 0.5
 RADAR_MIN_SECTOR_RADIUS_M = 1.0
 RADAR_MIN_ZOOM_DISTANCE_MULTIPLIER = 0.25
 RADAR_MAX_ZOOM_DISTANCE_MULTIPLIER = 8.0
+RADAR_GRID_STEP_M = 1.0
+RADAR_GRID_MAX_RINGS = 250
 
 
 class RadarMixin:
@@ -66,10 +68,28 @@ class RadarMixin:
         if frame_index is None:
             return
 
+        restore_targets = getattr(self, "restoreViewerTargetsForState", None)
+        if callable(restore_targets):
+            try:
+                state = restore_targets(state)
+            except Exception as e:
+                print(f"Viewer target restore failed: {e}")
+
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         pitch = _parse_float(state.get("pitch"))
         zoom = _parse_float(state.get("zoom"))
         target = state.get("target") if isinstance(state.get("target"), dict) else {}
+        targets = state.get("targets") if isinstance(state.get("targets"), list) else []
+        targets_signature = tuple(
+            (
+                target_item.get("id"),
+                round(_parse_float(target_item.get("target_yaw_to_camera_heading")) or 0.0, 3),
+                round(_parse_float(target_item.get("yaw_delta_deg")) or 0.0, 3),
+                round(_parse_float(target_item.get("view_zoom")) or 0.0, 3),
+            )
+            for target_item in targets
+            if isinstance(target_item, dict)
+        )
         radar_config = self.collectRadarConfig(show_errors=False)
         if radar_config is None:
             self.clearRadar()
@@ -85,6 +105,7 @@ class RadarMixin:
             round(_parse_float(target.get("target_yaw_to_camera_heading")) or 0.0, 3),
             round(_parse_float(target.get("yaw_delta_deg")) or 0.0, 3),
             round(_parse_float(target.get("view_zoom")) or 0.0, 3),
+            targets_signature,
             round(range_m, 3),
             round(radar_config.scale, 3),
             round(radar_config.cal_fov_deg, 3),
@@ -208,12 +229,20 @@ class RadarMixin:
         target_projection_label = getattr(self, "target_projection_label", None)
         if target_projection_label is None:
             return
-        if not target_projection:
+        if isinstance(target_projection, list):
+            projections = target_projection
+        else:
+            projections = [target_projection] if target_projection else []
+        if not projections:
             target_projection_label.setText("Click: -")
             return
-        distance_m = target_projection["distance_m"]
-        yaw_delta = target_projection["yaw_delta_deg"]
-        target_projection_label.setText(f"Click: {distance_m:.1f}m {yaw_delta:+.1f}deg")
+        latest_projection = projections[-1]
+        distance_m = latest_projection["distance_m"]
+        yaw_delta = latest_projection["yaw_delta_deg"]
+        if len(projections) == 1:
+            target_projection_label.setText(f"Click: {distance_m:.1f}m {yaw_delta:+.1f}deg")
+        else:
+            target_projection_label.setText(f"Click: {len(projections)} pts last {distance_m:.1f}m {yaw_delta:+.1f}deg")
 
     def viewerRadarHudPayload(self, frame_index):
         """WEBビューアHUDへ渡すレーダ距離補助値を作る。"""
@@ -407,6 +436,22 @@ class RadarMixin:
                 self.radar_outer_circle_band.setFillColor(QtGui.QColor(0, 130, 255, 0))
             self.radar_outer_circle_band.setWidth(1)
 
+        if self.radar_grid_band is None:
+            self.radar_grid_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            # RADAR_GRID_STEP_Mごとに描く補助線は、主線より薄い色で点線にする。お好みで調整してください。
+            # シアン系
+            #self.radar_grid_band.setColor(QtGui.QColor(0, 255, 255, 150))
+            # マゼンタ系
+            #self.radar_grid_band.setColor(QtGui.QColor(255, 80, 255, 150))
+            # 白っぽく濃いめ
+            self.radar_grid_band.setColor(QtGui.QColor(255, 255, 255, 180))
+
+            #self.radar_grid_band.setColor(QtGui.QColor(150, 255, 72, 125))
+            #線幅
+            self.radar_grid_band.setWidth(1)
+            if hasattr(self.radar_grid_band, "setLineStyle"):
+                self.radar_grid_band.setLineStyle(Qt.DotLine)   #破線
+
         if self.radar_direction_band is None:
             self.radar_direction_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
             self.radar_direction_band.setColor(QtGui.QColor(255, 70, 40, 230))
@@ -441,10 +486,33 @@ class RadarMixin:
         rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(transformed), None)
         rubber_band.show()
 
+    def setRadarMultiLine(self, rubber_band, line_points):
+        """複数のWGS84ラインを1つのRubberBandへ反映する。"""
+        if not line_points:
+            rubber_band.hide()
+            rubber_band.reset(QgsWkbTypes.LineGeometry)
+            return
+        transformed = [
+            [self.canvasPoint(point.x(), point.y()) for point in points]
+            for points in line_points
+        ]
+        rubber_band.setToGeometry(QgsGeometry.fromMultiPolylineXY(transformed), None)
+        rubber_band.show()
+
     def setRadarPoint(self, rubber_band, point):
         """WGS84点をcanvas CRSへ変換し、ポイントRubberBandへ反映する。"""
         transformed = self.canvasPoint(point.x(), point.y())
         rubber_band.setToGeometry(QgsGeometry.fromPointXY(transformed), None)
+        rubber_band.show()
+
+    def setRadarMultiPoint(self, rubber_band, points):
+        """複数のWGS84点を1つのPoint RubberBandへ反映する。"""
+        if not points:
+            rubber_band.hide()
+            rubber_band.reset(QgsWkbTypes.PointGeometry)
+            return
+        transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
+        rubber_band.setToGeometry(QgsGeometry.fromMultiPointXY(transformed), None)
         rubber_band.show()
 
     def hideRadarTargetBands(self):
@@ -462,9 +530,20 @@ class RadarMixin:
             except Exception:
                 pass
 
-    def viewerTargetProjection(self, lat, lon, heading, state):
-        """360ビューアでクリックした球面位置を、撮影点周辺の地図点へ投影する。"""
+    def viewerTargetPayloads(self, state):
+        """複数targetがあれば優先し、なければ従来の単一targetを返す。"""
+        targets = state.get("targets")
+        if isinstance(targets, list):
+            payloads = [target for target in targets if isinstance(target, dict)]
+            if payloads:
+                return payloads
         target = state.get("target")
+        return [target] if isinstance(target, dict) else []
+
+    def viewerTargetProjection(self, lat, lon, heading, state, target=None):
+        """360ビューアでクリックした球面位置を、撮影点周辺の地図点へ投影する。"""
+        if target is None:
+            target = state.get("target")
         if not isinstance(target, dict):
             return None
 
@@ -482,6 +561,12 @@ class RadarMixin:
         if yaw_delta is None:
             yaw_delta = self.signedAngleDelta(view_yaw, target_yaw)
 
+        view_pitch = _parse_float(target.get("view_pitch"))
+        pitch_delta = _parse_float(target.get("pitch_delta_deg"))
+        target_pitch = _parse_float(target.get("target_pitch_deg"))
+        if target_pitch is None and view_pitch is not None and pitch_delta is not None:
+            target_pitch = max(-90.0, min(90.0, view_pitch + pitch_delta))
+
         view_zoom = _parse_float(target.get("view_zoom"))
         fov = self.viewerFov({"zoom": view_zoom}) if view_zoom is not None else self.viewerFov(state)
         forward_distance_m = self.calibratedMarkerDistanceForFov(fov)
@@ -494,13 +579,54 @@ class RadarMixin:
         distance_m = max(RADAR_MIN_SECTOR_RADIUS_M, forward_distance_m / abs(cos_delta))
         target_bearing = (heading + self.radarBearingOffsetValue() + target_yaw) % 360.0
         point = self.destinationPoint(lat, lon, target_bearing, distance_m)
-        return {
+        projection = {
             "point": point,
             "bearing": target_bearing,
             "distance_m": distance_m,
             "forward_distance_m": forward_distance_m,
             "yaw_delta_deg": yaw_delta,
+            "target_yaw_to_camera_heading": target_yaw,
+            "target_pitch_deg": target_pitch,
+            "view_yaw_to_camera_heading": view_yaw,
+            "view_pitch": view_pitch,
+            "view_zoom": view_zoom,
+            "projection": target.get("projection") or "center_plane",
         }
+        if target.get("id") is not None:
+            projection["id"] = target.get("id")
+        if target.get("order") is not None:
+            projection["order"] = target.get("order")
+        return projection
+
+    def viewerTargetProjections(self, lat, lon, heading, state):
+        """viewer_session.json内のクリックターゲットをすべて地図投影する。"""
+        projections = []
+        for target in self.viewerTargetPayloads(state):
+            projection = self.viewerTargetProjection(lat, lon, heading, state, target)
+            if projection:
+                projections.append(projection)
+        return projections
+
+    def radarCirclePoints(self, lat, lon, radius_m):
+        """指定半径のWGS84円近似点列を返す。"""
+        return [
+            self.destinationPoint(lat, lon, angle, radius_m)
+            for angle in range(0, 361, 8)
+        ]
+
+    def radarGridRadii(self, inner_radius_m, outer_radius_m):
+        """WEBビューアの1m補助グリッドに対応する地図側半径一覧を返す。"""
+        max_radius_m = int(math.floor(max(0.0, float(outer_radius_m))))
+        radii = []
+        for radius_m in range(1, max_radius_m + 1):
+            if abs(radius_m - float(inner_radius_m)) < 0.001:
+                continue
+            if abs(radius_m - float(outer_radius_m)) < 0.001:
+                continue
+            radii.append(float(radius_m))
+
+        # 極端に大きいRangeでQGIS描画を重くしないため、補助線だけ上限を設ける。
+        return radii[:RADAR_GRID_MAX_RINGS]
 
     def renderViewerRadar(self, state):
         """ビューア状態をもとに同心円・扇形・方向線を再描画する。"""
@@ -529,13 +655,11 @@ class RadarMixin:
         center = QgsPointXY(float(lon), float(lat))
 
         # Rangeは絶対距離の基準線。扇形の奥行きとは別扱いにする。
-        circle_points = [
-            self.destinationPoint(lat, lon, angle, fixed_radius_m)
-            for angle in range(0, 361, 8)
-        ]
-        outer_circle_points = [
-            self.destinationPoint(lat, lon, angle, outer_radius_m)
-            for angle in range(0, 361, 8)
+        circle_points = self.radarCirclePoints(lat, lon, fixed_radius_m)
+        outer_circle_points = self.radarCirclePoints(lat, lon, outer_radius_m)
+        grid_lines = [
+            self.radarCirclePoints(lat, lon, radius_m)
+            for radius_m in self.radarGridRadii(fixed_radius_m, outer_radius_m)
         ]
 
         start_angle = bearing - (fov / 2.0)
@@ -563,25 +687,36 @@ class RadarMixin:
             bearing + 90.0,
             perpendicular_half_m
         )
-        target_projection = self.viewerTargetProjection(lat, lon, heading, state)
+        target_projections = self.viewerTargetProjections(lat, lon, heading, state)
+        store_targets = getattr(self, "storeViewerTargetProjections", None)
+        if callable(store_targets):
+            store_targets(state, lat, lon, target_projections)
 
         self.ensureRadarBands()
+        self.setRadarMultiLine(self.radar_grid_band, grid_lines)
         self.setRadarPolygon(self.radar_circle_band, circle_points)
         self.setRadarPolygon(self.radar_outer_circle_band, outer_circle_points)
         self.setRadarPolygon(self.radar_sector_band, sector_points)
         self.setRadarLine(self.radar_direction_band, [center, direction_end])
         self.setRadarLine(self.radar_perpendicular_band, [perpendicular_start, perpendicular_end])
-        if target_projection:
-            self.setRadarLine(self.radar_target_line_band, [center, target_projection["point"]])
-            self.setRadarPoint(self.radar_target_point_band, target_projection["point"])
+        if target_projections:
+            self.setRadarMultiLine(
+                self.radar_target_line_band,
+                [[center, target_projection["point"]] for target_projection in target_projections]
+            )
+            self.setRadarMultiPoint(
+                self.radar_target_point_band,
+                [target_projection["point"] for target_projection in target_projections]
+            )
         else:
             self.hideRadarTargetBands()
-        self.updateRadarTargetReadout(target_projection)
+        self.updateRadarTargetReadout(target_projections)
 
     def clearRadar(self):
         """地図上のレーダRubberBandと前回値をすべて破棄する。"""
         canvas = self.iface.mapCanvas()
         band_types = {
+            "radar_grid_band": QgsWkbTypes.LineGeometry,
             "radar_circle_band": QgsWkbTypes.PolygonGeometry,
             "radar_outer_circle_band": QgsWkbTypes.PolygonGeometry,
             "radar_sector_band": QgsWkbTypes.PolygonGeometry,

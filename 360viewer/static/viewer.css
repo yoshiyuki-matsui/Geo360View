@@ -54,10 +54,6 @@ button:disabled {
   min-width: 52px;
 }
 
-.grid-toggle {
-  min-width: 52px;
-}
-
 .readout {
   display: flex;
   flex-wrap: wrap;
@@ -134,7 +130,7 @@ button:disabled {
 .ground-ring-grid {
   fill: none;
   stroke: rgba(255, 238, 72, 0.5);
-    stroke-dasharray: 2 8;
+  stroke-dasharray: 2 8;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.0;

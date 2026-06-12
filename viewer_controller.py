@@ -52,6 +52,8 @@ class ViewerControllerMixin:
         jpeg_quality = 70
         progressive_jpeg = True
         max_width = 3072
+        browser_app_window = True
+        browser_path = ""
         try:
             with open(config_path, "r", encoding="utf-8") as handle:
                 config = json.load(handle)
@@ -62,6 +64,10 @@ class ViewerControllerMixin:
                 config.get("viewer_progressive_jpeg", progressive_jpeg)
             )
             max_width = max(0, int(config.get("viewer_max_width", max_width)))
+            browser_app_window = self.parseViewerBool(
+                config.get("viewer_browser_app_window", browser_app_window)
+            )
+            browser_path = str(config.get("viewer_browser_path", browser_path) or "").strip()
         except Exception:
             pass
         self.viewer_host = host
@@ -69,6 +75,8 @@ class ViewerControllerMixin:
         self.viewer_jpeg_quality = jpeg_quality
         self.viewer_progressive_jpeg = progressive_jpeg
         self.viewer_max_width = max_width
+        self.viewer_browser_app_window = browser_app_window
+        self.viewer_browser_path = browser_path
         return host, port
 
     def parseViewerBool(self, value):
@@ -129,6 +137,43 @@ class ViewerControllerMixin:
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
         })
         return f"{base_url}/viewer?{query}"
+
+    def browserCandidatePaths(self):
+        """独立アプリ窓で開けるEdge/Chrome候補を返す。"""
+        candidates = []
+
+        def add(path):
+            if path and path not in candidates:
+                candidates.append(path)
+
+        add(getattr(self, "viewer_browser_path", ""))
+        for root in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            os.environ.get("LocalAppData"),
+        ):
+            if not root:
+                continue
+            add(os.path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"))
+            add(os.path.join(root, "Google", "Chrome", "Application", "chrome.exe"))
+        return candidates
+
+    def browserAppCommand(self):
+        """アプリ窓起動に使うブラウザ実行ファイルを返す。"""
+        for candidate in self.browserCandidatePaths():
+            if os.path.isfile(candidate):
+                return candidate
+        return ""
+
+    def openViewerUrl(self, url):
+        """可能なら独立アプリ窓でビューアURLを開き、失敗時は既定ブラウザへ渡す。"""
+        self.loadViewerDefaults()
+        if getattr(self, "viewer_browser_app_window", True):
+            browser = self.browserAppCommand()
+            if browser:
+                if QProcess.startDetached(browser, [f"--app={url}"]):
+                    return True
+        return QtGui.QDesktopServices.openUrl(QUrl(url))
 
     def viewerHealth(self, timeout=0.4):
         """ローカル360Viewerが応答しているかHTTP health APIで確認する。"""
@@ -325,10 +370,15 @@ class ViewerControllerMixin:
         """ビューア応答を待ってからブラウザを開く。起動直後の遅延を吸収する。"""
         if self.viewerHealth(timeout=0.25):
             opens_viewer_page = frame_num is not None and bool(self.video_file)
-            if opens_viewer_page:
-                self.postViewerNavigation(frame_num)
+            if not opens_viewer_page:
+                self.iface.messageBar().pushMessage(
+                    PLUGIN_TITLE,
+                    f"360Viewer is running: {self.viewerBaseUrl()}"
+                )
+                return
+            self.postViewerNavigation(frame_num)
             url = self.viewerUrl(frame_num)
-            QtGui.QDesktopServices.openUrl(QUrl(url))
+            self.openViewerUrl(url)
             self.viewer_browser_opened = opens_viewer_page
             self.iface.messageBar().pushMessage(PLUGIN_TITLE, f"360Viewer opened: {url}")
             return
@@ -355,6 +405,29 @@ class ViewerControllerMixin:
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:
             payload["radar"] = radar_payload
+        targets_payload = []
+        target_payload_getter = getattr(self, "viewerTargetsForFrame", None)
+        if callable(target_payload_getter):
+            try:
+                targets_payload = target_payload_getter(frame_num)
+            except Exception as e:
+                print(f"360Viewer target restore payload failed: {e}")
+        if targets_payload:
+            payload["targets"] = targets_payload
+        try:
+            nav_mode = self.nav_mode.currentData() if getattr(self, "nav_mode", None) is not None else None
+        except Exception:
+            nav_mode = None
+        if nav_mode == "picked":
+            view_getter = getattr(self, "viewerViewForPickedFrame", None)
+            if callable(view_getter):
+                try:
+                    picked_view = view_getter(frame_num)
+                except Exception as e:
+                    print(f"360Viewer picked view restore failed: {e}")
+                    picked_view = None
+                if picked_view:
+                    payload.update(picked_view)
         data = json.dumps(payload).encode("utf-8")
         request = Request(
             f"{self.viewerBaseUrl()}/api/session/navigate",

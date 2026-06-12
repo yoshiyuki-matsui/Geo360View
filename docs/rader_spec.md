@@ -77,6 +77,7 @@ WEBビューアは `viewer_session.json` へ現在状態を書き出します。
 - `viewer_camera_height_m`
 - `radar`
 - `target`
+- `targets`
 - `updated_at`
 
 QGIS側はこのJSONを500ms間隔でポーリングします。
@@ -97,7 +98,7 @@ radar.max_zoom_multiplier
 
 ブラウザ側の視点更新POSTでは、同一フレームの `radar` 値を維持します。
 
-360ビューア上で画像をクリックした場合、`target` にはクリック点の投影補助値が入ります。
+360ビューア上で画像をクリックした場合、`target` にはクリック点の投影補助値が入ります。ダブルクリックした場合は、クリック順の複数点として `targets` 配列にも追加します。`target` は互換用に最後の選択点を保持します。
 
 ```text
 target.x_ratio
@@ -105,13 +106,16 @@ target.y_ratio
 target.yaw_delta_deg
 target.pitch_delta_deg
 target.target_yaw_to_camera_heading
+target.target_pitch_deg
 target.view_yaw_to_camera_heading
 target.view_pitch
 target.view_zoom
 target.projection
 ```
 
-`target_yaw_to_camera_heading` は、動画正面を基準にしたクリック点の絶対yawです。`yaw_delta_deg` は、クリック時点のビューア中心から見た相対yawです。クリック後にビューア視点を動かしても、地図投影点が一緒に回らないよう、クリック時点の絶対yawとview条件を保存します。
+`targets` の各要素も同じ値を持ち、追加で `id` と `order` を持ちます。`id` / `order` はダブルクリックした順番の管理用です。
+
+`target_yaw_to_camera_heading` は、動画正面を基準にしたクリック点の絶対yawです。`target_pitch_deg` は、クリック点の360球面上の絶対pitchです。`yaw_delta_deg` は、クリック時点のビューア中心から見た相対yawです。クリック後にビューア視点を動かしても、地図投影点が一緒に回らないよう、クリック時点の絶対yaw/pitchとview条件を保存します。
 
 ## UIパラメータ
 
@@ -362,6 +366,12 @@ QGIS上の描画は `QgsRubberBand` による一時描画です。レイヤと�
 angle = 0, 8, 16, ..., 360
 ```
 
+### 1m補助グリッド
+
+WEBビューア上の1m破線補助グリッドと同じ距離目安として、QGIS地図上にも1m間隔の補助円を一時描画します。内側円 `Range` と外側円 `Range * 2` は主円として強調するため、補助円からは除外します。
+
+補助円はレーダ表示の一部として扱い、主円と同じタイミングで表示/消去します。個別のON/OFFは持たせません。
+
 ### 扇形
 
 中心点を撮影点とし、`viewer_bearing ± fov / 2` の範囲を、校正距離から求めた `sector_radius_m` まで伸ばします。
@@ -401,7 +411,17 @@ WEBビューアは、QGIS側から渡された `radar` 補助値と `viewer_came
 
 このHUDは単眼360画像から距離を厳密に復元するものではありません。QGIS地図上の先端垂線と、WEBビューア上の距離線が同じ「現在見ている方向の目安」を示していればよいという扱いです。ユーザは主円と1m補助グリッドの比較から、目測で地物までの距離感を判断します。
 
-HUD表示はWEBビューアの `HUD` ボタンで切り替えます。1m補助グリッドだけを隠したい場合は `Grid` ボタンで切り替えます。
+HUD表示はWEBビューアの `HUD` ボタンで切り替えます。`HUD` OFF時は主円、1m補助グリッド、校正距離線をまとめて非表示にします。
+
+### 1m補助グリッドの意図
+
+1m補助グリッドは、`Range` 主円だけでは読みにくい「この辺」という距離感を、WEBビューア上で目視しやすくするための補助表示です。`Range=5m` の場合は主円を5m/10mとして強調し、1m、2m、3m、4m、6m、7m、8m、9mを破線で薄く表示します。`Range=10m` の場合も主円は10m/20mで、補助線は1m間隔のままです。
+
+この表示は、標識板、人物の胴体、壁面、電線など高さを持つ対象物の距離を測るものではありません。地表面上の点、たとえば人や標識柱の足元、路面標示、縁石、マンホールなどと比較して使います。高さを持つ対象物を見る場合は、その対象物の地表面上の接地点または根元を基準にします。
+
+実装上は、地表面上の円を360画像へ投影するため、krpanoが利用できる場合は `spacetosphere` と `spheretoscreen` による座標変換を優先します。これにより、WEBビューアでpitchやyawを変えた時の見え方をkrpano本体の球面投影へ寄せます。krpanoがないフォールバック表示では、従来の近似透視投影を使います。
+
+線の色、太さ、破線間隔は成果物データではなく見た目の調整値です。運用中の視認性調整は `360viewer/static/viewer.css` の `.ground-ring-grid`, `.ground-ring-inner`, `.ground-ring-outer` で行います。
 
 ## 360クリック点の平面投影
 
@@ -409,9 +429,12 @@ WEBビューア上のクリック点を、撮影中心から見た地図平面�
 
 現時点のPoCでは、クリック点を「クリック時の視線方向に垂直な平面」へ投影します。単眼360画像から対象物までの実距離を自動復元するものではなく、人間が校正した中心距離を使う補助投影です。
 
+単クリックは従来互換の単一 `target` を更新します。ダブルクリックは複数メモ点として `targets` に追加し、QGIS側は `targets` がある場合に全点を緑の仮点・仮線として描画します。`targets` がない場合だけ、従来の単一 `target` を描画します。WEBビューア上のマーカーは保存時の画面座標ではなく、保存した絶対yaw/pitchを現在視点へ再投影して表示します。
+
 クリック時に保存する主な値:
 
 - `target_yaw_to_camera_heading`: 動画正面からクリック点までの絶対yaw
+- `target_pitch_deg`: クリック点の360球面上の絶対pitch
 - `view_yaw_to_camera_heading`: クリック時のビューア中心yaw
 - `yaw_delta_deg`: クリック点の中心視線からの相対yaw
 - `view_zoom`: クリック時のzoom
@@ -435,7 +458,65 @@ target_distance_m = forward_distance_m / cos(yaw_delta_deg)
 target_bearing = (heading + Offset + target_yaw_to_camera_heading) % 360
 ```
 
-最後に、撮影点から `target_bearing` 方向へ `target_distance_m` だけ方位距離投影し、QGIS上に一時RubberBandとして線と点を描きます。
+最後に、撮影点から `target_bearing` 方向へ `target_distance_m` だけ方位距離投影し、QGIS上に一時RubberBandとして線と点を描きます。複数点の場合は、それぞれのクリック点について同じ計算を行い、1つのMultiLine/MultiPoint RubberBandとしてまとめて描画します。
+
+### クリック投影点の保存レイヤ
+
+QGIS側は、WEBビューアの `targets` を読んで地図平面へ投影できた点を、`360 Click Targets` という自前のメモリポイントレイヤへ追記します。このレイヤは「この辺にこれがあった」という作業メモの保存先であり、最終的な地物台帳レイヤではありません。単クリックの `target` は互換用の一時表示として扱い、保存対象にはしません。
+
+現在の `viewer_session.json` にあるダブルクリック点を、QGIS側ポーリング時に地図平面へ投影し、緯度経度geometryと属性テーブルへ保存します。
+
+同一 `video` / `frame` / `target_id` の点は重複登録しません。視点移動によって `viewer_session.json` が更新された場合でも、既に登録済みのクリック点は増殖しない扱いです。
+
+主な属性:
+
+- `video`, `frame`, `target_id`, `target_order`
+- `latitude`, `longitude`
+- `distance_m`, `forward_m`, `bearing_deg`
+- `yaw_delta`, `target_yaw`, `target_pitch`
+- `view_yaw`, `view_pitch`, `view_zoom`
+- `source_lat`, `source_lon`
+- `projection`, `created_at`
+
+セッション終了時は、既存の生成メモリレイヤと同じく `tmp.gpkg` へ保存します。GeoPackage内では、撮影点レイヤを `video_gpx_points`、クリック点レイヤを `click_targets_360` という固定レイヤ名で保存します。`tmp.gpkg` は退避ファイル名であり、内部レイヤ名には使いません。
+
+### クリック投影点の復元表示
+
+QGIS側でフレームを表示する際、`360 Click Targets` または読み戻した `click_targets_360` 相当レイヤに同じ `video` / `frame` のレコードがあれば、保存済み属性から `targets` を再構成してWEBビューアへ渡します。WEBビューアのPrev/Nextだけでフレーム移動した場合も、QGIS側ポーリング時に現在sessionへ点が無ければ同じ復元処理で `viewer_session.json` へ補完します。
+
+復元参照先は、プロジェクト上の全レイヤをスキーマだけで無条件に拾うのではなく、以下に限定します。
+
+- 現在セッションで作成した自前メモリレイヤ `360 Click Targets`
+- 現在動画の出力フォルダにある `tmp.gpkg` の `click_targets_360`
+- レイヤ名またはsourceが `click_targets_360` 相当で、かつ `video` 属性が現在のMP4名と一致するレイヤ
+
+新規クリック点の書き込み先は自前メモリレイヤのみです。読み戻したGPKGレイヤへ直接追記しないことで、復元参照用レイヤと作業中の一時レイヤを混同しないようにします。
+
+復元に使う主な属性:
+
+- `target_id`, `target_order`
+- `target_yaw`, `target_pitch`
+- `view_yaw`, `view_pitch`, `view_zoom`
+- `yaw_delta`, `projection`
+
+WEBビューア側は、保存時の画面座標ではなく `target_yaw` / `target_pitch` を現在の視点へ再投影してマーカーを表示します。この復元は「どの画像上のどの方向へ点を置いたか」を確認するための作業継続表示であり、厳密な画像計測結果の再現ではありません。
+
+### GPKGからの作業状態読込
+
+パネルのGPKG読込では、GeoPackage内の `video_gpx_points` と `click_targets_360` を直接編集せず、標準のメモリレイヤへコピーします。
+
+- `video_gpx_points` -> `Video GPX Points`
+- `click_targets_360` -> `360 Click Targets`
+
+読込後は、プラグイン内部のフレーム参照レイヤを読み込んだ `Video GPX Points` へ、クリック点保存レイヤを読み込んだ `360 Click Targets` へ差し替えます。作業中の追加クリック点もメモリレイヤへ追記し、終了時に `tmp.gpkg` の同じ内部レイヤ名へ保存します。
+
+`tmp.gpkg` にはプラグイン専用のジョブメタデータテーブル `gpx_video_processor_job_metadata` も保存します。ここには、元MP4、元GPX、KP CSV、`Shift`、`KP tol`、`Range`、`Scale`、`Offset`、`CalFOV`、`CalDist`、`CamH` など、作業状態の復元と由来確認に必要な値をkey/valueとして記録します。MP4はビューア表示に実体が必要なため、読込時にファイルが存在する場合だけパネルへ復元します。GPXとKP CSVは、同期済み座標やKP結果がすでにGPKG内にあるため、ファイルが存在しなくても由来の参照情報としてパネルへ復元します。
+
+GPKG読込後は復元作業モードとして扱い、GPX/MP4/KP/Outputの再選択、`Shift`、`KP tol`、`全件処理`、別GPKG読込を無効化します。撮影条件や入力データを差し替える場合は段取り替えとして一度セッションを終了します。
+
+クリック点があるGPKGを読んだ場合、ナビゲーションモードは `Picked point` を既定にします。このモードでは `360 Click Targets` の `frame` だけを前後移動し、ブックマークのように地物を置いたフレームだけを見直せます。移動時は現在ユーザが見ている視点ではなく、保存済みの `view_yaw` / `view_pitch` / `view_zoom` を再現します。同一フレームに複数点がある場合は、クリック順で最後の点を代表視点として使います。
+
+この段階ではGPKGを本体DBとして直接編集するのではなく、GPKGは作業状態の読込元・終了時バックアップ先として扱います。
 
 この投影は以下の検証用です。
 
