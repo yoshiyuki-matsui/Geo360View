@@ -750,8 +750,8 @@
     });
   }
 
-  function currentSessionState() {
-    const current = Object.assign({}, readKrpanoView() || state);
+  function currentSessionState(sourceState) {
+    const current = Object.assign({}, sourceState || readKrpanoView() || state);
     current.viewer_camera_height_m = viewerCameraHeightM;
     if (state.target) {
       current.target = state.target;
@@ -1022,14 +1022,13 @@
       return false;
     }
 
-    const currentView = readKrpanoView() || state;
-    const inheritedView = normalizedView(currentView);
+    const requestedView = normalizedView(nextState);
     const nextRadar = nextState.radar && typeof nextState.radar === "object" ? nextState.radar : null;
     const nextTargets = Array.isArray(nextState.targets) ? nextState.targets : [];
     const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
     updateCameraHeight(nextState.viewer_camera_height_m === undefined ? viewerCameraHeightM : nextState.viewer_camera_height_m);
 
-    Object.assign(state, nextState, inheritedView, {
+    Object.assign(state, nextState, requestedView, {
       video: nextVideo,
       frame_index: nextFrame
     });
@@ -1038,7 +1037,7 @@
     state.target = nextTarget || (nextTargets.length ? nextTargets[nextTargets.length - 1] : null);
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
-    postViewerState(true);
+    postViewerState(true, state);
     refreshNavigation(nextVideo, nextFrame);
 
     const nextFrameUrl = frameImageUrl(nextVideo, nextFrame);
@@ -1051,14 +1050,14 @@
     }
 
     krpanoImageLoaded = false;
-    const sceneUrl = krpanoSceneUrl(nextVideo, nextFrame, inheritedView);
+    const sceneUrl = krpanoSceneUrl(nextVideo, nextFrame, requestedView);
     logDebug(`krpano loadpano ${sceneUrl}`);
-    krpano.call(`loadpano("${sceneUrl}", null, MERGE|KEEPVIEW, BLEND(0.2));`);
+    krpano.call(`loadpano("${sceneUrl}", null, MERGE, BLEND(0.2));`);
     return true;
   }
 
-  async function postViewerState(immediate) {
-    const current = currentSessionState();
+  async function postViewerState(immediate, sourceState) {
+    const current = currentSessionState(sourceState);
     updateReadout(current);
 
     if (!immediate && sameState(current, lastPosted)) {
@@ -1152,7 +1151,7 @@
     updateGroundRings(readKrpanoView() || state);
     if (!sameFrame(session, state)) {
       if (!loadFrameInPlace(session)) {
-        window.location.href = viewerUrl(session.video, session.frame_index, readKrpanoView() || state);
+        window.location.href = viewerUrl(session.video, session.frame_index, session);
       }
     }
   }

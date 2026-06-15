@@ -131,7 +131,7 @@ http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_headin
 
 When view parameters are specified, the viewer uses them for the initial krpano view. When they are omitted, the viewer restores `yaw_to_camera_heading`, `pitch`, and `zoom` from the session file.
 
-When another frame is loaded through browser navigation or QGIS navigation, the viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` into the new frame.
+When another frame is loaded through browser navigation, the viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` into the new frame. When QGIS navigation provides explicit view values, such as `Picked point` restore, those values are applied instead.
 
 ## Endpoints
 
