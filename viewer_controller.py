@@ -105,6 +105,7 @@ class ViewerControllerMixin:
             "viewer_max_width": viewer_config.max_width,
             "viewer_cache_dir": viewer_config.cache_dir,
             "viewer_camera_height_m": viewer_config.camera_height_m,
+            "viewer_hud_height_scale": viewer_config.hud_height_scale,
         }
 
         try:
@@ -135,6 +136,7 @@ class ViewerControllerMixin:
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
+            "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
         })
         return f"{base_url}/viewer?{query}"
 
@@ -401,6 +403,7 @@ class ViewerControllerMixin:
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
+            "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
         }
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:

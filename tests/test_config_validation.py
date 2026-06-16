@@ -124,12 +124,14 @@ class ConfigValidationTests(unittest.TestCase):
             "progressive_jpeg": True,
             "max_width": 3072,
             "camera_height_m": 1.5,
+            "hud_height_scale": 1.3,
         })
 
         self.assertEqual(errors, [])
         self.assertIsNotNone(result)
         self.assertEqual(result.port, 8181)
         self.assertEqual(result.camera_height_m, 1.5)
+        self.assertEqual(result.hud_height_scale, 1.3)
 
     def test_viewer_config_rejects_bad_port_and_quality(self):
         """HTTP portとJPEG品質の範囲外値を拒否する。"""
@@ -144,6 +146,7 @@ class ConfigValidationTests(unittest.TestCase):
             "progressive_jpeg": True,
             "max_width": -1,
             "camera_height_m": 0,
+            "hud_height_scale": 0,
         })
 
         self.assertIsNone(result)
@@ -151,6 +154,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("Viewer JPEG quality must be between 1 and 100.", errors)
         self.assertIn("Viewer maximum width must be greater than or equal to 0.", errors)
         self.assertIn("Viewer camera height must be between 0.1 and 20.0 m.", errors)
+        self.assertIn("Viewer HUD height scale must be between 0.1 and 5.0.", errors)
 
 
 if __name__ == "__main__":

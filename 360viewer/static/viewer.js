@@ -56,6 +56,7 @@
   const hudOuterRing = radarHud ? radarHud.querySelector(".hud-ring-outer") : null;
   const hudPoints = radarHud ? Array.from(radarHud.querySelectorAll(".hud-point")) : [];
   let viewerCameraHeightM = normalizeCameraHeight(state.viewer_camera_height_m);
+  let viewerHudHeightScale = normalizeHudHeightScale(state.viewer_hud_height_scale);
   if (!Array.isArray(state.targets)) {
     state.targets = [];
   }
@@ -111,9 +112,26 @@
     return clamp(numeric, 0.1, 20.0);
   }
 
+  function normalizeHudHeightScale(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 1.0;
+    }
+    return clamp(numeric, 0.1, 5.0);
+  }
+
   function updateCameraHeight(value) {
     viewerCameraHeightM = normalizeCameraHeight(value);
     state.viewer_camera_height_m = viewerCameraHeightM;
+  }
+
+  function updateHudHeightScale(value) {
+    viewerHudHeightScale = normalizeHudHeightScale(value);
+    state.viewer_hud_height_scale = viewerHudHeightScale;
+  }
+
+  function effectiveHudCameraHeightM() {
+    return viewerCameraHeightM * viewerHudHeightScale;
   }
 
   function normalizedView(source) {
@@ -140,7 +158,8 @@
       yaw_to_camera_heading: yaw,
       pitch: normalizePitch(pitch),
       zoom: normalizeZoom(zoom),
-      viewer_camera_height_m: viewerCameraHeightM
+      viewer_camera_height_m: viewerCameraHeightM,
+      viewer_hud_height_scale: viewerHudHeightScale
     };
   }
 
@@ -221,11 +240,12 @@
     if (!stageRect.width || !stageRect.height) {
       return;
     }
+    const hudCameraHeightM = effectiveHudCameraHeightM();
     const samples = [
-      ["front5", { x: 0, y: -viewerCameraHeightM, z: 5 }],
-      ["right5", { x: 5, y: -viewerCameraHeightM, z: 0 }],
-      ["back5", { x: 0, y: -viewerCameraHeightM, z: -5 }],
-      ["left5", { x: -5, y: -viewerCameraHeightM, z: 0 }]
+      ["front5", { x: 0, y: -hudCameraHeightM, z: 5 }],
+      ["right5", { x: 5, y: -hudCameraHeightM, z: 0 }],
+      ["back5", { x: 0, y: -hudCameraHeightM, z: -5 }],
+      ["left5", { x: -5, y: -hudCameraHeightM, z: 0 }]
     ];
     const yaw = normalizeYaw(viewState.yaw_to_camera_heading);
     const pitch = normalizePitch(viewState.pitch);
@@ -415,12 +435,13 @@
     }
     const segments = [];
     let currentSegment = [];
+    const hudCameraHeightM = effectiveHudCameraHeightM();
     for (let index = 0; index <= sampleCount; index += 1) {
       const fraction = index / sampleCount;
       const azimuth = fraction * Math.PI * 2;
       const point = {
         x: Math.sin(azimuth) * radiusM,
-        y: -viewerCameraHeightM,
+        y: -hudCameraHeightM,
         z: Math.cos(azimuth) * radiusM
       };
       const projected = projectGroundPoint(point, viewState, stageRect);
@@ -443,6 +464,82 @@
       const command = pointIndex === 0 ? "M" : "L";
       return `${command} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
     }).join(" ")).join(" ");
+  }
+
+  function groundPointForDistance(distanceM, targetYaw) {
+    const yawRadians = normalizeYaw(targetYaw) * Math.PI / 180;
+    return {
+      x: Math.sin(yawRadians) * distanceM,
+      y: -effectiveHudCameraHeightM(),
+      z: Math.cos(yawRadians) * distanceM
+    };
+  }
+
+  function maxGroundEstimateDistanceM() {
+    const radar = state.radar || {};
+    const candidates = [
+      Number(radar.outer_range_m),
+      Number(radar.range_m) * 2,
+      Number(radar.calibration_distance_m) * 2,
+      20
+    ].filter((value) => Number.isFinite(value) && value > 0);
+    return clamp(Math.max.apply(null, candidates), 5, 200);
+  }
+
+  function estimateGroundDistanceFromScreen(targetYaw, screenX, screenY, viewState, stageRect) {
+    if (!stageRect || !stageRect.width || !stageRect.height) {
+      return null;
+    }
+    const maxDistanceM = maxGroundEstimateDistanceM();
+    const minDistanceM = 0.05;
+    const coarseSamples = 360;
+    const coarseStepM = (maxDistanceM - minDistanceM) / coarseSamples;
+    let bestDistanceM = null;
+    let bestErrorSq = Number.POSITIVE_INFINITY;
+
+    function measure(distanceM) {
+      const point = groundPointForDistance(distanceM, targetYaw);
+      const projected = projectGroundPoint(point, viewState, stageRect);
+      if (!projected) {
+        return;
+      }
+      const dx = projected.x - screenX;
+      const dy = projected.y - screenY;
+      const errorSq = dx * dx + dy * dy;
+      if (errorSq < bestErrorSq) {
+        bestErrorSq = errorSq;
+        bestDistanceM = distanceM;
+      }
+    }
+
+    for (let index = 0; index <= coarseSamples; index += 1) {
+      measure(minDistanceM + coarseStepM * index);
+    }
+    if (bestDistanceM === null) {
+      return null;
+    }
+
+    const refineStartM = Math.max(minDistanceM, bestDistanceM - coarseStepM);
+    const refineEndM = Math.min(maxDistanceM, bestDistanceM + coarseStepM);
+    const refineSamples = 40;
+    const refineStepM = (refineEndM - refineStartM) / refineSamples;
+    for (let index = 0; index <= refineSamples; index += 1) {
+      measure(refineStartM + refineStepM * index);
+    }
+
+    const maxErrorPx = Math.max(80, Math.min(stageRect.width, stageRect.height) * 0.12);
+    if (bestErrorSq > maxErrorPx * maxErrorPx) {
+      return null;
+    }
+    return bestDistanceM;
+  }
+
+  function attachGroundDistance(target, targetYaw, screenX, screenY, viewState, stageRect) {
+    const groundDistanceM = estimateGroundDistanceFromScreen(targetYaw, screenX, screenY, viewState, stageRect);
+    if (Number.isFinite(groundDistanceM) && groundDistanceM > 0) {
+      target.ground_distance_m = Number(groundDistanceM.toFixed(3));
+    }
+    return target;
   }
 
   function sameGridRadius(left, right) {
@@ -753,6 +850,7 @@
   function currentSessionState(sourceState) {
     const current = Object.assign({}, sourceState || readKrpanoView() || state);
     current.viewer_camera_height_m = viewerCameraHeightM;
+    current.viewer_hud_height_scale = viewerHudHeightScale;
     if (state.target) {
       current.target = state.target;
     }
@@ -774,11 +872,13 @@
 
     const xRatio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const yRatio = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
     const current = readKrpanoView() || state;
     const zoom = normalizeZoom(current.zoom);
     const krpanoSphere = screenClickSphere(event, rect, current);
     if (krpanoSphere) {
-      return {
+      return attachGroundDistance({
         x_ratio: xRatio,
         y_ratio: yRatio,
         yaw_delta_deg: krpanoSphere.yawDeltaDeg,
@@ -788,8 +888,8 @@
         view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
         view_pitch: normalizePitch(current.pitch),
         view_zoom: zoom,
-        projection: "center_plane"
-      };
+        projection: "ground_plane"
+      }, krpanoSphere.targetYaw, screenX, screenY, current, rect);
     }
 
     const horizontalFovDeg = clamp(90 / zoom, 1, 179);
@@ -805,7 +905,7 @@
     const targetYaw = normalizeYaw(Number(current.yaw_to_camera_heading) + yawDeltaDeg);
     const targetPitch = normalizePitch(Number(current.pitch) + pitchDeltaDeg);
 
-    return {
+    return attachGroundDistance({
       x_ratio: xRatio,
       y_ratio: yRatio,
       yaw_delta_deg: normalizeSignedYaw(yawDeltaDeg),
@@ -815,8 +915,8 @@
       view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
       view_pitch: normalizePitch(current.pitch),
       view_zoom: zoom,
-      projection: "center_plane"
-    };
+      projection: "ground_plane"
+    }, targetYaw, screenX, screenY, current, rect);
   }
 
   function screenClickSphere(event, stageRect, viewState) {
@@ -1027,6 +1127,7 @@
     const nextTargets = Array.isArray(nextState.targets) ? nextState.targets : [];
     const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
     updateCameraHeight(nextState.viewer_camera_height_m === undefined ? viewerCameraHeightM : nextState.viewer_camera_height_m);
+    updateHudHeightScale(nextState.viewer_hud_height_scale === undefined ? viewerHudHeightScale : nextState.viewer_hud_height_scale);
 
     Object.assign(state, nextState, requestedView, {
       video: nextVideo,

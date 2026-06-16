@@ -29,6 +29,9 @@ DEFAULT_VIEW = {
 DEFAULT_CAMERA_HEIGHT_M = 1.5
 MIN_CAMERA_HEIGHT_M = 0.1
 MAX_CAMERA_HEIGHT_M = 20.0
+DEFAULT_HUD_HEIGHT_SCALE = 1.0
+MIN_HUD_HEIGHT_SCALE = 0.1
+MAX_HUD_HEIGHT_SCALE = 5.0
 MAX_VIEWER_TARGETS = 100
 
 
@@ -58,6 +61,17 @@ def normalize_camera_height(value: Any, default: float = DEFAULT_CAMERA_HEIGHT_M
     return max(MIN_CAMERA_HEIGHT_M, min(MAX_CAMERA_HEIGHT_M, numeric))
 
 
+def normalize_hud_height_scale(value: Any, default: float = DEFAULT_HUD_HEIGHT_SCALE) -> float:
+    """地面範囲円だけに使うカメラ高倍率を安全な範囲へ正規化する。"""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = float(default)
+    if not math.isfinite(numeric):
+        numeric = float(default)
+    return max(MIN_HUD_HEIGHT_SCALE, min(MAX_HUD_HEIGHT_SCALE, numeric))
+
+
 def load_config() -> dict[str, Any]:
     """viewer_config JSONを読み、パスと画質設定を正規化して返す。"""
     if not CONFIG_PATH.is_file():
@@ -79,12 +93,21 @@ def load_config() -> dict[str, Any]:
         "viewer_max_width": max(0, int(raw.get("viewer_max_width", 3072))),
         "viewer_cache_dir": viewer_cache_dir,
         "viewer_camera_height_m": normalize_camera_height(raw.get("viewer_camera_height_m")),
+        "viewer_hud_height_scale": normalize_hud_height_scale(raw.get("viewer_hud_height_scale")),
     }
 
 
 def resolve_config_path(value: str) -> Path:
     """設定内の相対パスを360viewerディレクトリ基準の絶対パスへ解決する。"""
-    path = Path(value)
+    raw_value = str(value or "")
+    windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw_value)
+    if windows_match and os.name != "nt":
+        drive = windows_match.group(1).lower()
+        rest = windows_match.group(2).replace("\\", "/")
+        path = Path("/mnt") / drive / rest
+        return path.resolve()
+
+    path = Path(raw_value)
     if not path.is_absolute():
         path = BASE_DIR / path
     return path.resolve()
@@ -278,6 +301,10 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
         state.get("viewer_camera_height_m"),
         cfg["viewer_camera_height_m"],
     )
+    state["viewer_hud_height_scale"] = normalize_hud_height_scale(
+        state.get("viewer_hud_height_scale"),
+        cfg["viewer_hud_height_scale"],
+    )
     state["updated_at"] = now_iso()
 
     # QGIS側ポーリングが途中書き込みを読まないよう、一時ファイルから置換する。
@@ -298,6 +325,10 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
         query_value(query, "viewer_camera_height_m", session.get("viewer_camera_height_m")),
         cfg["viewer_camera_height_m"],
     )
+    hud_height_scale = normalize_hud_height_scale(
+        query_value(query, "viewer_hud_height_scale", session.get("viewer_hud_height_scale")),
+        cfg["viewer_hud_height_scale"],
+    )
 
     return {
         "video": video,
@@ -306,6 +337,7 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
         "pitch": view["pitch"],
         "zoom": view["zoom"],
         "viewer_camera_height_m": camera_height,
+        "viewer_hud_height_scale": hud_height_scale,
     }
 
 
@@ -322,6 +354,10 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "viewer_camera_height_m": normalize_camera_height(
             payload.get("viewer_camera_height_m"),
             load_config()["viewer_camera_height_m"],
+        ),
+        "viewer_hud_height_scale": normalize_hud_height_scale(
+            payload.get("viewer_hud_height_scale"),
+            load_config()["viewer_hud_height_scale"],
         ),
     }
     target = validate_target_payload(payload.get("target"))
@@ -358,9 +394,22 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
     except ApiError:
         return None
 
-    projection = str(payload.get("projection") or "center_plane")
-    if projection not in {"center_plane", "constant_distance"}:
-        projection = "center_plane"
+    projection = str(payload.get("projection") or "ground_plane")
+    if projection not in {"ground_plane", "center_plane", "constant_distance"}:
+        projection = "ground_plane"
+
+    quality = str(payload.get("quality") or "")
+    if quality not in {"trusted", "usable", "far"}:
+        quality = ""
+
+    ground_distance_m = None
+    if payload.get("ground_distance_m") is not None:
+        try:
+            parsed_ground_distance_m = parse_float(payload.get("ground_distance_m"), "target.ground_distance_m")
+            if math.isfinite(parsed_ground_distance_m) and parsed_ground_distance_m > 0:
+                ground_distance_m = max(0.01, min(1000.0, parsed_ground_distance_m))
+        except ApiError:
+            ground_distance_m = None
 
     target = {
         "x_ratio": x_ratio,
@@ -374,6 +423,10 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         "view_zoom": view_zoom,
         "projection": projection,
     }
+    if ground_distance_m is not None:
+        target["ground_distance_m"] = ground_distance_m
+    if quality:
+        target["quality"] = quality
     try:
         target_id = int(payload.get("id"))
         if target_id > 0:
@@ -471,6 +524,10 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "viewer_camera_height_m": normalize_camera_height(
             payload.get("viewer_camera_height_m", session.get("viewer_camera_height_m")),
             load_config()["viewer_camera_height_m"],
+        ),
+        "viewer_hud_height_scale": normalize_hud_height_scale(
+            payload.get("viewer_hud_height_scale", session.get("viewer_hud_height_scale")),
+            load_config()["viewer_hud_height_scale"],
         ),
     }
     radar = validate_radar_payload(payload.get("radar"))
@@ -771,6 +828,15 @@ class ViewerHandler(BaseHTTPRequestHandler):
                         previous.get("viewer_camera_height_m"),
                         load_config()["viewer_camera_height_m"],
                     )
+                if (
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and "viewer_hud_height_scale" not in payload
+                    and previous.get("viewer_hud_height_scale") is not None
+                ):
+                    state["viewer_hud_height_scale"] = normalize_hud_height_scale(
+                        previous.get("viewer_hud_height_scale"),
+                        load_config()["viewer_hud_height_scale"],
+                    )
                 state = write_session(state)
                 self.send_json(state)
                 return
@@ -839,6 +905,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "video_exists": video_exists,
             "krpano_js_url": "/static/vendor/krpano/krpano.js",
             "viewer_camera_height_m": state["viewer_camera_height_m"],
+            "viewer_hud_height_scale": state["viewer_hud_height_scale"],
         }
 
         self.send_bytes(

@@ -8,6 +8,7 @@
   "viewer_max_width": 3072,
   "viewer_cache_dir": "viewer_cache",
   "viewer_camera_height_m": 1.5,
+  "viewer_hud_height_scale": 1.0,
   "viewer_browser_app_window": true,
   "viewer_browser_path": ""
 }

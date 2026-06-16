@@ -427,7 +427,7 @@ HUD表示はWEBビューアの `HUD` ボタンで切り替えます。`HUD` OFF�
 
 WEBビューア上のクリック点を、撮影中心から見た地図平面上の仮想点として描画できます。
 
-現時点のPoCでは、クリック点を「クリック時の視線方向に垂直な平面」へ投影します。単眼360画像から対象物までの実距離を自動復元するものではなく、人間が校正した中心距離を使う補助投影です。
+クリック点は、WEBビューア側でHUD範囲円と同じ地面投影から推定した `ground_distance_m` を優先して地図平面へ投影します。これは単眼360画像から任意対象物までの実距離を自動復元するものではなく、地表面上の点、たとえばコーン接地点、標識柱の根元、路面標示、縁石、マンホールなどをクリックする前提の補助投影です。`ground_distance_m` が無い古いセッションや、推定に失敗したクリックだけ、保存した球面pitchと `CamH * HudH` の実効カメラ高から地面平面との交点を求めます。pitchが水平線以上、または地面交差に使えない場合だけ、従来の中心距離平面投影へフォールバックします。
 
 単クリックは従来互換の単一 `target` を更新します。ダブルクリックは複数メモ点として `targets` に追加し、QGIS側は `targets` がある場合に全点を緑の仮点・仮線として描画します。`targets` がない場合だけ、従来の単一 `target` を描画します。WEBビューア上のマーカーは保存時の画面座標ではなく、保存した絶対yaw/pitchを現在視点へ再投影して表示します。
 
@@ -438,17 +438,26 @@ WEBビューア上のクリック点を、撮影中心から見た地図平面�
 - `view_yaw_to_camera_heading`: クリック時のビューア中心yaw
 - `yaw_delta_deg`: クリック点の中心視線からの相対yaw
 - `view_zoom`: クリック時のzoom
+- `ground_distance_m`: HUD範囲円と同じ投影から推定した撮影点からの水平距離
 
-QGIS側では、クリック時zoomからクリック時FOVを復元し、`CalFOV` / `CalDist` / `Scale` による中心前方距離を求めます。
+QGIS側では、通常はWEBビューアが送った `ground_distance_m` をそのまま撮影点からの水平距離として使います。
+
+```text
+target_distance_m = target.ground_distance_m
+```
+
+`ground_distance_m` が無い場合は、クリック点の絶対pitchから地面上の水平距離を求めます。
+
+```text
+effective_camera_height_m = CamH * HudH
+target_distance_m = effective_camera_height_m / tan(target_pitch_deg)
+```
+
+地面交差に使えないクリック点では、クリック時zoomからクリック時FOVを復元し、`CalFOV` / `CalDist` / `Scale` による中心前方距離へ戻します。クリック点が中心から `yaw_delta_deg` だけ左右にずれている場合、従来どおり視線に垂直な平面上の斜距離を求めます。
 
 ```text
 click_fov = 90 / target.view_zoom
 forward_distance_m = max(1.0, CalDist * Scale * tan(click_fov / 2) / tan(CalFOV / 2))
-```
-
-クリック点が中心から `yaw_delta_deg` だけ左右にずれている場合、視線に垂直な平面上の点として、撮影中心からクリック点までの斜距離を次のように求めます。
-
-```text
 target_distance_m = forward_distance_m / cos(yaw_delta_deg)
 ```
 
@@ -459,6 +468,8 @@ target_bearing = (heading + Offset + target_yaw_to_camera_heading) % 360
 ```
 
 最後に、撮影点から `target_bearing` 方向へ `target_distance_m` だけ方位距離投影し、QGIS上に一時RubberBandとして線と点を描きます。複数点の場合は、それぞれのクリック点について同じ計算を行い、1つのMultiLine/MultiPoint RubberBandとしてまとめて描画します。
+
+クリック点には距離帯による運用品質を付与します。5m以内は `trusted`、5m超から10m以内は `usable`、10m超は `far` です。オンザフライ表示では `trusted` を緑、`usable` を黄、`far` を赤系のRubberBandへ分けます。保存レイヤにも `quality` 属性として残します。
 
 ### クリック投影点の保存レイヤ
 
@@ -476,7 +487,7 @@ QGIS側は、WEBビューアの `targets` を読んで地図平面へ投影で�
 - `yaw_delta`, `target_yaw`, `target_pitch`
 - `view_yaw`, `view_pitch`, `view_zoom`
 - `source_lat`, `source_lon`
-- `projection`, `created_at`
+- `projection`, `quality`, `created_at`
 
 セッション終了時は、既存の生成メモリレイヤと同じく `tmp.gpkg` へ保存します。GeoPackage内では、撮影点レイヤを `video_gpx_points`、クリック点レイヤを `click_targets_360` という固定レイヤ名で保存します。`tmp.gpkg` は退避ファイル名であり、内部レイヤ名には使いません。
 

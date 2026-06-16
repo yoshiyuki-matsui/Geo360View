@@ -129,7 +129,7 @@ button:disabled {
 
 .ground-ring-grid {
   fill: none;
-  stroke: rgba(255, 238, 72, 0.5);
+  stroke: rgba(71, 71, 68, 0.973);
   stroke-dasharray: 2 8;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -142,7 +142,7 @@ button:disabled {
 }
 
 .ground-ring-inner {
-  stroke: rgba(255, 238, 114, 0.92);
+  stroke: rgba(247, 242, 1, 0.92);
 }
 
 .click-target-marker {

@@ -67,6 +67,7 @@ class ViewerConfig:
     progressive_jpeg: bool
     max_width: int
     camera_height_m: float
+    hud_height_scale: float
 
 
 def _text(value: Any) -> str:
@@ -273,6 +274,7 @@ def validate_viewer_config(raw: dict[str, Any]) -> tuple[ViewerConfig | None, li
     progressive_jpeg = bool(raw.get("progressive_jpeg", True))
     max_width = _int_value(raw.get("max_width", 3072), "Viewer maximum width", errors, 3072)
     camera_height_m = _float_value(raw.get("camera_height_m", 1.5), "Viewer camera height", errors, 1.5)
+    hud_height_scale = _float_value(raw.get("hud_height_scale", 1.0), "Viewer HUD height scale", errors, 1.0)
 
     if not host:
         errors.append("Viewer host is required.")
@@ -298,6 +300,8 @@ def validate_viewer_config(raw: dict[str, Any]) -> tuple[ViewerConfig | None, li
         errors.append("Viewer maximum width must be greater than or equal to 0.")
     if not 0.1 <= camera_height_m <= 20.0:
         errors.append("Viewer camera height must be between 0.1 and 20.0 m.")
+    if not 0.1 <= hud_height_scale <= 5.0:
+        errors.append("Viewer HUD height scale must be between 0.1 and 5.0.")
 
     if errors:
         return None, errors
@@ -311,4 +315,5 @@ def validate_viewer_config(raw: dict[str, Any]) -> tuple[ViewerConfig | None, li
         progressive_jpeg=progressive_jpeg,
         max_width=max_width,
         camera_height_m=camera_height_m,
+        hud_height_scale=hud_height_scale,
     ), []

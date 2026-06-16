@@ -90,6 +90,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_max_width = 3072
         self.viewer_camera_height_m = 1.5
         self.viewer_camera_height_dirty = False
+        self.viewer_hud_height_scale_value = 1.0
+        self.viewer_hud_height_scale_dirty = False
         self.created_layer_ids = []
         self.frame_layer_id = None
         self.target_layer_id = None
@@ -230,6 +232,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "progressive_jpeg": self.viewer_progressive_jpeg,
             "max_width": self.viewer_max_width,
             "camera_height_m": self.viewerCameraHeightValue(),
+            "hud_height_scale": self.viewerHudHeightScaleValue(),
         })
         if errors:
             if show_errors:
@@ -436,6 +439,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_camera_height.valueChanged.connect(self.onViewerCameraHeightChanged)
         self.applyHelp("ui.help.camera_height", self.viewer_camera_height_label, self.viewer_camera_height)
         set_fixed_width(self.viewer_camera_height, 78)
+        self.viewer_hud_height_scale_label = QLabel("HudH:")
+        self.viewer_hud_height_scale = QDoubleSpinBox()
+        self.viewer_hud_height_scale.setRange(0.1, 5.0)
+        self.viewer_hud_height_scale.setDecimals(2)
+        self.viewer_hud_height_scale.setSingleStep(0.05)
+        self.viewer_hud_height_scale.setValue(self.viewer_hud_height_scale_value)
+        self.viewer_hud_height_scale.setSuffix(" x")
+        self.viewer_hud_height_scale.valueChanged.connect(self.onViewerHudHeightScaleChanged)
+        self.applyHelp("ui.help.hud_height_scale", self.viewer_hud_height_scale_label, self.viewer_hud_height_scale)
+        set_fixed_width(self.viewer_hud_height_scale, 76)
         self.current_fov_label = QLabel("FOV: -")
         self.marker_distance_label = QLabel("Marker: -")
         self.target_projection_label = QLabel("Click: -")
@@ -554,6 +567,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.radar_scale,
             self.viewer_camera_height_label,
             self.viewer_camera_height,
+            self.viewer_hud_height_scale_label,
+            self.viewer_hud_height_scale,
             self.radar_offset_label,
             self.radar_offset,
             "stretch",
@@ -801,6 +816,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 self.setPathLabel(self.output_path, self.defaultOutputDir(), self.uiText("ui.path.default_output"))
             self.setViewerCameraHeightValue(1.5)
             self.viewer_camera_height_dirty = False
+            self.setViewerHudHeightScaleValue(1.0)
+            self.viewer_hud_height_scale_dirty = False
             self.loadViewerSessionCameraHeight()
             self.writeViewerRuntimeConfig(show_error=False)
 
@@ -939,12 +956,35 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         frame_num = self.currentFrameValue()
         self.displayFrame(frame_num, feature=self.findFeatureByFrame(frame_num))
 
+    def currentViewerFovFromSession(self):
+        """レーダ未描画時でもviewer_session.jsonのzoomから現在FOVを復元する。"""
+        path = self.viewerSessionPath()
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(state, dict):
+            return None
+        current_video = os.path.basename(self.video_file or "")
+        session_video = state.get("video")
+        if current_video and session_video and session_video != current_video:
+            return None
+        zoom = _parse_float(state.get("zoom"))
+        if zoom is None:
+            return None
+        return self.viewerFov({"zoom": zoom})
+
     def useCurrentFovForCalibration(self):
         """現在ビューアFOVを距離校正基準FOVへ反映する。"""
         fov = getattr(self, "current_viewer_fov", None)
         if fov is None:
-            self.notifyWarning("current_viewer_fov_unavailable")
-            return
+            fov = self.currentViewerFovFromSession()
+            if fov is None:
+                self.notifyWarning("current_viewer_fov_unavailable")
+                return
         self.radar_cal_fov.setValue(float(fov))
         self.notifyInfo("calibration_fov_set", fov=float(fov))
 
@@ -977,9 +1017,40 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 widget.blockSignals(previous_blocked)
         return True
 
+    def viewerHudHeightScaleValue(self):
+        """WEBビューア地面範囲円だけに使うカメラ高倍率を取得する。"""
+        widget = getattr(self, "viewer_hud_height_scale", None)
+        if widget is not None:
+            value = float(widget.value())
+        else:
+            value = float(getattr(self, "viewer_hud_height_scale_value", 1.0))
+        return max(0.1, min(5.0, value))
+
+    def setViewerHudHeightScaleValue(self, value, mark_dirty=False):
+        """セッション等から読んだHUD高さ倍率をUI状態へ安全に反映する。"""
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return False
+        numeric = max(0.1, min(5.0, numeric))
+        self.viewer_hud_height_scale_value = numeric
+        if mark_dirty:
+            self.viewer_hud_height_scale_dirty = True
+
+        widget = getattr(self, "viewer_hud_height_scale", None)
+        if widget is not None and abs(float(widget.value()) - numeric) > 0.0005:
+            previous_blocked = widget.blockSignals(True)
+            try:
+                widget.setValue(numeric)
+            finally:
+                widget.blockSignals(previous_blocked)
+        return True
+
     def loadViewerSessionCameraHeight(self, force=False):
         """既存viewer_session.jsonがあれば、ジョブ固有のカメラ高さを復元する。"""
-        if getattr(self, "viewer_camera_height_dirty", False) and not force:
+        camera_dirty = getattr(self, "viewer_camera_height_dirty", False)
+        hud_dirty = getattr(self, "viewer_hud_height_scale_dirty", False)
+        if camera_dirty and hud_dirty and not force:
             return False
         path = self.viewerSessionPath()
         if not os.path.isfile(path):
@@ -995,15 +1066,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         session_video = state.get("video")
         if current_video and session_video and session_video != current_video:
             return False
-        if "viewer_camera_height_m" not in state:
-            return False
-        restored = self.setViewerCameraHeightValue(state.get("viewer_camera_height_m"))
-        if restored:
+        restored_camera = False
+        restored_hud = False
+        if "viewer_camera_height_m" in state and (force or not camera_dirty):
+            restored_camera = self.setViewerCameraHeightValue(state.get("viewer_camera_height_m"))
+        if "viewer_hud_height_scale" in state and (force or not hud_dirty):
+            restored_hud = self.setViewerHudHeightScaleValue(state.get("viewer_hud_height_scale"))
+        if restored_camera:
             self.viewer_camera_height_dirty = False
-        return restored
+        if restored_hud:
+            self.viewer_hud_height_scale_dirty = False
+        return restored_camera or restored_hud
 
     def writeViewerCameraHeightSessionValue(self):
-        """動画選択済みならカメラ高さだけでもviewer_session.jsonへ成果物として残す。"""
+        """動画選択済みならカメラ高さとHUD補正だけでもviewer_session.jsonへ残す。"""
         if not self.video_file:
             return False
         path = self.viewerSessionPath()
@@ -1023,6 +1099,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         state["video"] = current_video
         state["viewer_camera_height_m"] = self.viewerCameraHeightValue()
+        state["viewer_hud_height_scale"] = self.viewerHudHeightScaleValue()
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
         try:
@@ -1055,6 +1132,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def onViewerCameraHeightChanged(self, _value):
         """カメラ高さ変更をランタイム設定と開いているビューアへ反映する。"""
         self.setViewerCameraHeightValue(self.viewerCameraHeightValue(), mark_dirty=True)
+        self.writeViewerRuntimeConfig(show_error=False)
+        self.writeViewerCameraHeightSessionValue()
+        if self.current_frame is not None and self.viewerHealth(timeout=0.15):
+            self.postViewerNavigation(self.current_frame)
+
+    def onViewerHudHeightScaleChanged(self, _value):
+        """HUD高さ倍率変更をランタイム設定と開いているビューアへ反映する。"""
+        self.setViewerHudHeightScaleValue(self.viewerHudHeightScaleValue(), mark_dirty=True)
         self.writeViewerRuntimeConfig(show_error=False)
         self.writeViewerCameraHeightSessionValue()
         if self.current_frame is not None and self.viewerHealth(timeout=0.15):
@@ -1236,6 +1321,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "radar_cal_dist_m": float(self.radar_cal_distance.value()),
             "radar_offset_deg": int(self.radar_offset.currentData() or 0),
             "viewer_camera_height_m": float(self.viewerCameraHeightValue()),
+            "viewer_hud_height_scale": float(self.viewerHudHeightScaleValue()),
             "nav_step": int(self.nav_step.value()),
             "nav_fast_step": int(self.nav_fast_step.value()),
             "follow_frame": bool(self.follow_frame_checkbox.isChecked()),
@@ -1320,6 +1406,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         if "viewer_camera_height_m" in metadata:
             self.setViewerCameraHeightValue(metadata.get("viewer_camera_height_m"))
+        if "viewer_hud_height_scale" in metadata:
+            self.setViewerHudHeightScaleValue(metadata.get("viewer_hud_height_scale"))
 
         if "follow_frame" in metadata:
             self.follow_frame_checkbox.setChecked(self.parseViewerBool(metadata.get("follow_frame")))
@@ -1440,7 +1528,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         first_frame = picked_frames[0] if picked_frames else self.firstFrameInLayer(frame_layer)
         self.setCurrentFrame(first_frame)
         self.setNavigationModeByData("picked" if picked_frames else "layer")
-        if "viewer_camera_height_m" not in job_metadata:
+        if "viewer_camera_height_m" not in job_metadata or "viewer_hud_height_scale" not in job_metadata:
             self.loadViewerSessionCameraHeight(force=True)
         self.writeViewerRuntimeConfig(show_error=False)
         if first_frame is not None and self.video_file:
@@ -1451,6 +1539,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "pitch": 0.0,
                 "zoom": 1.0,
                 "viewer_camera_height_m": self.viewerCameraHeightValue(),
+                "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
             }
             picked_view = self.viewerViewForPickedFrame(first_frame) if picked_frames else None
             if picked_view:
@@ -1474,14 +1563,30 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if self.target_layer_id:
             layer = project.mapLayer(self.target_layer_id)
             if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
+                self.ensureViewerTargetLayerFields(layer)
                 return layer
 
         for layer_id in reversed(self.created_layer_ids):
             layer = project.mapLayer(layer_id)
             if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
                 self.target_layer_id = layer.id()
+                self.ensureViewerTargetLayerFields(layer)
                 return layer
         return None
+
+    def ensureViewerTargetLayerFields(self, layer):
+        """クリック点レイヤの後方互換フィールドを補う。"""
+        if layer is None:
+            return False
+        fields = layer.fields()
+        missing_fields = []
+        if fields.indexFromName("quality") < 0:
+            missing_fields.append(QgsField("quality", QVariant.String))
+        if not missing_fields:
+            return False
+        layer.dataProvider().addAttributes(missing_fields)
+        layer.updateFields()
+        return True
 
     def ensureViewerTargetLayer(self):
         """360クリック投影点保存用のメモリレイヤを必要に応じて作成する。"""
@@ -1510,6 +1615,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             QgsField("source_lat", QVariant.Double),
             QgsField("source_lon", QVariant.Double),
             QgsField("projection", QVariant.String),
+            QgsField("quality", QVariant.String),
             QgsField("created_at", QVariant.String),
         ])
         layer.updateFields()
@@ -1653,9 +1759,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         target_order = self.targetFeatureFloat(feature, "target_order")
         target_id = int(target_id) if target_id is not None else int(fallback_order)
         target_order = int(target_order) if target_order is not None else target_id
-        projection = self.targetFeatureValue(feature, "projection") or "center_plane"
+        projection = self.targetFeatureValue(feature, "projection") or "ground_plane"
+        distance_m = self.targetFeatureFloat(feature, "distance_m")
+        quality = self.targetFeatureValue(feature, "quality")
 
-        return {
+        target = {
             "id": target_id,
             "order": target_order,
             "x_ratio": 0.5,
@@ -1669,6 +1777,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "view_zoom": max(0.01, float(view_zoom)),
             "projection": str(projection),
         }
+        if str(projection) == "ground_plane" and distance_m is not None and distance_m > 0:
+            target["ground_distance_m"] = float(distance_m)
+        if quality:
+            target["quality"] = str(quality)
+        return target
 
     def viewerTargetsForFrame(self, frame_num):
         """指定フレームに保存済みのクリック点をビューア復元用payloadとして返す。"""
@@ -1834,7 +1947,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "view_zoom": float(projection.get("view_zoom")) if projection.get("view_zoom") is not None else None,
                 "source_lat": float(source_lat),
                 "source_lon": float(source_lon),
-                "projection": str(projection.get("projection") or "center_plane"),
+                "projection": str(projection.get("projection") or "ground_plane"),
+                "quality": str(projection.get("quality") or ""),
                 "created_at": now_text,
             }
             feat.setAttributes([values.get(field.name()) for field in layer.fields()])

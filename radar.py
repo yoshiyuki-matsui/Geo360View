@@ -31,6 +31,9 @@ RADAR_MIN_ZOOM_DISTANCE_MULTIPLIER = 0.25
 RADAR_MAX_ZOOM_DISTANCE_MULTIPLIER = 8.0
 RADAR_GRID_STEP_M = 1.0
 RADAR_GRID_MAX_RINGS = 250
+RADAR_TARGET_TRUSTED_DISTANCE_M = 5.0
+RADAR_TARGET_USABLE_DISTANCE_M = 10.0
+RADAR_TARGET_QUALITY_ORDER = ("trusted", "usable", "far")
 
 
 class RadarMixin:
@@ -85,7 +88,9 @@ class RadarMixin:
                 target_item.get("id"),
                 round(_parse_float(target_item.get("target_yaw_to_camera_heading")) or 0.0, 3),
                 round(_parse_float(target_item.get("yaw_delta_deg")) or 0.0, 3),
+                round(_parse_float(target_item.get("target_pitch_deg")) or 0.0, 3),
                 round(_parse_float(target_item.get("view_zoom")) or 0.0, 3),
+                round(_parse_float(target_item.get("ground_distance_m")) or 0.0, 3),
             )
             for target_item in targets
             if isinstance(target_item, dict)
@@ -104,13 +109,17 @@ class RadarMixin:
             round(zoom or 1.0, 3),
             round(_parse_float(target.get("target_yaw_to_camera_heading")) or 0.0, 3),
             round(_parse_float(target.get("yaw_delta_deg")) or 0.0, 3),
+            round(_parse_float(target.get("target_pitch_deg")) or 0.0, 3),
             round(_parse_float(target.get("view_zoom")) or 0.0, 3),
+            round(_parse_float(target.get("ground_distance_m")) or 0.0, 3),
             targets_signature,
             round(range_m, 3),
             round(radar_config.scale, 3),
             round(radar_config.cal_fov_deg, 3),
             round(radar_config.cal_dist_m, 3),
             round(radar_config.offset_deg, 3),
+            round(_parse_float(state.get("viewer_camera_height_m")) or 0.0, 3),
+            round(_parse_float(state.get("viewer_hud_height_scale")) or 0.0, 3),
             state.get("updated_at"),
         )
         if signature == self.last_viewer_session_signature:
@@ -224,6 +233,17 @@ class RadarMixin:
         if marker_distance_label is not None:
             marker_distance_label.setText(f"Marker: {float(marker_distance_m):.1f}m")
 
+    def targetDistanceQuality(self, distance_m):
+        """クリック点距離から運用品質ラベルを返す。"""
+        distance = _parse_float(distance_m)
+        if distance is None:
+            return "unknown"
+        if distance <= RADAR_TARGET_TRUSTED_DISTANCE_M:
+            return "trusted"
+        if distance <= RADAR_TARGET_USABLE_DISTANCE_M:
+            return "usable"
+        return "far"
+
     def updateRadarTargetReadout(self, target_projection):
         """360ビューアクリック投影点の距離と相対角を操作パネルへ表示する。"""
         target_projection_label = getattr(self, "target_projection_label", None)
@@ -239,10 +259,11 @@ class RadarMixin:
         latest_projection = projections[-1]
         distance_m = latest_projection["distance_m"]
         yaw_delta = latest_projection["yaw_delta_deg"]
+        quality = latest_projection.get("quality") or self.targetDistanceQuality(distance_m)
         if len(projections) == 1:
-            target_projection_label.setText(f"Click: {distance_m:.1f}m {yaw_delta:+.1f}deg")
+            target_projection_label.setText(f"Click: {distance_m:.1f}m {quality} {yaw_delta:+.1f}deg")
         else:
-            target_projection_label.setText(f"Click: {len(projections)} pts last {distance_m:.1f}m {yaw_delta:+.1f}deg")
+            target_projection_label.setText(f"Click: {len(projections)} pts last {distance_m:.1f}m {quality} {yaw_delta:+.1f}deg")
 
     def viewerRadarHudPayload(self, frame_index):
         """WEBビューアHUDへ渡すレーダ距離補助値を作る。"""
@@ -462,17 +483,39 @@ class RadarMixin:
             self.radar_perpendicular_band.setColor(QtGui.QColor(255, 255, 255, 230))
             self.radar_perpendicular_band.setWidth(2)
 
-        if self.radar_target_line_band is None:
-            self.radar_target_line_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
-            self.radar_target_line_band.setColor(QtGui.QColor(70, 255, 130, 230))
-            self.radar_target_line_band.setWidth(2)
+        self.ensureRadarTargetQualityBands()
 
-        if self.radar_target_point_band is None:
-            self.radar_target_point_band = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
-            self.radar_target_point_band.setColor(QtGui.QColor(70, 255, 130, 240))
-            self.radar_target_point_band.setWidth(5)
-            if hasattr(self.radar_target_point_band, "setIconSize"):
-                self.radar_target_point_band.setIconSize(10)
+    def ensureRadarTargetQualityBands(self):
+        """信頼度ごとのクリック点RubberBandを生成する。"""
+        canvas = self.iface.mapCanvas()
+        line_bands = getattr(self, "radar_target_quality_line_bands", None)
+        point_bands = getattr(self, "radar_target_quality_point_bands", None)
+        if not isinstance(line_bands, dict):
+            line_bands = {}
+            self.radar_target_quality_line_bands = line_bands
+        if not isinstance(point_bands, dict):
+            point_bands = {}
+            self.radar_target_quality_point_bands = point_bands
+
+        colors = {
+            "trusted": QtGui.QColor(70, 255, 130, 240),
+            "usable": QtGui.QColor(255, 210, 70, 235),
+            "far": QtGui.QColor(255, 80, 80, 235),
+        }
+        for quality in RADAR_TARGET_QUALITY_ORDER:
+            color = colors[quality]
+            if line_bands.get(quality) is None:
+                line_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+                line_band.setColor(color)
+                line_band.setWidth(2)
+                line_bands[quality] = line_band
+            if point_bands.get(quality) is None:
+                point_band = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                point_band.setColor(color)
+                point_band.setWidth(5)
+                if hasattr(point_band, "setIconSize"):
+                    point_band.setIconSize(10)
+                point_bands[quality] = point_band
 
     def setRadarPolygon(self, rubber_band, points):
         """WGS84点列をcanvas CRSへ変換し、ポリゴンRubberBandへ反映する。"""
@@ -515,6 +558,33 @@ class RadarMixin:
         rubber_band.setToGeometry(QgsGeometry.fromMultiPointXY(transformed), None)
         rubber_band.show()
 
+    def setRadarQualityTargets(self, center, target_projections):
+        """クリック投影点を距離品質ごとのRubberBandへ反映する。"""
+        self.ensureRadarTargetQualityBands()
+        line_bands = getattr(self, "radar_target_quality_line_bands", {})
+        point_bands = getattr(self, "radar_target_quality_point_bands", {})
+        projections_by_quality = {quality: [] for quality in RADAR_TARGET_QUALITY_ORDER}
+        for projection in target_projections:
+            quality = projection.get("quality") or self.targetDistanceQuality(projection.get("distance_m"))
+            if quality not in projections_by_quality:
+                quality = "far"
+            projections_by_quality[quality].append(projection)
+
+        for quality in RADAR_TARGET_QUALITY_ORDER:
+            projections = projections_by_quality[quality]
+            line_band = line_bands.get(quality)
+            point_band = point_bands.get(quality)
+            if line_band is not None:
+                self.setRadarMultiLine(
+                    line_band,
+                    [[center, projection["point"]] for projection in projections]
+                )
+            if point_band is not None:
+                self.setRadarMultiPoint(
+                    point_band,
+                    [projection["point"] for projection in projections]
+                )
+
     def hideRadarTargetBands(self):
         """クリック投影点がない場合、投影点用RubberBandだけを非表示にする。"""
         for attr_name, geometry_type in (
@@ -529,6 +599,20 @@ class RadarMixin:
                 rubber_band.reset(geometry_type)
             except Exception:
                 pass
+        for bands, geometry_type in (
+            (getattr(self, "radar_target_quality_line_bands", {}), QgsWkbTypes.LineGeometry),
+            (getattr(self, "radar_target_quality_point_bands", {}), QgsWkbTypes.PointGeometry),
+        ):
+            if not isinstance(bands, dict):
+                continue
+            for rubber_band in bands.values():
+                if rubber_band is None:
+                    continue
+                try:
+                    rubber_band.hide()
+                    rubber_band.reset(geometry_type)
+                except Exception:
+                    pass
 
     def viewerTargetPayloads(self, state):
         """複数targetがあれば優先し、なければ従来の単一targetを返す。"""
@@ -539,6 +623,41 @@ class RadarMixin:
                 return payloads
         target = state.get("target")
         return [target] if isinstance(target, dict) else []
+
+    def viewerGroundProjectionCameraHeight(self, state):
+        """クリック点の地面交差投影に使う実効カメラ高を返す。"""
+        camera_height = _parse_float(state.get("viewer_camera_height_m"))
+        if camera_height is None:
+            getter = getattr(self, "viewerCameraHeightValue", None)
+            camera_height = getter() if callable(getter) else 1.5
+
+        hud_scale = _parse_float(state.get("viewer_hud_height_scale"))
+        if hud_scale is None:
+            getter = getattr(self, "viewerHudHeightScaleValue", None)
+            hud_scale = getter() if callable(getter) else 1.0
+
+        camera_height = max(0.1, min(20.0, float(camera_height)))
+        hud_scale = max(0.1, min(5.0, float(hud_scale)))
+        return camera_height * hud_scale
+
+    def groundDistanceFromTargetPitch(self, target_pitch, state):
+        """球面pitchから地面平面との水平距離を求める。"""
+        if target_pitch is None:
+            return None
+        pitch = float(target_pitch)
+        if pitch <= 0.1 or pitch >= 89.9:
+            return None
+        tangent = math.tan(math.radians(pitch))
+        if abs(tangent) < 1e-9:
+            return None
+        return self.viewerGroundProjectionCameraHeight(state) / tangent
+
+    def groundDistanceFromTargetPayload(self, target):
+        """WEBビューアがHUD投影から推定済みの地面距離を返す。"""
+        ground_distance_m = _parse_float(target.get("ground_distance_m"))
+        if ground_distance_m is None or ground_distance_m <= 0:
+            return None
+        return ground_distance_m
 
     def viewerTargetProjection(self, lat, lon, heading, state, target=None):
         """360ビューアでクリックした球面位置を、撮影点周辺の地図点へ投影する。"""
@@ -569,16 +688,30 @@ class RadarMixin:
 
         view_zoom = _parse_float(target.get("view_zoom"))
         fov = self.viewerFov({"zoom": view_zoom}) if view_zoom is not None else self.viewerFov(state)
-        forward_distance_m = self.calibratedMarkerDistanceForFov(fov)
+        calibrated_forward_distance_m = self.calibratedMarkerDistanceForFov(fov)
 
-        # クリック点を「クリック時視線に垂直な平面」へ落とすPoC。
-        # 相対yawが大きいほど、前方距離をcosで割った斜距離になる。
         cos_delta = math.cos(math.radians(yaw_delta))
         if abs(cos_delta) < 0.1:
             cos_delta = 0.1 if cos_delta >= 0 else -0.1
-        distance_m = max(RADAR_MIN_SECTOR_RADIUS_M, forward_distance_m / abs(cos_delta))
+
+        ground_distance_m = self.groundDistanceFromTargetPayload(target)
+        if ground_distance_m is None:
+            ground_distance_m = self.groundDistanceFromTargetPitch(target_pitch, state)
+        if ground_distance_m is not None:
+            distance_m = max(RADAR_MIN_SECTOR_RADIUS_M, ground_distance_m)
+            forward_distance_m = abs(distance_m * cos_delta)
+            projection_name = "ground_plane"
+            projected_ground_distance_m = distance_m
+        else:
+            # pitchが地面交差に使えない場合だけ、従来の垂直平面投影へ戻す。
+            distance_m = max(RADAR_MIN_SECTOR_RADIUS_M, calibrated_forward_distance_m / abs(cos_delta))
+            forward_distance_m = calibrated_forward_distance_m
+            projection_name = target.get("projection") or "center_plane"
+            projected_ground_distance_m = None
+
         target_bearing = (heading + self.radarBearingOffsetValue() + target_yaw) % 360.0
         point = self.destinationPoint(lat, lon, target_bearing, distance_m)
+        quality = self.targetDistanceQuality(distance_m)
         projection = {
             "point": point,
             "bearing": target_bearing,
@@ -590,8 +723,11 @@ class RadarMixin:
             "view_yaw_to_camera_heading": view_yaw,
             "view_pitch": view_pitch,
             "view_zoom": view_zoom,
-            "projection": target.get("projection") or "center_plane",
+            "projection": projection_name,
+            "quality": quality,
         }
+        if projected_ground_distance_m is not None:
+            projection["ground_distance_m"] = projected_ground_distance_m
         if target.get("id") is not None:
             projection["id"] = target.get("id")
         if target.get("order") is not None:
@@ -700,14 +836,7 @@ class RadarMixin:
         self.setRadarLine(self.radar_direction_band, [center, direction_end])
         self.setRadarLine(self.radar_perpendicular_band, [perpendicular_start, perpendicular_end])
         if target_projections:
-            self.setRadarMultiLine(
-                self.radar_target_line_band,
-                [[center, target_projection["point"]] for target_projection in target_projections]
-            )
-            self.setRadarMultiPoint(
-                self.radar_target_point_band,
-                [target_projection["point"] for target_projection in target_projections]
-            )
+            self.setRadarQualityTargets(center, target_projections)
         else:
             self.hideRadarTargetBands()
         self.updateRadarTargetReadout(target_projections)
@@ -751,6 +880,36 @@ class RadarMixin:
                         pass
                 setattr(self, attr_name, None)
                 removed_any = True
+        for dict_name, geometry_type in (
+            ("radar_target_quality_line_bands", QgsWkbTypes.LineGeometry),
+            ("radar_target_quality_point_bands", QgsWkbTypes.PointGeometry),
+        ):
+            bands = getattr(self, dict_name, None)
+            if not isinstance(bands, dict):
+                continue
+            for rubber_band in bands.values():
+                if rubber_band is None:
+                    continue
+                try:
+                    rubber_band.hide()
+                except Exception:
+                    pass
+                try:
+                    rubber_band.reset(geometry_type)
+                except Exception:
+                    pass
+                try:
+                    scene = rubber_band.scene() or canvas.scene()
+                    scene.removeItem(rubber_band)
+                except Exception:
+                    pass
+                if sip is not None:
+                    try:
+                        sip.delete(rubber_band)
+                    except Exception:
+                        pass
+                removed_any = True
+            setattr(self, dict_name, {})
         self.last_viewer_session_signature = None
         self.last_radar_heading = None
         self.last_radar_sector_radius_m = None
