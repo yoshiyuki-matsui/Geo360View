@@ -18,6 +18,10 @@ from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
     QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform
 )
+try:
+    from qgis.core import QgsEditorWidgetSetup
+except ImportError:
+    QgsEditorWidgetSetup = None
 
 from .config import (
     validate_frame_extract_config,
@@ -56,6 +60,21 @@ QAction = getattr(QtWidgets, "QAction", None) or QtGui.QAction
 GPKG_FRAME_LAYER_NAME = "video_gpx_points"
 GPKG_TARGET_LAYER_NAME = "click_targets_360"
 GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
+
+VIEWER_TARGET_HIDDEN_COLUMNS = (
+    "target_id",
+    "forward_m",
+    "bearing_deg",
+    "yaw_delta",
+    "target_yaw",
+    "target_pitch",
+    "view_yaw",
+    "view_pitch",
+    "view_zoom",
+    "source_lat",
+    "source_lon",
+    "projection",
+)
 
 
 
@@ -1303,6 +1322,63 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return value
         return None
 
+    def applyHiddenColumns(self, layer, hidden_columns):
+        """保持はするが通常は見せない列をQGISレイヤ表示設定へ反映する。"""
+        if layer is None:
+            return False
+        hidden = {str(column) for column in hidden_columns if column}
+        if not hidden:
+            return False
+
+        applied = False
+        try:
+            layer.setCustomProperty(
+                "gpx_video_processor/hidden_columns",
+                json.dumps(sorted(hidden), ensure_ascii=False),
+            )
+        except Exception:
+            pass
+
+        try:
+            config = layer.attributeTableConfig()
+            try:
+                config.update(layer.fields())
+            except Exception:
+                pass
+            columns = config.columns()
+            for column in columns:
+                name = str(getattr(column, "name", "") or "")
+                if not name:
+                    continue
+                try:
+                    column.hidden = name in hidden
+                    applied = True
+                except Exception:
+                    pass
+            config.setColumns(columns)
+            layer.setAttributeTableConfig(config)
+        except Exception:
+            pass
+
+        if QgsEditorWidgetSetup is not None:
+            for column in hidden:
+                try:
+                    index = layer.fields().indexFromName(column)
+                except Exception:
+                    index = -1
+                if index < 0:
+                    continue
+                try:
+                    layer.setEditorWidgetSetup(index, QgsEditorWidgetSetup("Hidden", {}))
+                    applied = True
+                except Exception:
+                    pass
+        return applied
+
+    def applyViewerTargetHiddenColumns(self, layer):
+        """360クリック点レイヤの監査用列を初期非表示にする。"""
+        return self.applyHiddenColumns(layer, VIEWER_TARGET_HIDDEN_COLUMNS)
+
     def jobMetadataPayload(self):
         """GPKGへ残すジョブ入力・校正パラメータを返す。"""
         process_config = getattr(self, "last_process_config", None)
@@ -1325,6 +1401,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "nav_step": int(self.nav_step.value()),
             "nav_fast_step": int(self.nav_fast_step.value()),
             "follow_frame": bool(self.follow_frame_checkbox.isChecked()),
+            "hidden_columns": {
+                GPKG_TARGET_LAYER_NAME: list(VIEWER_TARGET_HIDDEN_COLUMNS),
+            },
         }
 
     def writeJobMetadataToGpkg(self, gpkg_path):
@@ -1494,6 +1573,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_layer_id = frame_layer.id()
 
         if target_layer is not None:
+            self.applyViewerTargetHiddenColumns(target_layer)
             project.addMapLayer(target_layer)
             self.created_layer_ids.append(target_layer.id())
             self.target_layer_id = target_layer.id()
@@ -1564,6 +1644,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             layer = project.mapLayer(self.target_layer_id)
             if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
                 self.ensureViewerTargetLayerFields(layer)
+                self.applyViewerTargetHiddenColumns(layer)
                 return layer
 
         for layer_id in reversed(self.created_layer_ids):
@@ -1571,6 +1652,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if self.isViewerTargetLayer(layer) and self.isMemoryLayer(layer):
                 self.target_layer_id = layer.id()
                 self.ensureViewerTargetLayerFields(layer)
+                self.applyViewerTargetHiddenColumns(layer)
                 return layer
         return None
 
@@ -1583,9 +1665,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if fields.indexFromName("quality") < 0:
             missing_fields.append(QgsField("quality", QVariant.String))
         if not missing_fields:
+            self.applyViewerTargetHiddenColumns(layer)
             return False
         layer.dataProvider().addAttributes(missing_fields)
         layer.updateFields()
+        self.applyViewerTargetHiddenColumns(layer)
         return True
 
     def ensureViewerTargetLayer(self):
@@ -1619,6 +1703,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             QgsField("created_at", QVariant.String),
         ])
         layer.updateFields()
+        self.applyViewerTargetHiddenColumns(layer)
         QgsProject.instance().addMapLayer(layer)
         self.created_layer_ids.append(layer.id())
         self.target_layer_id = layer.id()
