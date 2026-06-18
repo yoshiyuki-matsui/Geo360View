@@ -10,6 +10,7 @@ GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフ�
 - [semantic_360_py_reference.md](semantic_360_py_reference.md): 追加した各pyの入出力、主要パラメータ、内部処理、チェックポイント仕様。
 - [env_notes.md](env_notes.md): `venv_yolo`, `venv310_yolo_gpu` などPython環境の役割と確認コマンド。
 - [../docs/session_2026-06-18_semantic_360_auto_candidate.md](../docs/session_2026-06-18_semantic_360_auto_candidate.md): CubeMap/YOLO/POI候補化/360視点復元まで到達した日のR&D経緯メモ。
+- [../docs/session_2026-06-18_semantic_360_implementation_worklog.md](../docs/session_2026-06-18_semantic_360_implementation_worklog.md): 実装中の節目、確認、判断、次アクションを時系列で追う作業ログ。
 
 ## Install
 

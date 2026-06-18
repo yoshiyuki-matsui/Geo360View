@@ -162,5 +162,6 @@ QGISプラグインのNavに `Detection check` を追加しました。
 - `TenkakuNinja/semantic_360_pipeline.md`
 - `TenkakuNinja/semantic_360_py_reference.md`
 - `TenkakuNinja/env_notes.md`
+- `docs/session_2026-06-18_semantic_360_implementation_worklog.md`
 - `docs/yolo_georeference_spec.md`
 - `docs/qgis_manual_test_checklist.md`
