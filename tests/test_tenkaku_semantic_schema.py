@@ -42,6 +42,19 @@ class SemanticWorkSchemaTests(unittest.TestCase):
         self.assertIn("quality", columns)
         self.assertIn("payload_json", columns)
 
+    def test_poi_candidates_have_semantic_filter_columns(self):
+        """poi_candidates_360は地図表示・抽出に使う意味列を持つ。"""
+        columns = set(schema.column_names(schema.POI_CANDIDATES_TABLE))
+
+        self.assertIn("target_source", columns)
+        self.assertIn("semantic_class", columns)
+        self.assertIn("confidence", columns)
+        self.assertIn("projection", columns)
+        self.assertIn("model_run_id", columns)
+        self.assertIn("model_name", columns)
+        self.assertIn("evidence_face", columns)
+        self.assertIn("payload_json", columns)
+
     def test_cubemap_default_export_faces_are_all_six_faces(self):
         """CubeMap生成は既定で6面を定義する。YOLO対象面は後段で絞る。"""
         self.assertEqual(
@@ -141,6 +154,48 @@ class SemanticWorkIoTests(unittest.TestCase):
         runs = sqlite_io.fetch_rows(self.conn, schema.RUNS_TABLE)
         self.assertIn('"front"', runs[0]["config_json"])
         self.assertIn('"down"', runs[0]["config_json"])
+
+    def test_insert_poi_candidate_row(self):
+        """緯度経度化したPOI候補をsemantic属性付きで保存する。"""
+        run_id = sqlite_io.create_run(self.conn, source_video="source.mp4")
+        candidate_id = sqlite_io.insert_poi_candidate(
+            self.conn,
+            run_id=run_id,
+            target_id="target_001",
+            frame_index=30,
+            target_source="yolo_cubemap",
+            semantic_class="traffic_sign",
+            confidence=0.91,
+            projection="elevated_object",
+            model_run_id="model_001",
+            model_name="traffic_sign_detector",
+            evidence_face="front",
+            camera_lat=34.0,
+            camera_lon=136.0,
+            object_lat=34.00001,
+            object_lon=136.00002,
+            bearing_deg=42.0,
+            distance_m=10.0,
+            position_method="fixed_distance_bearing",
+            distance_method="fixed_distance_for_direction_only",
+            quality="direction_only",
+            payload={"reason": "elevated_object"},
+            candidate_id="poi_target_001",
+            replace=True,
+        )
+        self.conn.commit()
+
+        rows = sqlite_io.fetch_rows(
+            self.conn,
+            schema.POI_CANDIDATES_TABLE,
+            where="candidate_id = ?",
+            params=(candidate_id,),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["semantic_class"], "traffic_sign")
+        self.assertEqual(rows[0]["model_name"], "traffic_sign_detector")
+        self.assertEqual(rows[0]["quality"], "direction_only")
+        self.assertIn("elevated_object", rows[0]["payload_json"])
 
 
 if __name__ == "__main__":

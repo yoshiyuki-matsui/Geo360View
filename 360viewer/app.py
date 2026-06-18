@@ -395,11 +395,11 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         return None
 
     projection = str(payload.get("projection") or "ground_plane")
-    if projection not in {"ground_plane", "center_plane", "constant_distance"}:
+    if projection not in {"ground_plane", "center_plane", "constant_distance", "direction_only"}:
         projection = "ground_plane"
 
     quality = str(payload.get("quality") or "")
-    if quality not in {"trusted", "usable", "far"}:
+    if quality not in {"trusted", "usable", "far", "direction_only", "unknown"}:
         quality = ""
 
     ground_distance_m = None
@@ -427,6 +427,17 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         target["ground_distance_m"] = ground_distance_m
     if quality:
         target["quality"] = quality
+    for key in ("target_source", "semantic_class", "review_status", "candidate_id", "viewer_marker"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            target[key] = str(value)
+    if payload.get("confidence") is not None:
+        try:
+            confidence = parse_float(payload.get("confidence"), "target.confidence")
+            if math.isfinite(confidence):
+                target["confidence"] = max(0.0, min(1.0, confidence))
+        except ApiError:
+            pass
     try:
         target_id = int(payload.get("id"))
         if target_id > 0:

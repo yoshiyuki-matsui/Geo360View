@@ -94,6 +94,19 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("Navigation step must be greater than or equal to 1.", errors)
         self.assertIn("Fast navigation step must be greater than or equal to 1.", errors)
 
+    def test_navigation_config_accepts_detection_mode(self):
+        """YOLO候補確認用のナビゲーションモードを許可する。"""
+        result, errors = config.validate_navigation_config({
+            "mode": "detect",
+            "step": 1,
+            "fast_step": 30,
+            "follow": True,
+        })
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mode, "detect")
+
     def test_radar_config_rejects_unusable_calibration(self):
         """FOV/距離/offsetの破綻値をレーダ描画へ渡さない。"""
         result, errors = config.validate_radar_config({

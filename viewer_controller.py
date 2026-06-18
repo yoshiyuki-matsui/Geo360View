@@ -408,8 +408,16 @@ class ViewerControllerMixin:
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:
             payload["radar"] = radar_payload
+        try:
+            nav_mode = self.nav_mode.currentData() if getattr(self, "nav_mode", None) is not None else None
+        except Exception:
+            nav_mode = None
+
         targets_payload = []
-        target_payload_getter = getattr(self, "viewerTargetsForFrame", None)
+        if nav_mode == "detect":
+            target_payload_getter = getattr(self, "viewerDetectionTargetsForFrame", None)
+        else:
+            target_payload_getter = getattr(self, "viewerTargetsForFrame", None)
         if callable(target_payload_getter):
             try:
                 targets_payload = target_payload_getter(frame_num)
@@ -417,10 +425,7 @@ class ViewerControllerMixin:
                 print(f"360Viewer target restore payload failed: {e}")
         if targets_payload:
             payload["targets"] = targets_payload
-        try:
-            nav_mode = self.nav_mode.currentData() if getattr(self, "nav_mode", None) is not None else None
-        except Exception:
-            nav_mode = None
+
         if nav_mode == "picked":
             view_getter = getattr(self, "viewerViewForPickedFrame", None)
             if callable(view_getter):
@@ -431,6 +436,16 @@ class ViewerControllerMixin:
                     picked_view = None
                 if picked_view:
                     payload.update(picked_view)
+        elif nav_mode == "detect":
+            view_getter = getattr(self, "viewerViewForDetectionFrame", None)
+            if callable(view_getter):
+                try:
+                    detection_view = view_getter(frame_num)
+                except Exception as e:
+                    print(f"360Viewer detection view restore failed: {e}")
+                    detection_view = None
+                if detection_view:
+                    payload.update(detection_view)
         data = json.dumps(payload).encode("utf-8")
         request = Request(
             f"{self.viewerBaseUrl()}/api/session/navigate",

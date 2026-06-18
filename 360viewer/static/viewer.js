@@ -730,7 +730,22 @@
     }
     marker.style.left = `${projected.x.toFixed(1)}px`;
     marker.style.top = `${projected.y.toFixed(1)}px`;
-    marker.title = target.id ? `#${target.id}` : "";
+    marker.classList.toggle(
+      "click-target-marker-auto",
+      target.target_source === "yolo_candidate" || target.viewer_marker === "target_point"
+    );
+    const titleParts = [];
+    if (target.semantic_class) {
+      titleParts.push(String(target.semantic_class));
+    }
+    const confidence = Number(target.confidence);
+    if (Number.isFinite(confidence)) {
+      titleParts.push(`${Math.round(confidence * 100)}%`);
+    }
+    if (target.id) {
+      titleParts.push(`#${target.id}`);
+    }
+    marker.title = titleParts.join(" ");
     marker.hidden = false;
   }
 

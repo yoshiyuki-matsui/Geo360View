@@ -8,6 +8,8 @@ GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフ�
 
 - [semantic_360_pipeline.md](semantic_360_pipeline.md): 360動画をCubeMap化し、YOLO結果をクリック点互換の `semantic_targets_360` へ加工するCLIパイプライン設計。
 - [semantic_360_py_reference.md](semantic_360_py_reference.md): 追加した各pyの入出力、主要パラメータ、内部処理、チェックポイント仕様。
+- [env_notes.md](env_notes.md): `venv_yolo`, `venv310_yolo_gpu` などPython環境の役割と確認コマンド。
+- [../docs/session_2026-06-18_semantic_360_auto_candidate.md](../docs/session_2026-06-18_semantic_360_auto_candidate.md): CubeMap/YOLO/POI候補化/360視点復元まで到達した日のR&D経緯メモ。
 
 ## Install
 
@@ -115,6 +117,38 @@ python TenkakuNinja/semantic_targets.py \
 `--max-bbox-area-ratio` を指定すると、画面に対して大きすぎるbboxはtarget化しません。
 `--model-names` や `--model-run-ids` を指定して `--clear-existing` した場合は、
 指定モデル由来のtargetだけを削除・再生成します。
+
+semantic targetを地図上のPOI候補へ変換する場合:
+
+```bash
+python TenkakuNinja/georeference.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --database path/to/tmp.gpkg \
+  --fallback-distance-m 10 \
+  --max-ground-distance-m 10 \
+  --clear-existing
+```
+
+`ground_plane` のtargetは `ground_distance_m` を使い、`elevated_object` や
+`direction_only` は方角だけ信じて `--fallback-distance-m` の外円上に置きます。
+結果は `semantic_work.sqlite` の `poi_candidates_360` に保存します。
+動画正面と進行方向にずれがある場合は `--video-front-offset-deg` で補正します。
+
+POI候補をQGISで扱う `tmp.gpkg` へ集約する場合:
+
+```bash
+python TenkakuNinja/gpkg_merge.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --database path/to/tmp.gpkg \
+  --replace
+```
+
+`semantic_work.sqlite` は処理途中の内部DBです。ユーザがQGISで開いて操作する成果物は
+`tmp.gpkg` とし、YOLO由来候補は `poi_candidates_360` レイヤへ出力します。
+手動クリック点の `click_targets_360` とは別レイヤなので、候補点と手動点を混同しません。
+`poi_candidates_360` には `target_yaw`, `target_pitch`, `evidence_bbox_json`,
+`bbox_anchor`, `anchor_x_px/y_px`, `cubemap_u/v`, `semantic_class`, `confidence` も出力するため、
+地図上の候補点から360ビューア上の検出方向へ点マーカーを復元できます。
 
 ## Examples
 

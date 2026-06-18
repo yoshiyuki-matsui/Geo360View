@@ -5,8 +5,7 @@
 この文書は、`TenkakuNinja/` 配下に追加した360 semantic pipeline関連Pythonの
 入出力、主要パラメータ、内部処理、チェックポイント仕様をまとめた実装参照です。
 
-次工程は `semantic_targets_360` から `poi_candidates_360` を作る緯度経度変換です。
-その前提として、現時点の処理は次の段階まで完了しています。
+現時点の処理は、YOLO検出から地図上POI候補を作る段階まで実装済みです。
 
 ```text
 tmp.gpkg + MP4
@@ -16,6 +15,10 @@ tmp.gpkg + MP4
   -> model_runs + yolo_detections_raw
   -> semantic_targets.py
   -> semantic_targets_360
+  -> georeference.py
+  -> poi_candidates_360
+  -> gpkg_merge.py
+  -> tmp.gpkg / poi_candidates_360 layer
   -> yolo_report.py
   -> summary/CSV/HTML/annotated images
 ```
@@ -34,7 +37,7 @@ plane_id      : 1つの画像面。CubeMapなら frame + face
 model_run_id  : YOLOモデル実行単位
 detection_id  : YOLO生検出1件
 target_id     : クリック点互換semantic target 1件
-candidate_id  : 地図上POI候補 1件 planned
+candidate_id  : 地図上POI候補 1件
 ```
 
 複数モデルは同じ `run_id` に追記します。DBは分けません。
@@ -158,7 +161,7 @@ bbox_anchor
 payload_json
 ```
 
-`poi_candidates_360` planned:
+`poi_candidates_360`:
 
 ```text
 candidate_id
@@ -172,6 +175,14 @@ distance_m
 position_method
 distance_method
 quality
+target_source
+semantic_class
+confidence
+projection
+model_run_id
+model_name
+evidence_face
+payload_json
 ```
 
 `metadata`:
@@ -640,13 +651,14 @@ bbox_area_ratio = bbox_area / (width_px * height_px)
 
 標識・信号など小物体検出では、`bbox_area_ratio > 0.30` を巨大誤検出候補として落とす運用が有効です。
 
-## 現時点で未実装の次工程
+## projection.py
 
-### projection.py planned
+### 役割
 
-QGIS非依存の測地計算コアにします。
+QGIS非依存の測地計算コアです。`radar.py` の地図投影と同じ考え方で、
+撮影点・走行heading・target yaw・距離からWGS84緯度経度を作ります。
 
-想定入力:
+### 入力
 
 ```text
 camera_lat/lon
@@ -656,43 +668,232 @@ target_yaw_to_camera_heading
 distance_m
 ```
 
-想定出力:
+### 出力
 
 ```text
 object_lat/lon
 bearing_deg
 ```
 
-### georeference.py planned
+### 主な関数
 
-`semantic_targets_360` を `poi_candidates_360` に変換します。
+```text
+destination_point(lat, lon, bearing_deg, distance_m)
+local_vector_meters(lat1, lon1, lat2, lon2)
+heading_from_vector(dx, dy)
+trajectory_heading(positions_by_frame, frame_index, window_frames)
+```
 
-最初の方針:
+`trajectory_heading` は `radar.py` と同じく、まず前後フレームを使い、
+端部では中心から片側の点へフォールバックします。
+
+## georeference.py
+
+### 役割
+
+`semantic_targets_360` を読み、GPKGの撮影点軌跡と合わせて
+`poi_candidates_360` を作ります。
+
+### 入力
+
+```text
+semantic_work.sqlite:
+  runs
+  semantic_targets_360
+  yolo_detections_raw
+  model_runs
+
+tmp.gpkg:
+  video_gpx_points
+```
+
+### 出力
+
+`semantic_work.sqlite`:
+
+```text
+poi_candidates_360
+metadata(scope='run', key='poi_candidate_summary')
+```
+
+### CLI
+
+```bash
+python TenkakuNinja/georeference.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --fallback-distance-m 10 \
+  --max-ground-distance-m 10 \
+  --clear-existing
+```
+
+モデル別:
+
+```bash
+python TenkakuNinja/georeference.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --model-names traffic_sign_detector \
+  --fallback-distance-m 10 \
+  --clear-existing
+```
+
+### 主要パラメータ
+
+```text
+--work-db                   semantic_work.sqlite
+--run-id                    対象run。省略時は最新run
+--database                  tmp.gpkg。省略時はruns.source_gpkg
+--gpx-layer                 撮影点レイヤ。既定 video_gpx_points
+--frame-column              frame列。省略時は自動検出
+--trajectory-window-frames  heading算出に使う前後フレーム幅。既定60
+--video-front-offset-deg    進行方向と動画正面の時計回り補正角
+--fallback-distance-m       elevated/direction_onlyを置く固定距離。既定10m
+--max-ground-distance-m     ground_planeの最大採用距離。既定10m。0で無制限
+--target-sources            target_source filter
+--model-run-ids             model_run_id filter
+--model-names               model_name filter
+--classes                   semantic_class filter
+--projections               projection filter
+--limit                     テスト用件数制限
+--clear-existing            選択target由来の候補を削除してから再生成
+```
+
+### 内部処理
+
+1. `runs` から `source_gpkg` を解決する。
+2. `video_gpx_points` から `frame -> camera_lat/lon` を読む。
+   - `aligned_latitude/aligned_longitude` を優先し、なければ `latitude/longitude`。
+3. `semantic_targets_360` を読み、必要に応じてmodel/class/projectionでfilterする。
+4. 各targetの `frame_index` 前後からtrajectory headingを算出する。
+5. `bearing = trajectory_heading + video_front_offset_deg + target_yaw_to_camera_heading`。
+6. 距離を決める。
+7. `destination_point` で `object_lat/lon` を作る。
+8. `poi_candidates_360` に保存する。
+
+### 距離の扱い
 
 ```text
 projection = ground_plane:
   ground_distance_m を使う
-  max distance 10m程度で制限
+  --max-ground-distance-m を超えるものはskip
 
 projection = elevated_object / direction_only:
-  --fallback-distance-m 10 が指定されていれば10m外円上へ方位マーカーとして配置
+  --fallback-distance-m の外円上へ方位マーカーとして配置
   position_method = fixed_distance_bearing
-  distance_method = fixed_10m_direction_marker
+  distance_method = fixed_distance_for_direction_only
   quality = direction_only
 ```
 
-### gpkg_merge.py planned
+これは「標識などの高さがある対象は根元距離を推定しない」という安全側の仕様です。
+方角だけを信じて、距離は明示的に仮置きします。
 
-`poi_candidates_360` を `tmp.gpkg` の別レイヤへ出力します。
+## gpkg_merge.py
 
-想定:
+### 役割
+
+`semantic_work.sqlite` の `poi_candidates_360` を、ユーザがQGISで扱う
+`tmp.gpkg` の別レイヤへ出力します。
+
+`semantic_work.sqlite` は処理途中の内部DB、`tmp.gpkg` はユーザ操作対象の成果物、
+という切り分けです。
+
+### 入力
 
 ```text
-yolo_observations_360
-semantic_targets_360
-poi_candidates_360
-direction_markers_360 optional
+semantic_work.sqlite:
+  runs
+  poi_candidates_360
 ```
+
+### 出力
+
+`tmp.gpkg`:
+
+```text
+poi_candidates_360
+```
+
+主な属性:
+
+```text
+record_type      -- yolo_candidate
+review_status    -- unreviewed
+candidate_id
+target_id
+frame
+semantic_class
+confidence
+model_name
+projection
+position_method
+distance_method
+quality
+target_yaw
+target_pitch
+ground_distance_m
+evidence_face
+evidence_plane_id
+evidence_image_path
+evidence_bbox_json
+bbox_anchor
+anchor_x_px / anchor_y_px
+cubemap_u / cubemap_v
+viewer_marker      -- target_point
+latitude / longitude
+camera_lat / camera_lon
+payload_json
+```
+
+手動クリック点は既存の `click_targets_360` のまま保持し、YOLO由来候補は
+`poi_candidates_360` に分けます。
+`target_yaw` と `target_pitch` は360ビューア上で候補位置を点マーカーとして表示するための
+最小情報です。CubeMap矩形そのものは `evidence_bbox_json` として保持し、360ビューアでは
+矩形変換ではなく重心/anchor点の表示を基本にします。
+
+### CLI
+
+```bash
+python TenkakuNinja/gpkg_merge.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --replace
+```
+
+モデル別:
+
+```bash
+python TenkakuNinja/gpkg_merge.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --model-names pothole_detector \
+  --layer-name poi_candidates_pothole_360 \
+  --replace
+```
+
+### 主要パラメータ
+
+```text
+--work-db          semantic_work.sqlite
+--database         出力先GeoPackage。省略時はruns.source_gpkg
+--run-id           対象run。省略時は最新run
+--layer-name       出力レイヤ名。既定 poi_candidates_360
+--replace          既存レイヤを置換
+--model-run-ids    model_run_id filter
+--model-names      model_name filter
+--classes          semantic_class filter
+--qualities        quality filter
+--position-methods position_method filter
+--limit            テスト用件数制限
+```
+
+### 内部処理
+
+1. `poi_candidates_360` をfilterして読む。
+2. `object_lon/object_lat` からGeoPackageBinary POINTを作る。
+3. `tmp.gpkg` にfeature tableを作る。
+4. `gpkg_contents`, `gpkg_geometry_columns`, `gpkg_ogr_contents` を更新する。
+5. 既存レイヤは `--replace` 指定時だけ削除・再作成する。
 
 ## 推奨実行順
 
@@ -734,10 +935,23 @@ python TenkakuNinja/semantic_targets.py \
   --max-bbox-area-ratio 0.30 \
   --clear-existing
 
-# 5. レポート
+# 5. POI候補化
+python TenkakuNinja/georeference.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --fallback-distance-m 10 \
+  --max-ground-distance-m 10 \
+  --clear-existing
+
+# 6. tmp.gpkgへ集約
+python TenkakuNinja/gpkg_merge.py \
+  --work-db work/semantic_work.sqlite \
+  --database tmp.gpkg \
+  --replace
+
+# 7. レポート
 python TenkakuNinja/yolo_report.py \
   --work-db work/semantic_work.sqlite \
   --output-dir work/yolo_report_max030 \
   --max-bbox-area-ratio 0.30
 ```
-

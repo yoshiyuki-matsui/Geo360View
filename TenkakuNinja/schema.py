@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import sqlite3
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CUBEMAP_FACE_NAMES = ("front", "right", "back", "left", "up", "down")
 DEFAULT_CUBEMAP_EXPORT_FACES = CUBEMAP_FACE_NAMES
@@ -196,6 +196,13 @@ TABLES = (
             Column("run_id", "TEXT", "NOT NULL"),
             Column("target_id", "TEXT", "NOT NULL"),
             Column("frame_index", "INTEGER", "NOT NULL"),
+            Column("target_source", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("semantic_class", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("confidence", "REAL"),
+            Column("projection", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("model_run_id", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("model_name", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("evidence_face", "TEXT"),
             Column("camera_lat", "REAL"),
             Column("camera_lon", "REAL"),
             Column("object_lat", "REAL"),
@@ -205,6 +212,7 @@ TABLES = (
             Column("position_method", "TEXT", "NOT NULL DEFAULT ''"),
             Column("distance_method", "TEXT", "NOT NULL DEFAULT ''"),
             Column("quality", "TEXT", "NOT NULL DEFAULT 'unknown'"),
+            Column("payload_json", "TEXT", "NOT NULL DEFAULT '{}'"),
             Column("created_at", "TEXT", "NOT NULL"),
         ),
     ),
@@ -252,9 +260,26 @@ def create_schema(conn: sqlite3.Connection):
     conn.execute("PRAGMA foreign_keys = ON")
     for table in TABLES:
         conn.execute(table.ddl())
+        ensure_table_columns(conn, table)
     for ddl in INDEX_DDLS:
         conn.execute(ddl)
     set_schema_metadata(conn)
+
+
+def ensure_table_columns(conn: sqlite3.Connection, table: Table):
+    """Add newly defined columns to an existing semantic work table."""
+
+    existing = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({quote_identifier(table.name)})").fetchall()
+    }
+    for column in table.columns:
+        if column.name in existing:
+            continue
+        conn.execute(
+            f"ALTER TABLE {quote_identifier(table.name)} "
+            f"ADD COLUMN {column.ddl()}"
+        )
 
 
 def set_schema_metadata(conn: sqlite3.Connection):

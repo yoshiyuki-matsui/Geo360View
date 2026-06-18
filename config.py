@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-NAVIGATION_MODES = {"frame", "layer", "kp", "picked"}
+NAVIGATION_MODES = {"frame", "layer", "kp", "picked", "detect"}
 RADAR_OFFSETS = {0, 90, 180, 270}
 
 

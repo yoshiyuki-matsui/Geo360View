@@ -6,7 +6,7 @@
 `semantic_targets_360` へ加工し、最終的に地図上のPOI候補へ変換するための
 CLIパイプライン設計メモです。
 
-現時点では実装前の設計文書です。まずはGPXVideoProcessor内の
+当初の設計メモです。現時点では主要CLIをGPXVideoProcessor内の
 `TenkakuNinja/` 配下で単体CLIとして動かし、将来的に
 `tenkaku_ninja_core` へ合流できる構成にします。
 
@@ -209,9 +209,9 @@ TenkakuNinja/
   yolo_detect.py         # YOLO推論
   yolo_report.py         # YOLO結果のサマリー・注釈画像
   semantic_targets.py    # bbox -> クリック点互換target
-  georeference.py        # planned: semantic target -> POI候補
-  gpkg_merge.py          # planned: 中間DB -> tmp.gpkg
-  projection.py          # planned: QGIS非依存の方位・距離・WGS84投影
+  georeference.py        # semantic target -> POI候補
+  gpkg_merge.py          # 中間DB -> tmp.gpkg
+  projection.py          # QGIS非依存の方位・距離・WGS84投影
 ```
 
 ## 各pyの責務
@@ -493,42 +493,63 @@ python TenkakuNinja/semantic_targets.py \
 target化します。`--clear-existing` と併用しても、指定モデル由来の既存targetだけを
 削除するため、別モデルのtargetを巻き込みません。
 
-### `projection.py` planned
+### `projection.py`
 
 QGIS非依存の投影コアです。
 
-現在 `radar.py` に寄っているクリック点投影の数式を、将来的にここへ切り出します。
+`radar.py` と同じ方位・距離・WGS84投影の数式をCLI側で使うための純粋関数群です。
 
 ```text
-target_payload
-+ frame_position
-+ trajectory_heading_deg
-+ video_front_offset_deg
-+ camera_height_m
-+ hud_height_scale
-= projected point
+destination_point(lat, lon, bearing_deg, distance_m)
+local_vector_meters(lat1, lon1, lat2, lon2)
+heading_from_vector(dx, dy)
+trajectory_heading(positions_by_frame, frame_index, window_frames)
 ```
 
-### `georeference.py` planned
+### `georeference.py`
 
 `semantic_targets_360` を読み、`poi_candidates_360` を作ります。
 
-- `video_gpx_points` または `source_frames` から撮影点を取得する。
+- `video_gpx_points` から撮影点を取得する。
 - trajectory headingを計算する。
-- `projection.py` を呼ぶ。
-- `quality` と `position_method` を保存する。
+- `projection.py` で `object_lat/lon` を作る。
+- `quality`, `position_method`, `distance_method` を保存する。
+- `ground_plane` は `ground_distance_m`、`elevated_object` と `direction_only` は
+  `--fallback-distance-m` の固定外円を使う。
 
-### `gpkg_merge.py` planned
+### `gpkg_merge.py`
 
 中間DBの結果を `tmp.gpkg` へ別レイヤとして追加します。
 
-想定レイヤ:
+現在の実装レイヤ:
 
-- `yolo_observations_360`
-- `semantic_targets_360`
 - `poi_candidates_360`
 
-プラグイン側はこのGPKGまたはSQLiteを読み、地図上で確認します。
+手動クリック点の `click_targets_360` とは分けます。`semantic_work.sqlite` は処理途中の
+内部DB、ユーザがQGISで開いて操作する対象は `tmp.gpkg` です。
+
+属性には次を持たせます。
+
+- `record_type = yolo_candidate`
+- `review_status = unreviewed`
+- `semantic_class`
+- `model_name`
+- `position_method`
+- `distance_method`
+- `quality`
+- `target_yaw`
+- `target_pitch`
+- `evidence_bbox_json`
+- `anchor_x_px / anchor_y_px`
+- `cubemap_u / cubemap_v`
+- `payload_json`
+
+将来、必要に応じて `yolo_observations_360` や `semantic_targets_360` も別レイヤとして
+出力します。
+
+360ビューア上の確認では、CubeMap矩形をequirectangularへ戻すことを基本にしません。
+`target_yaw/target_pitch` の点マーカーを表示し、必要に応じて
+`evidence_bbox_json` と注釈画像レポートでYOLO矩形の根拠を確認します。
 
 ## SQLite中間DB
 
@@ -709,15 +730,23 @@ candidate_id TEXT PRIMARY KEY
 run_id TEXT
 target_id TEXT
 frame_index INTEGER
+target_source TEXT
+semantic_class TEXT
+confidence REAL
+projection TEXT
+model_run_id TEXT
+model_name TEXT
+evidence_face TEXT
 camera_lat REAL
 camera_lon REAL
 object_lat REAL
 object_lon REAL
 bearing_deg REAL
 distance_m REAL
-position_method TEXT      -- ground_plane / fixed_distance / camera_point_only
+position_method TEXT      -- ground_plane_bearing / fixed_distance_bearing
 distance_method TEXT
 quality TEXT
+payload_json TEXT
 created_at TEXT
 ```
 
@@ -825,10 +854,8 @@ camera_lat/lon
 trajectory_heading_deg
 video_front_offset_deg
 target_yaw_to_camera_heading
-target_pitch_deg
-ground_distance_m
-CamH
-HudH
+ground_distance_m   -- ground_planeのみ。CamH/HudHはsemantic_targets.py側で反映済み
+fallback_distance_m -- elevated_object/direction_only用の仮距離
 ```
 
 出力:
@@ -841,10 +868,16 @@ quality
 position_method
 ```
 
+距離はここで新たに画像から推定しません。地面対象は `semantic_targets.py` が作った
+`ground_distance_m` を使い、高さがある対象は方角だけを信用して固定距離へ置きます。
+
 ## tmp.gpkgへのマージ
 
 `tmp.gpkg` は最終確認・QGIS表示用です。中間DBの全情報を無理に詰め込まず、
 用途別に別レイヤ化します。
+
+ユーザが操作すべき成果物は `tmp.gpkg` です。`semantic_work.sqlite` はCubeMap生成、
+YOLO検出、target化、候補点化の途中成果と監査情報を保持する内部DBとして扱います。
 
 候補:
 

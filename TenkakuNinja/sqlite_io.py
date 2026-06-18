@@ -413,6 +413,66 @@ def insert_semantic_target(
     return target_id
 
 
+def insert_poi_candidate(
+    conn: sqlite3.Connection,
+    run_id: str,
+    target_id: str,
+    frame_index: int,
+    camera_lat: float | None,
+    camera_lon: float | None,
+    object_lat: float | None,
+    object_lon: float | None,
+    bearing_deg: float | None,
+    distance_m: float | None,
+    position_method: str,
+    distance_method: str,
+    quality: str = "unknown",
+    target_source: str = "",
+    semantic_class: str = "",
+    confidence: float | None = None,
+    projection: str = "",
+    model_run_id: str = "",
+    model_name: str = "",
+    evidence_face: str | None = None,
+    payload: dict | None = None,
+    candidate_id: str | None = None,
+    replace: bool = False,
+) -> str:
+    """Insert one georeferenced POI candidate and return candidate_id."""
+
+    candidate_id = candidate_id or new_id("candidate")
+    writer = upsert_row if replace else insert_row
+    writer(
+        conn,
+        schema.POI_CANDIDATES_TABLE,
+        {
+            "candidate_id": candidate_id,
+            "run_id": run_id,
+            "target_id": target_id,
+            "frame_index": int(frame_index),
+            "target_source": target_source,
+            "semantic_class": semantic_class,
+            "confidence": confidence,
+            "projection": projection,
+            "model_run_id": model_run_id,
+            "model_name": model_name,
+            "evidence_face": evidence_face,
+            "camera_lat": camera_lat,
+            "camera_lon": camera_lon,
+            "object_lat": object_lat,
+            "object_lon": object_lon,
+            "bearing_deg": bearing_deg,
+            "distance_m": distance_m,
+            "position_method": position_method,
+            "distance_method": distance_method,
+            "quality": quality,
+            "payload_json": payload or {},
+            "created_at": utc_now_text(),
+        },
+    )
+    return candidate_id
+
+
 def fetch_rows(
     conn: sqlite3.Connection,
     table_name: str,

@@ -278,6 +278,43 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["targets"][0]["id"], 2)
         self.assertEqual(state["targets"][0]["x_ratio"], 0.5)
 
+    def test_navigation_payload_preserves_detection_candidate_metadata(self):
+        """YOLO候補targetの確認用メタデータをviewer_session.jsonへ残す。"""
+        state = self.app.state_from_navigation_payload({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "targets": [
+                {
+                    "id": 1,
+                    "order": 1,
+                    "yaw_delta_deg": 0,
+                    "target_yaw_to_camera_heading": 82,
+                    "target_pitch_deg": -4,
+                    "view_yaw_to_camera_heading": 82,
+                    "view_pitch": -4,
+                    "view_zoom": 1.35,
+                    "projection": "direction_only",
+                    "quality": "direction_only",
+                    "target_source": "yolo_candidate",
+                    "viewer_marker": "target_point",
+                    "candidate_id": "target_001",
+                    "semantic_class": "traffic_sign",
+                    "confidence": "0.87",
+                    "review_status": "candidate",
+                },
+            ],
+        })
+
+        target = state["targets"][0]
+        self.assertEqual(target["projection"], "direction_only")
+        self.assertEqual(target["quality"], "direction_only")
+        self.assertEqual(target["target_source"], "yolo_candidate")
+        self.assertEqual(target["viewer_marker"], "target_point")
+        self.assertEqual(target["candidate_id"], "target_001")
+        self.assertEqual(target["semantic_class"], "traffic_sign")
+        self.assertEqual(target["confidence"], 0.87)
+        self.assertEqual(target["review_status"], "candidate")
+
 
 if __name__ == "__main__":
     unittest.main()

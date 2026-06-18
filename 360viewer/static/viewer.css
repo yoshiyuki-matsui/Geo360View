@@ -177,6 +177,16 @@ button:disabled {
   width: 2px;
 }
 
+.click-target-marker-auto {
+  border-color: rgba(255, 190, 80, 0.96);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.48), 0 0 16px rgba(255, 190, 80, 0.42);
+}
+
+.click-target-marker-auto::before,
+.click-target-marker-auto::after {
+  background: rgba(255, 190, 80, 0.96);
+}
+
 .click-target-marker[hidden] {
   display: none;
 }

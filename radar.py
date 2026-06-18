@@ -732,6 +732,9 @@ class RadarMixin:
             projection["id"] = target.get("id")
         if target.get("order") is not None:
             projection["order"] = target.get("order")
+        for key in ("target_source", "viewer_marker", "candidate_id", "semantic_class", "confidence"):
+            if target.get(key) is not None:
+                projection[key] = target.get(key)
         return projection
 
     def viewerTargetProjections(self, lat, lon, heading, state):
