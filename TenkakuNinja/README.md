@@ -4,6 +4,11 @@ GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフ�
 
 このフォルダは、QGISプラグイン外へコピーして単体利用できます。
 
+## Documents
+
+- [semantic_360_pipeline.md](semantic_360_pipeline.md): 360動画をCubeMap化し、YOLO結果をクリック点互換の `semantic_targets_360` へ加工するCLIパイプライン設計。
+- [semantic_360_py_reference.md](semantic_360_py_reference.md): 追加した各pyの入出力、主要パラメータ、内部処理、チェックポイント仕様。
+
 ## Install
 
 ```bash
@@ -11,6 +16,8 @@ pip install -r requirements.txt
 ```
 
 ## CLI
+
+既存の証跡フレームExporter:
 
 このフォルダ内で実行する場合:
 
@@ -23,6 +30,91 @@ python main.py --database path/to/tmp.gpkg --video path/to/movie.mp4
 ```bash
 python TenkakuNinja/main.py --database path/to/tmp.gpkg --video path/to/movie.mp4
 ```
+
+360 semantic pipeline用のCubeMap生成:
+
+```bash
+python TenkakuNinja/cubemap.py \
+  --database path/to/tmp.gpkg \
+  --video path/to/movie.mp4 \
+  --work-db path/to/work/semantic_work.sqlite \
+  --faces all \
+  --checkpoint-interval 100
+```
+
+CubeMap生成は既定で `front/right/back/left/up/down` の6面を作り、生成した面を
+`semantic_work.sqlite` の `image_planes` に登録します。YOLOにかける面は後段の
+`yolo_detect.py` 側で絞ります。
+CubeMap生成はチェックポイントごとに `image_planes` とmetadataをcommitします。
+途中で止めても、同じ `--run-id` で再実行すれば既存画像を使いながら不足分を続行できます。
+
+CubeMap画像にYOLOをかける場合:
+
+```bash
+python TenkakuNinja/yolo_detect.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --model path/to/model.pt \
+  --faces front left right \
+  --conf 0.35 \
+  --chunk-size 100
+```
+
+YOLO検出結果は `semantic_work.sqlite` の `model_runs` と `yolo_detections_raw` に保存します。
+同じ `run_id` に対して複数回実行でき、モデルごとに別の `model_run_id` として追記します。
+YOLOはchunkごとにcommitし、`model_run` metadataへcheckpointを保存します。
+明示 `--model-run-id` を指定した再開では、`--resume` を付けると既存検出がある画像面を
+スキップします。
+
+```bash
+python TenkakuNinja/yolo_detect.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --model path/to/traffic_sign.pt \
+  --model-name traffic_sign_detector \
+  --faces front left right
+
+python TenkakuNinja/yolo_detect.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --model path/to/pothole.pt \
+  --model-name pothole_detector \
+  --faces down
+```
+
+前方・左方向の標識、下方の路面標示、後方の標識裏錆など、用途が違う検出も同じDBへ
+追記します。後段では `model_name`, `model_run_id`, `face_name`, `class_name` で
+レポートやGPKGレイヤを切り分けます。
+
+YOLO検出結果を目視確認するレポートを作る場合:
+
+```bash
+python TenkakuNinja/yolo_report.py \
+  --work-db path/to/work/semantic_work.sqlite
+```
+
+既定では `runs.work_dir/yolo_report/` に `summary.txt`, `summary.json`, CSV、
+`index.html`、検出枠付き画像を出力します。`semantic_targets_360` 作成後に実行すると、
+`detections.csv` にyaw/pitchやprojection/qualityも併記されます。
+大きすぎるbboxを確認対象から外す場合は `--max-bbox-area-ratio 0.30` を指定します。
+特定モデルだけ見る場合は `--model-names pothole_detector` または
+`--model-run-ids model_...` を指定します。
+
+YOLO検出結果を360クリック点互換targetへ加工する場合:
+
+```bash
+python TenkakuNinja/semantic_targets.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --camera-height-m 2.0 \
+  --hud-height-scale 1.0 \
+  --max-bbox-area-ratio 0.30 \
+  --clear-existing
+```
+
+この段階では緯度経度は作らず、`semantic_targets_360` に
+`target_yaw_to_camera_heading`、`target_pitch_deg`、`ground_distance_m` などを保存します。
+地面に接しているとみなせるクラスだけ `ground_plane` とし、標識や信号のような高さのある
+対象は `elevated_object` または `direction_only` として扱います。
+`--max-bbox-area-ratio` を指定すると、画面に対して大きすぎるbboxはtarget化しません。
+`--model-names` や `--model-run-ids` を指定して `--clear-existing` した場合は、
+指定モデル由来のtargetだけを削除・再生成します。
 
 ## Examples
 
