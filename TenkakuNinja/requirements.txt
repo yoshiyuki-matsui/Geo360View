@@ -1,3 +1,17 @@
 # Standalone TenkakuNinja Exporter dependencies.
 # This file is intentionally separate from the QGIS plugin runtime.
+
+# Frame extraction and CubeMap image IO.
 opencv-python>=4.8,<5
+numpy>=1.26,<3
+
+# Equirectangular -> CubeMap conversion.
+py360convert>=1.0.4,<2
+
+# YOLO inference and annotated report images.
+ultralytics>=8.3,<9
+Pillow>=10,<12
+
+# CUDA Torch is intentionally not pinned here.
+# Install torch/torchvision/torchaudio from the matching PyTorch CUDA index for
+# the target GPU environment, then verify it with TenkakuNinja/env_notes.md.
