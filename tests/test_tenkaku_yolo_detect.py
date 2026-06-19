@@ -146,6 +146,39 @@ class YoloDetectDbTests(unittest.TestCase):
         self.assertEqual(skipped_count, 1)
         self.assertEqual([row["plane_id"] for row in selected], [planes[1]["plane_id"]])
 
+    def test_filter_planes_for_resume_skips_checkpointed_planes_without_detections(self):
+        """checkpoint済みなら検出ゼロのplaneも再処理対象から外す。"""
+        model_run_id = sqlite_io.insert_model_run(
+            self.conn,
+            run_id=self.run_id,
+            model_name="assets",
+            model_path="models/assets.pt",
+            conf=0.35,
+        )
+        planes = yolo_detect.select_image_planes(self.conn, self.run_id, ("front", "left", "right"))
+        sqlite_io.set_metadata(
+            self.conn,
+            "model_run",
+            "yolo_detection_checkpoint",
+            {
+                "processed_plane_count": 2,
+                "total_plane_count": 3,
+                "status": "running",
+            },
+            scope_id=model_run_id,
+        )
+        self.conn.commit()
+
+        selected, skipped_count = yolo_detect.filter_planes_for_resume(
+            self.conn,
+            model_run_id,
+            planes,
+            resume=True,
+        )
+
+        self.assertEqual(skipped_count, 2)
+        self.assertEqual([row["plane_id"] for row in selected], [planes[2]["plane_id"]])
+
     def test_persist_yolo_checkpoint_writes_metadata(self):
         """YOLO checkpoint metadataをmodel_run単位で保存する。"""
         model_run_id = sqlite_io.insert_model_run(
@@ -202,6 +235,12 @@ class YoloDetectDbTests(unittest.TestCase):
             "model_run_id": model_run_id,
             "progress_interval": 100,
             "chunk_size": 100,
+            "batch": None,
+            "auto_batch_candidates": (16, 32, 64),
+            "auto_batch_probe_images": 256,
+            "auto_batch_target_vram_fraction": 0.85,
+            "auto_batch_safety_margin": 0.40,
+            "stream": True,
         }
 
         with self.assertRaises(ValueError):
@@ -220,6 +259,136 @@ class YoloDetectDbTests(unittest.TestCase):
         )
         self.assertEqual(reused_id, model_run_id)
         self.assertFalse(created)
+
+    def test_temporary_yolo_source_file_writes_paths_and_cleans_up(self):
+        """stream用のsource fileへ画像パスを書き、利用後に削除する。"""
+        image_paths = [
+            self.work_dir / "cubemap/0000/frame_0000030_front.jpg",
+            self.work_dir / "cubemap/0000/frame_0000030_right.jpg",
+        ]
+
+        with yolo_detect.temporary_yolo_source_file(image_paths) as source_path:
+            self.assertTrue(source_path.is_file())
+            lines = source_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines, [str(path) for path in image_paths])
+
+        self.assertFalse(source_path.exists())
+
+    def test_yolo_predict_stream_uses_source_file_and_batch(self):
+        """stream時はPython listではなくsource fileをUltralyticsへ渡す。"""
+
+        class FakeModel:
+            def __init__(self):
+                self.source = None
+                self.kwargs = None
+
+            def predict(self, source, **kwargs):
+                self.source = source
+                self.kwargs = kwargs
+                return iter(["result"])
+
+        config = yolo_detect.YoloDetectConfig(
+            work_db=self.database,
+            model=Path("models/assets.pt"),
+            run_id=self.run_id,
+            faces=("front",),
+            conf=0.35,
+            imgsz=640,
+            device="0",
+            limit=None,
+            model_name="assets",
+            model_version="",
+            model_run_id=None,
+            progress_interval=100,
+            chunk_size=100,
+            batch=32,
+            auto_batch_candidates=(16, 32, 64),
+            auto_batch_probe_images=256,
+            auto_batch_target_vram_fraction=0.85,
+            auto_batch_safety_margin=0.40,
+            stream=True,
+            resume=False,
+        )
+        model = FakeModel()
+        image_paths = [
+            self.work_dir / "cubemap/0000/frame_0000030_front.jpg",
+            self.work_dir / "cubemap/0000/frame_0000030_right.jpg",
+        ]
+
+        results = list(yolo_detect.yolo_predict(model, image_paths, config))
+
+        self.assertEqual(results, ["result"])
+        self.assertIsInstance(model.source, str)
+        self.assertTrue(model.source.endswith(".txt"))
+        self.assertFalse(Path(model.source).exists())
+        self.assertTrue(model.kwargs["stream"])
+        self.assertEqual(model.kwargs["batch"], 32)
+        self.assertEqual(model.kwargs["imgsz"], 640)
+        self.assertEqual(model.kwargs["device"], "0")
+
+    def test_stream_result_paths_map_back_to_planes_when_sorted(self):
+        """source file内の順序が変わってもresult.pathでplaneへ戻せる。"""
+        planes = yolo_detect.select_image_planes(self.conn, self.run_id, ("front", "right"))
+        path_chunk = [self.work_dir / str(plane["image_path"]) for plane in planes]
+        path_to_plane = {str(path.absolute()): plane for path, plane in zip(path_chunk, planes)}
+
+        class Result:
+            def __init__(self, path):
+                self.path = str(path)
+                self.boxes = None
+
+        sorted_results = [Result(path_chunk[1]), Result(path_chunk[0])]
+        mapped_plane_ids = [
+            yolo_detect.plane_for_yolo_result(result, path_to_plane, planes[index])["plane_id"]
+            for index, result in enumerate(sorted_results)
+        ]
+
+        self.assertEqual(mapped_plane_ids, [planes[1]["plane_id"], planes[0]["plane_id"]])
+
+    def test_stream_result_without_path_falls_back_to_order(self):
+        """result.pathがないテスト用結果は従来通り順序で扱う。"""
+
+        class Result:
+            path = ""
+
+        fallback_plane = {"plane_id": "fallback"}
+        plane = yolo_detect.plane_for_yolo_result(Result(), {}, fallback_plane)
+
+        self.assertEqual(plane["plane_id"], "fallback")
+
+    def test_stream_result_unknown_path_raises(self):
+        """現在chunk外のresult.pathは誤登録せずエラーにする。"""
+
+        class Result:
+            path = "/tmp/not_in_chunk.jpg"
+
+        with self.assertRaises(RuntimeError):
+            yolo_detect.plane_for_yolo_result(Result(), {}, {"plane_id": "fallback"})
+
+    def test_parse_batch_argument_accepts_int_or_auto(self):
+        """--batchは整数またはautoを受け付ける。"""
+        self.assertEqual(yolo_detect.parse_batch_argument("32"), 32)
+        self.assertEqual(yolo_detect.parse_batch_argument("auto"), "auto")
+        with self.assertRaises(Exception):
+            yolo_detect.parse_batch_argument("0")
+
+    def test_parse_int_csv_accepts_commas(self):
+        """auto batch候補をカンマ区切りで指定できる。"""
+        self.assertEqual(yolo_detect.parse_int_csv("16,32,64"), (16, 32, 64))
+
+    def test_select_auto_batch_candidate_applies_safety_margin(self):
+        """最速batchから安全マージンを取った候補を選ぶ。"""
+        successful = [
+            {"batch": 16, "throughput": 20.0},
+            {"batch": 32, "throughput": 26.0},
+            {"batch": 64, "throughput": 30.0},
+        ]
+
+        selected = yolo_detect.select_auto_batch_candidate(successful, safety_margin=0.40)
+
+        self.assertEqual(selected["best_batch"], 64)
+        self.assertEqual(selected["batch_ceiling"], 38)
+        self.assertEqual(selected["selected_batch"], 32)
 
 
 if __name__ == "__main__":

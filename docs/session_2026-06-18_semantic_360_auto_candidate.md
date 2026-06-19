@@ -91,8 +91,18 @@ poi_candidates_360
 
 QGISプラグインのNavに `Detection check` を追加しました。
 
-このモードでは、`poi_candidates_360` が存在するframeだけを辿ります。
+このモードでは、YOLO候補レイヤが存在するframeだけを辿ります。
 対象frameへ移動すると、同じframeのYOLO候補が360ビューアへ `targets` として送られます。
+
+NAVで扱う候補レイヤ名は標準化します。
+
+- 標準候補レイヤは `poi_candidates_360`。
+- モデル別に分ける場合は `poi_candidates_{model_slug}_360`。
+- GPKG読込時は `poi_candidates_360` を優先し、なければ `poi_candidates...` 系features layerを候補として読む。
+- QGIS上では `360 Detection Candidates` という一時メモリレイヤとして扱う。
+
+これにより、ポットホールなら `poi_candidates_pothole_360`、標識なら
+`poi_candidates_traffic_sign_360` のようにレイヤを分けても、同じ `Detection check` で辿れます。
 
 候補マーカーは手動クリック点と区別するため、ビューア上では別色で表示します。
 `semantic_class` と `confidence` もsessionに残すため、ブラウザのtitleや後続処理で参照できます。

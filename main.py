@@ -1309,6 +1309,37 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except Exception:
             return None
 
+    def gpkgCandidateLayer(self, gpkg_path):
+        """GeoPackage内のYOLO候補レイヤをQGISレイヤとして開く。"""
+        layer = self.gpkgLayer(gpkg_path, GPKG_CANDIDATE_LAYER_NAME, "360 Detection Candidates")
+        if layer is not None:
+            return layer
+
+        try:
+            conn = sqlite3.connect(f"file:{gpkg_path}?mode=ro", uri=True)
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT table_name
+                    FROM gpkg_contents
+                    WHERE data_type = 'features'
+                    ORDER BY table_name
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return None
+
+        for row in rows:
+            layer_name = str(row[0] or "")
+            if not self.isCandidateLayerName(layer_name):
+                continue
+            layer = self.gpkgLayer(gpkg_path, layer_name, "360 Detection Candidates")
+            if layer is not None and self.isCandidateLayer(layer):
+                return layer
+        return None
+
     def cloneLayerToMemory(self, source_layer, display_name):
         """GPKGレイヤを編集用ではない一時メモリレイヤへコピーする。"""
         crs_authid = "EPSG:4326"
@@ -1615,7 +1646,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.notifyWarning("database_load_failed", error=f"layer not found: {GPKG_FRAME_LAYER_NAME}")
             return False
         target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, "360 Click Targets")
-        candidate_source = self.gpkgLayer(gpkg_path, GPKG_CANDIDATE_LAYER_NAME, "360 Detection Candidates")
+        candidate_source = self.gpkgCandidateLayer(gpkg_path)
 
         frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points")
         target_layer = self.cloneLayerToMemory(target_source, "360 Click Targets") if target_source is not None else None
@@ -2015,9 +2046,18 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             source = str(layer.source())
         except Exception:
             source = ""
-        if GPKG_CANDIDATE_LAYER_NAME not in source and GPKG_CANDIDATE_LAYER_NAME not in str(layer.name()):
+        if not self.isCandidateLayerName(f"{layer.name()}\n{source}"):
             return False
         return self.normalizedPath(self.layerSourcePath(layer)) == self.normalizedPath(self.generatedLayerBackupPath())
+
+    def isCandidateLayerName(self, value):
+        """レイヤ名/source文字列がYOLO候補レイヤ名らしいか判定する。"""
+        text = str(value or "").lower()
+        return (
+            "360 detection candidates" in text
+            or GPKG_CANDIDATE_LAYER_NAME.lower() in text
+            or "poi_candidates" in text
+        )
 
     def isNamedCandidateLayer(self, layer):
         """表示名/source上もpoi_candidates_360相当と判断できるか確認する。"""
@@ -2031,8 +2071,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             source = str(layer.source())
         except Exception:
             source = ""
-        text = f"{name}\n{source}".lower()
-        return "360 detection candidates" in text or GPKG_CANDIDATE_LAYER_NAME.lower() in text
+        return self.isCandidateLayerName(f"{name}\n{source}")
 
     def layerHasVideoFrameCandidate(self, layer, video_name, frame_num=None):
         """指定動画/任意フレームのYOLO候補点を持つレイヤか確認する。"""

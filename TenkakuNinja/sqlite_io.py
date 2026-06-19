@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import time
 import uuid
 
 try:
@@ -73,13 +74,39 @@ def encode_column_value(column: str, value):
     return value
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+def connect(path: str | Path, timeout: float = 60.0) -> sqlite3.Connection:
     """Open a semantic work DB and return a row-dict capable connection."""
 
-    conn = sqlite3.connect(Path(path))
+    conn = sqlite3.connect(Path(path), timeout=float(timeout))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {int(float(timeout) * 1000)}")
     return conn
+
+
+def is_lock_error(error: sqlite3.OperationalError) -> bool:
+    """Return True when SQLite reports a transient database lock."""
+
+    text = str(error).lower()
+    return "database is locked" in text or "database is busy" in text or "locked" == text.strip()
+
+
+def commit_with_retry(
+    conn: sqlite3.Connection,
+    attempts: int = 6,
+    delay_seconds: float = 5.0,
+):
+    """Commit, retrying transient SQLite lock failures without losing the transaction."""
+
+    max_attempts = max(1, int(attempts))
+    for attempt in range(1, max_attempts + 1):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError as e:
+            if not is_lock_error(e) or attempt >= max_attempts:
+                raise
+            time.sleep(max(0.0, float(delay_seconds)) * attempt)
 
 
 @contextmanager
@@ -90,7 +117,7 @@ def open_work_db(path: str | Path):
     try:
         schema.create_schema(conn)
         yield conn
-        conn.commit()
+        commit_with_retry(conn)
     except Exception:
         conn.rollback()
         raise
@@ -105,7 +132,7 @@ def initialize(path: str | Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(path)
     schema.create_schema(conn)
-    conn.commit()
+    commit_with_retry(conn)
     return conn
 
 

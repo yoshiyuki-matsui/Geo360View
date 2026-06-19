@@ -97,8 +97,12 @@
 - [ ] `Esc` でクリックモードを解除できる。
 - [ ] 数値入力やコンボボックス編集中は、矢印キーが入力操作として扱われる。
 - [ ] 既存の地物登録プラグインがMapToolを持っている状態でも、操作パネルにフォーカスがあればナビゲーションできる。
-- [ ] `Nav` が `Frame step` / `Layer point` / `KP matched CSV` の各モードで期待通り移動する。
+- [ ] `Nav` が `Frame step` / `Layer point` / `KP matched CSV` / `Detection check` の各モードで期待通り移動する。
 - [ ] `KP matched CSV` がない状態で `KP matched CSV` モードを使うと、警告が出て `Frame step` へ自動的に戻る。
+- [ ] GPKG内に `poi_candidates_360` がある場合、`Detection check` がその候補フレームだけを辿る。
+- [ ] GPKG内に `poi_candidates_360` がなく `poi_candidates_pothole_360` などモデル別候補レイヤだけがある場合も、`Detection check` が候補フレームだけを辿る。
+- [ ] GPKG内の候補レイヤがQGIS上で `360 Detection Candidates` として読み込まれる。
+- [ ] `Detection check` でフレーム移動すると、同一frameのYOLO候補が360ビューア上に候補マーカーとして復元される。
 
 ## 8. Followと地図中心移動
 

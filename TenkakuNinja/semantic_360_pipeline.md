@@ -376,9 +376,28 @@ python TenkakuNinja/yolo_detect.py \
   --resume
 ```
 
-現状のresumeは、既に1件以上の検出がある `plane_id` をスキップします。検出0件だった面は
-再処理される可能性がありますが、重複検出は発生しません。完全な「処理済み0件」管理が
-必要になった段階で、plane処理ステータス表を追加します。
+resume時は、`metadata(scope='model_run', key='yolo_detection_checkpoint')` の
+`processed_plane_count` を優先し、checkpoint済みの画像面をスキップします。
+検出0件だった面も、checkpoint済みであれば再処理対象から外れます。
+古いDBなどcheckpointがない場合は、既に1件以上の検出がある `plane_id` もスキップ候補として扱います。
+
+GPU推論では `--batch auto` を指定できます。候補batchを短く試運転し、throughputとVRAM使用量を見たうえで、
+最速候補から `--auto-batch-safety-margin` 分の余裕を取ったbatchを選択します。
+
+```bash
+python TenkakuNinja/yolo_detect.py \
+  --work-db work/semantic_work.sqlite \
+  --model models/pothole.pt \
+  --model-name pothole_detector \
+  --faces front down \
+  --device 0 \
+  --conf 0.25 \
+  --batch auto \
+  --auto-batch-candidates 16,24,32,48 \
+  --auto-batch-safety-margin 0.25
+```
+
+長時間運用では最高速batchよりも、GPUメモリと他ジョブに余裕を残す安定batchを優先します。
 
 想定例:
 
@@ -527,6 +546,19 @@ trajectory_heading(positions_by_frame, frame_index, window_frames)
 
 手動クリック点の `click_targets_360` とは分けます。`semantic_work.sqlite` は処理途中の
 内部DB、ユーザがQGISで開いて操作する対象は `tmp.gpkg` です。
+
+NAVモードで自動認識できるように、GPKGへ出す候補レイヤ名は標準化します。
+
+- 汎用候補レイヤ: `poi_candidates_360`
+- モデル別候補レイヤ: `poi_candidates_{model_slug}_360`
+
+QGISプラグインは、GPKG読込時にまず `poi_candidates_360` を探します。
+存在しない場合は、`gpkg_contents` のfeatures layerから `poi_candidates...` 系レイヤを探し、
+`360 Detection Candidates` の一時メモリレイヤとして読み込みます。
+このレイヤがNavの `Detection check` 対象になります。
+
+`DetectionCheck` など任意のレイヤ名は標準運用では使わず、モデル別に分けたい場合も
+`poi_candidates_` prefix を維持します。
 
 属性には次を持たせます。
 

@@ -65,8 +65,8 @@ python TenkakuNinja/yolo_detect.py \
 YOLO検出結果は `semantic_work.sqlite` の `model_runs` と `yolo_detections_raw` に保存します。
 同じ `run_id` に対して複数回実行でき、モデルごとに別の `model_run_id` として追記します。
 YOLOはchunkごとにcommitし、`model_run` metadataへcheckpointを保存します。
-明示 `--model-run-id` を指定した再開では、`--resume` を付けると既存検出がある画像面を
-スキップします。
+明示 `--model-run-id` を指定した再開では、`--resume` を付けるとcheckpoint済みの画像面を
+スキップします。検出0件だった画像面も、checkpoint済みであれば再処理対象から外れます。
 
 ```bash
 python TenkakuNinja/yolo_detect.py \
@@ -146,10 +146,15 @@ python TenkakuNinja/gpkg_merge.py \
 
 `semantic_work.sqlite` は処理途中の内部DBです。ユーザがQGISで開いて操作する成果物は
 `tmp.gpkg` とし、YOLO由来候補は `poi_candidates_360` レイヤへ出力します。
+モデル別にレイヤを分ける場合は、NAVモードの自動認識に合わせて
+`poi_candidates_{model_slug}_360` 形式にします。
 手動クリック点の `click_targets_360` とは別レイヤなので、候補点と手動点を混同しません。
 `poi_candidates_360` には `target_yaw`, `target_pitch`, `evidence_bbox_json`,
 `bbox_anchor`, `anchor_x_px/y_px`, `cubemap_u/v`, `semantic_class`, `confidence` も出力するため、
 地図上の候補点から360ビューア上の検出方向へ点マーカーを復元できます。
+QGISプラグインは `poi_candidates_360` を優先して読み、存在しない場合は
+`poi_candidates...` 系features layerを `360 Detection Candidates` として読みます。
+この候補レイヤがNavの `Detection check` 対象です。
 
 ## Examples
 

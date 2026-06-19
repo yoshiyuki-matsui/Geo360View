@@ -498,7 +498,7 @@ def flush_cubemap_checkpoint(
     sqlite_io.set_metadata(conn, "run", "cubemap_checkpoint", summary, scope_id=run_id)
     sqlite_io.set_metadata(conn, "run", "cubemap_summary", summary, scope_id=run_id)
     sqlite_io.update_run_status(conn, run_id, f"cubemap_{status}")
-    conn.commit()
+    sqlite_io.commit_with_retry(conn)
     pending_faces.clear()
     return registered_count, summary
 
@@ -540,7 +540,7 @@ def generate_cubemaps(config: CubemapConfig):
             status="cubemap_running",
         )
         sqlite_io.update_run_status(conn, run_id, "cubemap_running")
-        conn.commit()
+        sqlite_io.commit_with_retry(conn)
 
         cap = cv2.VideoCapture(str(config.video))
         if not cap.isOpened():

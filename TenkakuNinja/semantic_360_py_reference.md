@@ -438,8 +438,10 @@ python TenkakuNinja/yolo_detect.py \
 - chunkごとにDB commitします。
 - Ctrl+C時も完了済みchunkはDBに残ります。
 - 既存 `--model-run-id` を使う場合は `--resume` が必須です。指定しない場合は重複防止でエラー。
-- resume時は、既に1件以上の検出がある `plane_id` をスキップします。
-- 検出0件だった面は現仕様では再処理される可能性があります。完全な0件処理済み管理が必要なら、将来 `processed_planes` 表を追加します。
+- resume時は、`metadata(scope='model_run', key='yolo_detection_checkpoint')` の `processed_plane_count`
+  を優先し、checkpoint済みの画像面をスキップします。
+- 検出0件だった面も、checkpoint済みであれば再処理対象から外れます。
+- 古いDBなどcheckpointがない場合は、既に1件以上の検出がある `plane_id` もスキップ候補として扱います。
 
 ## semantic_targets.py
 
