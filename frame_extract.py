@@ -198,7 +198,7 @@ class FrameExtractMixin:
                 self.uiText("ui.preview.timing.existing", elapsed=elapsed),
             )
             self.loadPreview(image_path, info, frame_num=frame_num)
-            self.notifyInfo("frame_cached", frame=frame_num, elapsed=elapsed)
+            self.notifyDebug("frame_cached", frame=frame_num, elapsed=elapsed)
             return
 
         try:
@@ -252,4 +252,4 @@ class FrameExtractMixin:
             timing_text,
         )
         self.loadPreview(image_path, info, frame_num=frame_num)
-        self.notifyInfo("frame_saved", frame=frame_num, total=total_elapsed, path=image_path)
+        self.notifyDebug("frame_saved", frame=frame_num, total=total_elapsed, path=image_path)

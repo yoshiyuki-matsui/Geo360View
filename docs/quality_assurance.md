@@ -342,6 +342,10 @@ QGIS messageBarとログは役割を分けます。
 - debug log: HTTP連携、viewer session、frame抽出、レーダ計算、例外traceback
 - batch manifest: Exporterのframe単位status/error/path
 
+QGIS操作パネルの `Log` チェックがOFFの場合、高頻度debug logは出しません。
+連続Nav中にmessageBarやHTTPアクセスログが処理遅延の原因になるためです。
+OFFでも、起動失敗、保存失敗、入力エラーなどユーザ判断に必要な警告は表示します。
+
 ログに残したい主要イベント:
 
 - 起動時環境
@@ -356,6 +360,10 @@ QGIS messageBarとログは役割を分けます。
 - `Exit` 時の保存・削除・viewer停止
 
 QGISユーザには短く出し、詳細はログで追える状態を目指します。
+
+終了時保存は、GPKG由来レイヤをすべて無条件に書き戻すのではなく、
+読み込み後にfeature追加、削除、属性変更、ジオメトリ変更があったレイヤだけを保存対象にします。
+閲覧だけの終了は軽くし、QGISテーブル上で削除・編集した場合は変更を失わないことを確認対象にします。
 
 例:
 

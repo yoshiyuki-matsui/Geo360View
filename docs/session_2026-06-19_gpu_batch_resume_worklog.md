@@ -164,9 +164,11 @@ NAVモードの標準は次のように整理します。
 
 - 標準候補レイヤ名は `poi_candidates_360` とする。
 - モデル別に分ける場合は `poi_candidates_{model_slug}_360` とする。
-- GPKG読込時は、まず `poi_candidates_360` を優先して読む。
-- 標準レイヤがない場合は、`gpkg_contents` から `poi_candidates...` 系 features layer を探す。
-- QGIS上では候補レイヤを `360 Detection Candidates` のメモリレイヤとして読み、NAVの `Detection check` 対象にする。
+- GPKG読込時は、`gpkg_contents` から `poi_candidates...` 系 features layer を探す。
+- 複数のモデル別候補レイヤがある場合は、それぞれをQGISメモリレイヤとして読み込む。
+- QGIS上では `360 Detection Candidates: poi_candidates_pothole_360` のように元レイヤ名付きで表示し、NAVの `Detection check` 対象にする。
+- `Detection check` の `Scope` で `Active layer`, `All candidates`, `Selected features` を切り替える。
+- `Active layer` はQGISの現在選択レイヤとsubset filterを反映し、`Selected features` は選択中featureだけを巡回する。
 - `Detection check` は、候補が存在するframeだけを辿り、同じframeの候補を360ビューアへ `targets` として送る。
 
 これにより、たとえば次のレイヤ名も NAV 対象の候補レイヤとして扱えます。
@@ -178,6 +180,9 @@ NAVモードの標準は次のように整理します。
 今後のGPKG出力では、モデル別レイヤを作る場合も `poi_candidates_` prefix を維持します。
 `DetectionCheck` のような任意名は人間には分かりやすい一方で、自動認識の規約から外れるため、
 標準運用では使わない方針です。
+なお、`semantic_class` はモデルの出力class名を保持します。
+たとえば交通標識レイヤでも `semantic_class=traffic_sign` ではなく、
+`Red Light`, `Green Light`, `Speed Limit 40` のような実クラス名になります。
 
 ## 7. 検証
 

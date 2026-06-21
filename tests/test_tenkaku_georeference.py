@@ -226,6 +226,56 @@ class GeoreferenceDbTests(unittest.TestCase):
         self.assertEqual(result["skipped_count"], 1)
         self.assertEqual(result["skipped"][0]["reason"], "ground_distance_exceeds_max")
 
+    def test_generate_poi_candidates_can_skip_stationary_camera(self):
+        """停止中など軌跡移動量が小さいtargetは候補化から外せる。"""
+        center = projection.GeoPoint(lat=35.0, lon=135.0)
+        before = projection.destination_point(center.lat, center.lon, 180.0, 0.05)
+        after = projection.destination_point(center.lat, center.lon, 0.0, 0.05)
+        conn = sqlite3.connect(self.gpkg)
+        try:
+            conn.execute(
+                """
+                UPDATE video_gpx_points
+                SET latitude = ?, longitude = ?, aligned_latitude = ?, aligned_longitude = ?
+                WHERE frame = ?
+                """,
+                (before.lat, before.lon, before.lat, before.lon, 20),
+            )
+            conn.execute(
+                """
+                UPDATE video_gpx_points
+                SET latitude = ?, longitude = ?, aligned_latitude = ?, aligned_longitude = ?
+                WHERE frame = ?
+                """,
+                (center.lat, center.lon, center.lat, center.lon, 30),
+            )
+            conn.execute(
+                """
+                UPDATE video_gpx_points
+                SET latitude = ?, longitude = ?, aligned_latitude = ?, aligned_longitude = ?
+                WHERE frame = ?
+                """,
+                (after.lat, after.lon, after.lat, after.lon, 40),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = georeference.generate_poi_candidates(
+            georeference.GeoreferenceConfig(
+                work_db=self.work_db,
+                run_id=self.run_id,
+                exclude_stationary=True,
+                stationary_distance_m=0.5,
+                clear_existing=True,
+            )
+        )
+
+        self.assertEqual(result["target_count"], 2)
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["skipped_count"], 2)
+        self.assertEqual({item["reason"] for item in result["skipped"]}, {"stationary_camera"})
+
 
 if __name__ == "__main__":
     unittest.main()

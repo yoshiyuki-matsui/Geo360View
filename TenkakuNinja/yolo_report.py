@@ -8,10 +8,12 @@ not depend on QGIS.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import csv
 from dataclasses import dataclass
 from html import escape
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -29,6 +31,7 @@ except ImportError:
 
 DEFAULT_REPORT_DIR_NAME = "yolo_report"
 DEFAULT_JPEG_QUALITY = 92
+IMAGE_SAMPLE_MODES = ("first", "even", "class-balanced")
 FACE_DISPLAY_ORDER = {
     "front": 0,
     "right": 1,
@@ -55,6 +58,12 @@ class YoloReportConfig:
     model_run_ids: tuple[str, ...] = ()
     model_names: tuple[str, ...] = ()
     max_bbox_area_ratio: float | None = None
+    image_sample_mode: str = "first"
+    position_db: Path | None = None
+    position_layer: str | None = None
+    exclude_stationary: bool = False
+    stationary_window_frames: int = 30
+    stationary_distance_m: float = 0.5
 
 
 def normalize_text_values(values) -> tuple[str, ...]:
@@ -84,6 +93,14 @@ def output_dir_for_run(work_db: Path, run_row: dict, requested: Path | None) -> 
     work_dir = str(run_row.get("work_dir") or "").strip()
     base = Path(work_dir) if work_dir else Path(work_db).parent
     return base / DEFAULT_REPORT_DIR_NAME
+
+
+def open_report_db(path: Path) -> sqlite3.Connection:
+    """Open the work DB read-only for report generation."""
+
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def fetch_detection_rows(
@@ -169,6 +186,106 @@ def group_by_plane(rows: list[dict]) -> list[tuple[str, list[dict]]]:
     return [(plane_id, grouped[plane_id]) for plane_id in order]
 
 
+def select_evenly(items: list, max_count: int) -> list:
+    """Return up to max_count items spread across the input order."""
+
+    count = max(0, int(max_count))
+    if count <= 0:
+        return []
+    if count >= len(items):
+        return list(items)
+    if count == 1:
+        return [items[0]]
+
+    last_index = len(items) - 1
+    indices: list[int] = []
+    seen: set[int] = set()
+    for index in range(count):
+        selected = round(index * last_index / (count - 1))
+        if selected in seen:
+            continue
+        seen.add(selected)
+        indices.append(selected)
+
+    if len(indices) < count:
+        for selected in range(len(items)):
+            if selected in seen:
+                continue
+            seen.add(selected)
+            indices.append(selected)
+            if len(indices) >= count:
+                break
+    return [items[index] for index in sorted(indices[:count])]
+
+
+def dominant_class_name(rows: list[dict]) -> str:
+    """Return the strongest class name on one image plane."""
+
+    if not rows:
+        return ""
+    strongest = max(rows, key=lambda row: numeric(row.get("confidence"), default=-1.0))
+    return str(strongest.get("class_name") or "")
+
+
+def select_class_balanced_grouped_rows(
+    grouped_rows: list[tuple[str, list[dict]]],
+    max_count: int,
+) -> list[tuple[str, list[dict]]]:
+    """Return image planes balanced by dominant class and spread across frames."""
+
+    limit = max(0, int(max_count))
+    if limit <= 0:
+        return []
+    if limit >= len(grouped_rows):
+        return list(grouped_rows)
+
+    buckets: dict[str, list[tuple[int, tuple[str, list[dict]]]]] = {}
+    for index, item in enumerate(grouped_rows):
+        buckets.setdefault(dominant_class_name(item[1]), []).append((index, item))
+
+    keys = sorted(buckets, key=lambda key: (-len(buckets[key]), key))
+    quotas = {key: 0 for key in keys}
+    active = list(keys)
+    selected_count = 0
+    while selected_count < limit and active:
+        for key in list(active):
+            if quotas[key] < len(buckets[key]):
+                quotas[key] += 1
+                selected_count += 1
+            if quotas[key] >= len(buckets[key]):
+                active.remove(key)
+            if selected_count >= limit:
+                break
+
+    selected: list[tuple[int, tuple[str, list[dict]]]] = []
+    for key in keys:
+        quota = quotas[key]
+        if quota <= 0:
+            continue
+        selected.extend(select_evenly(buckets[key], quota))
+    selected.sort(key=lambda item: item[0])
+    return [item for _, item in selected[:limit]]
+
+
+def select_grouped_rows_for_images(
+    grouped_rows: list[tuple[str, list[dict]]],
+    max_images: int | None,
+    image_sample_mode: str = "first",
+) -> list[tuple[str, list[dict]]]:
+    """Select image planes for annotation according to the requested sampling mode."""
+
+    if max_images is None:
+        return list(grouped_rows)
+
+    limit = max(0, int(max_images))
+    mode = str(image_sample_mode or "first").strip().lower()
+    if mode == "even":
+        return select_evenly(grouped_rows, limit)
+    if mode == "class-balanced":
+        return select_class_balanced_grouped_rows(grouped_rows, limit)
+    return list(grouped_rows[:limit])
+
+
 def numeric(value, default=0.0) -> float:
     """Return a float fallback for optional SQLite values."""
 
@@ -178,6 +295,188 @@ def numeric(value, default=0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def optional_numeric(value) -> float | None:
+    """Return a float or None for optional database values."""
+
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return approximate WGS84 great-circle distance in meters."""
+
+    radius_m = 6371000.0
+    phi1 = math.radians(float(lat1))
+    phi2 = math.radians(float(lat2))
+    dphi = math.radians(float(lat2) - float(lat1))
+    dlambda = math.radians(float(lon2) - float(lon1))
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    return radius_m * 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+
+
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    """Return whether a SQLite table exists."""
+
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ? LIMIT 1",
+        (str(table_name),),
+    ).fetchone()
+    return row is not None
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    """Return column names for one SQLite table."""
+
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({schema.quote_identifier(table_name)})")}
+    except sqlite3.Error:
+        return set()
+
+
+def first_existing_column(columns: set[str], candidates: tuple[str, ...]) -> str | None:
+    """Return the first candidate column present in a table."""
+
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+    return None
+
+
+def coalesce_expression(columns: set[str], candidates: tuple[str, ...]) -> str | None:
+    """Return a SQL expression that chooses the first non-null candidate column."""
+
+    existing = [schema.quote_identifier(candidate) for candidate in candidates if candidate in columns]
+    if not existing:
+        return None
+    if len(existing) == 1:
+        return existing[0]
+    return f"COALESCE({', '.join(existing)})"
+
+
+def read_frame_positions_from_db(
+    db_path: Path,
+    preferred_layer: str | None = None,
+) -> dict[int, tuple[float, float]]:
+    """Read frame-indexed camera positions from a work DB or GeoPackage."""
+
+    candidates = []
+    if preferred_layer:
+        candidates.append(str(preferred_layer))
+    candidates.extend(["source_frames", "video_gpx_points"])
+
+    positions: dict[int, tuple[float, float]] = {}
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        for layer in dict.fromkeys(candidates):
+            if not table_exists(conn, layer):
+                continue
+            columns = table_columns(conn, layer)
+            frame_column = first_existing_column(columns, ("frame", "frame_index", "source_frame"))
+            lat_expr = coalesce_expression(columns, ("aligned_latitude", "camera_lat", "latitude", "lat"))
+            lon_expr = coalesce_expression(columns, ("aligned_longitude", "camera_lon", "longitude", "lon", "lng"))
+            if not frame_column or not lat_expr or not lon_expr:
+                continue
+
+            sql = f"""
+                SELECT
+                    {schema.quote_identifier(frame_column)} AS frame_index,
+                    {lat_expr} AS latitude,
+                    {lon_expr} AS longitude
+                FROM {schema.quote_identifier(layer)}
+                WHERE {schema.quote_identifier(frame_column)} IS NOT NULL
+                ORDER BY {schema.quote_identifier(frame_column)}
+            """
+            for row in conn.execute(sql):
+                frame = optional_numeric(row["frame_index"])
+                lat = optional_numeric(row["latitude"])
+                lon = optional_numeric(row["longitude"])
+                if frame is None or lat is None or lon is None:
+                    continue
+                positions[int(frame)] = (float(lat), float(lon))
+            if positions:
+                return positions
+    finally:
+        conn.close()
+    return positions
+
+
+def nearest_position_at_or_before(frames: list[int], positions: dict[int, tuple[float, float]], frame: int):
+    """Return nearest known position at or before frame."""
+
+    index = bisect_left(frames, int(frame))
+    if index < len(frames) and frames[index] == int(frame):
+        return frames[index], positions[frames[index]]
+    if index <= 0:
+        return None
+    selected = frames[index - 1]
+    return selected, positions[selected]
+
+
+def nearest_position_at_or_after(frames: list[int], positions: dict[int, tuple[float, float]], frame: int):
+    """Return nearest known position at or after frame."""
+
+    index = bisect_left(frames, int(frame))
+    if index >= len(frames):
+        return None
+    selected = frames[index]
+    return selected, positions[selected]
+
+
+def is_stationary_frame(
+    frame_index: int,
+    frames: list[int],
+    positions: dict[int, tuple[float, float]],
+    window_frames: int,
+    distance_m: float,
+) -> bool:
+    """Return True when the camera barely moved around a frame."""
+
+    if not frames or not positions:
+        return False
+    frame = int(frame_index)
+    window = max(1, int(window_frames))
+    before = nearest_position_at_or_before(frames, positions, frame - window)
+    after = nearest_position_at_or_after(frames, positions, frame + window)
+    if before is None or after is None:
+        return False
+    before_frame, before_pos = before
+    after_frame, after_pos = after
+    if before_frame == after_frame:
+        return False
+    moved_m = haversine_m(before_pos[0], before_pos[1], after_pos[0], after_pos[1])
+    return moved_m <= max(0.0, float(distance_m))
+
+
+def filter_stationary_rows(
+    rows: list[dict],
+    positions: dict[int, tuple[float, float]],
+    window_frames: int,
+    distance_m: float,
+) -> tuple[list[dict], list[dict]]:
+    """Split detection rows into moving and stationary-frame rows."""
+
+    if not positions:
+        return rows, []
+    frames = sorted(positions)
+    moving_rows = []
+    stationary_rows = []
+    stationary_cache: dict[int, bool] = {}
+    for row in rows:
+        frame = int(numeric(row.get("frame_index"), default=-1))
+        if frame not in stationary_cache:
+            stationary_cache[frame] = is_stationary_frame(frame, frames, positions, window_frames, distance_m)
+        if stationary_cache[frame]:
+            stationary_rows.append(row)
+        else:
+            moving_rows.append(row)
+    return moving_rows, stationary_rows
 
 
 def html_image_sort_key(row: dict) -> tuple:
@@ -426,15 +725,14 @@ def write_annotated_images(
     grouped_rows: list[tuple[str, list[dict]]],
     max_images: int | None,
     jpeg_quality: int,
+    image_sample_mode: str = "first",
 ) -> tuple[dict[str, str], int, int]:
     """Write annotated images and return plane_id -> relative output path."""
 
     annotated_by_plane: dict[str, str] = {}
     written = 0
     missing = 0
-    selected = grouped_rows
-    if max_images is not None:
-        selected = grouped_rows[: max(0, int(max_images))]
+    selected = select_grouped_rows_for_images(grouped_rows, max_images, image_sample_mode)
 
     for plane_id, rows in selected:
         image_path = resolve_image_path(work_db, run_row, rows[0])
@@ -462,6 +760,7 @@ def write_summary_text(path: Path, summary: dict):
         f"Input detection count: {summary['input_detection_count']}",
         f"Detection count: {summary['detection_count']}",
         f"Large bbox filtered: {summary['large_bbox_filtered_count']}",
+        f"Stationary filtered: {summary['stationary_filtered_count']}",
         f"Annotated images: {summary['annotated_image_count']}",
         f"Missing image planes: {summary['missing_image_count']}",
         "",
@@ -551,7 +850,7 @@ figcaption {{ font-size: 12px; margin-top: 4px; }}
 <h1>YOLO Detection Report</h1>
 <p>Run ID: {escape(str(summary['run_id']))}</p>
 <p>Detections: {summary['detection_count']} / Annotated images: {summary['annotated_image_count']}</p>
-<p>Input detections: {summary['input_detection_count']} / Large bbox filtered: {summary['large_bbox_filtered_count']}</p>
+<p>Input detections: {summary['input_detection_count']} / Large bbox filtered: {summary['large_bbox_filtered_count']} / Stationary filtered: {summary['stationary_filtered_count']}</p>
 <h2>Model Run Summary</h2>
 <table><tr><th>Model</th><th>Model run ID</th><th>Count</th><th>First frame</th><th>Last frame</th></tr>{model_rows}</table>
 <h2>Class Summary</h2>
@@ -574,7 +873,7 @@ def build_report(config: YoloReportConfig) -> dict:
     if not config.work_db.is_file():
         raise FileNotFoundError(f"semantic_work.sqlite not found: {config.work_db}")
 
-    conn = sqlite_io.initialize(config.work_db)
+    conn = open_report_db(config.work_db)
     try:
         run_row = resolve_run(conn, config.run_id)
         run_id = str(run_row["run_id"])
@@ -591,6 +890,18 @@ def build_report(config: YoloReportConfig) -> dict:
             model_names=config.model_names,
         )
         rows, large_bbox_skipped = filter_large_bbox_rows(input_rows, config.max_bbox_area_ratio)
+        stationary_skipped: list[dict] = []
+        position_count = 0
+        if config.exclude_stationary:
+            position_db = config.position_db or config.work_db
+            positions = read_frame_positions_from_db(position_db, config.position_layer)
+            position_count = len(positions)
+            rows, stationary_skipped = filter_stationary_rows(
+                rows,
+                positions,
+                config.stationary_window_frames,
+                config.stationary_distance_m,
+            )
         grouped_rows = group_by_plane(rows)
         if config.write_images:
             annotated_by_plane, annotated_count, missing_count = write_annotated_images(
@@ -600,6 +911,7 @@ def build_report(config: YoloReportConfig) -> dict:
                 grouped_rows,
                 config.max_images,
                 config.jpeg_quality,
+                config.image_sample_mode,
             )
         else:
             annotated_by_plane, annotated_count, missing_count = {}, 0, 0
@@ -615,17 +927,23 @@ def build_report(config: YoloReportConfig) -> dict:
             "input_detection_count": len(input_rows),
             "detection_count": len(rows),
             "large_bbox_filtered_count": len(large_bbox_skipped),
+            "stationary_filtered_count": len(stationary_skipped),
+            "stationary_position_count": int(position_count),
+            "stationary_window_frames": int(config.stationary_window_frames),
+            "stationary_distance_m": float(config.stationary_distance_m),
             "image_plane_with_detection_count": len(grouped_rows),
             "annotated_image_count": annotated_count,
             "missing_image_count": missing_count,
             "model_run_count": model_run_count,
             "min_conf": config.min_conf,
             "max_bbox_area_ratio": config.max_bbox_area_ratio,
+            "image_sample_mode": config.image_sample_mode,
             "faces": list(config.faces),
             "classes": list(config.classes),
             "model_run_ids": list(config.model_run_ids),
             "model_names": list(config.model_names),
             "large_bbox_skipped": large_bbox_skipped[:50],
+            "stationary_skipped": stationary_skipped[:50],
             "model_run_summary": model_run_summary,
             "class_summary": class_summary,
             "face_summary": face_summary,
@@ -686,8 +1004,6 @@ def build_report(config: YoloReportConfig) -> dict:
         )
         write_summary_text(output_dir / "summary.txt", summary)
         write_html_index(output_dir / "index.html", summary, detections)
-        sqlite_io.set_metadata(conn, "run", "yolo_report_summary", summary, scope_id=run_id)
-        conn.commit()
     finally:
         conn.close()
 
@@ -707,8 +1023,39 @@ def build_arg_parser():
     parser.add_argument("--model-run-ids", nargs="+", default=[], help="Optional model_run_id values to include.")
     parser.add_argument("--model-names", nargs="+", default=[], help="Optional model_names to include.")
     parser.add_argument("--max-images", type=int, help="Limit number of annotated image planes.")
+    parser.add_argument(
+        "--image-sample-mode",
+        choices=IMAGE_SAMPLE_MODES,
+        default="first",
+        help="How to choose annotated image planes when --max-images is set.",
+    )
     parser.add_argument("--no-images", action="store_true", help="Write summaries only.")
     parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
+    parser.add_argument(
+        "--position-db",
+        help="Optional SQLite/GeoPackage path containing frame positions for stationary filtering.",
+    )
+    parser.add_argument(
+        "--position-layer",
+        help="Optional frame position layer/table. Default: auto-detect source_frames or video_gpx_points.",
+    )
+    parser.add_argument(
+        "--exclude-stationary",
+        action="store_true",
+        help="Exclude detections from frames where the camera barely moved around the frame.",
+    )
+    parser.add_argument(
+        "--stationary-window-frames",
+        type=int,
+        default=30,
+        help="Frame window on each side used by --exclude-stationary.",
+    )
+    parser.add_argument(
+        "--stationary-distance-m",
+        type=float,
+        default=0.5,
+        help="Maximum movement across the stationary window treated as stationary.",
+    )
     parser.add_argument(
         "--max-bbox-area-ratio",
         type=float,
@@ -733,6 +1080,12 @@ def config_from_args(args) -> YoloReportConfig:
         write_images=not bool(args.no_images),
         jpeg_quality=int(args.jpeg_quality),
         max_bbox_area_ratio=args.max_bbox_area_ratio,
+        image_sample_mode=str(args.image_sample_mode or "first"),
+        position_db=Path(args.position_db).expanduser().resolve() if args.position_db else None,
+        position_layer=str(args.position_layer).strip() if args.position_layer else None,
+        exclude_stationary=bool(args.exclude_stationary),
+        stationary_window_frames=max(1, int(args.stationary_window_frames)),
+        stationary_distance_m=max(0.0, float(args.stationary_distance_m)),
     )
 
 
@@ -752,6 +1105,14 @@ def main(argv=None):
     print(f"Detections: {summary['detection_count']}")
     if config.max_bbox_area_ratio is not None:
         print(f"Large bbox filtered: {summary['large_bbox_filtered_count']}")
+    if config.exclude_stationary:
+        print(
+            "Stationary filtered: "
+            f"{summary['stationary_filtered_count']} "
+            f"(positions={summary['stationary_position_count']}, "
+            f"window={summary['stationary_window_frames']}, "
+            f"distance={summary['stationary_distance_m']:.2f}m)"
+        )
     print(f"Annotated images: {summary['annotated_image_count']}")
     print(f"Done in {elapsed:.2f}s.")
     return 0

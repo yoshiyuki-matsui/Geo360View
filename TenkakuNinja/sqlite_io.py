@@ -25,6 +25,7 @@ JSON_COLUMNS = {
     "evidence_bbox_json",
     "payload_json",
     "value_json",
+    "member_candidate_ids_json",
 }
 
 
@@ -494,6 +495,112 @@ def insert_poi_candidate(
             "distance_method": distance_method,
             "quality": quality,
             "payload_json": payload or {},
+            "created_at": utc_now_text(),
+        },
+    )
+    return candidate_id
+
+
+def insert_poi_cluster(
+    conn: sqlite3.Connection,
+    run_id: str,
+    cluster_id: str,
+    representative_candidate_id: str,
+    target_id: str,
+    frame_index: int,
+    camera_lat: float | None,
+    camera_lon: float | None,
+    object_lat: float | None,
+    object_lon: float | None,
+    bearing_deg: float | None,
+    distance_m: float | None,
+    position_method: str,
+    distance_method: str,
+    quality: str = "unknown",
+    target_source: str = "",
+    semantic_class: str = "",
+    confidence: float | None = None,
+    projection: str = "",
+    model_run_id: str = "",
+    model_name: str = "",
+    evidence_face: str | None = None,
+    observation_count: int = 0,
+    min_frame_index: int | None = None,
+    max_frame_index: int | None = None,
+    min_confidence: float | None = None,
+    max_confidence: float | None = None,
+    mean_confidence: float | None = None,
+    cluster_score: float | None = None,
+    cluster_radius_m: float | None = None,
+    member_candidate_ids: list | tuple | None = None,
+    payload: dict | None = None,
+) -> str:
+    """Insert or replace one clustered POI row and return cluster_id."""
+
+    upsert_row(
+        conn,
+        schema.POI_CLUSTERS_TABLE,
+        {
+            "cluster_id": cluster_id,
+            "run_id": run_id,
+            "representative_candidate_id": representative_candidate_id,
+            "target_id": target_id,
+            "frame_index": int(frame_index),
+            "target_source": target_source,
+            "semantic_class": semantic_class,
+            "confidence": confidence,
+            "projection": projection,
+            "model_run_id": model_run_id,
+            "model_name": model_name,
+            "evidence_face": evidence_face,
+            "camera_lat": camera_lat,
+            "camera_lon": camera_lon,
+            "object_lat": object_lat,
+            "object_lon": object_lon,
+            "bearing_deg": bearing_deg,
+            "distance_m": distance_m,
+            "position_method": position_method,
+            "distance_method": distance_method,
+            "quality": quality,
+            "observation_count": int(observation_count),
+            "min_frame_index": min_frame_index,
+            "max_frame_index": max_frame_index,
+            "min_confidence": min_confidence,
+            "max_confidence": max_confidence,
+            "mean_confidence": mean_confidence,
+            "cluster_score": cluster_score,
+            "cluster_radius_m": cluster_radius_m,
+            "member_candidate_ids_json": list(member_candidate_ids or []),
+            "payload_json": payload or {},
+            "created_at": utc_now_text(),
+        },
+    )
+    return cluster_id
+
+
+def insert_poi_cluster_member(
+    conn: sqlite3.Connection,
+    cluster_id: str,
+    candidate_id: str,
+    run_id: str,
+    member_rank: int,
+    is_representative: bool = False,
+    member_score: float | None = None,
+    distance_to_center_m: float | None = None,
+) -> str:
+    """Insert or replace one clustered POI membership row."""
+
+    upsert_row(
+        conn,
+        schema.POI_CLUSTER_MEMBERS_TABLE,
+        {
+            "cluster_id": cluster_id,
+            "candidate_id": candidate_id,
+            "run_id": run_id,
+            "member_rank": int(member_rank),
+            "is_representative": 1 if is_representative else 0,
+            "member_score": member_score,
+            "distance_to_center_m": distance_to_center_m,
             "created_at": utc_now_text(),
         },
     )

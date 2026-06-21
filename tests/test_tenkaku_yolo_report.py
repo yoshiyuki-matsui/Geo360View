@@ -244,6 +244,55 @@ class YoloReportTests(unittest.TestCase):
         self.assertEqual(summary["large_bbox_skipped"][0]["class_name"], "Stop")
         self.assertIn("Large bbox filtered: 1", (output_dir / "summary.txt").read_text(encoding="utf-8"))
 
+    def test_select_grouped_rows_for_images_can_sample_evenly(self):
+        """max_images指定時に先頭だけでなく全体から間引ける。"""
+        grouped = [(f"plane_{index}", [{"frame_index": index, "class_name": "Red Light"}]) for index in range(10)]
+
+        selected = yolo_report.select_grouped_rows_for_images(grouped, max_images=3, image_sample_mode="even")
+
+        self.assertEqual([plane_id for plane_id, _ in selected], ["plane_0", "plane_4", "plane_9"])
+
+    def test_select_grouped_rows_for_images_can_balance_classes(self):
+        """class-balancedでは支配的クラスだけでmax_imagesを使い切らない。"""
+        grouped = []
+        for index in range(8):
+            grouped.append((f"red_{index}", [{"frame_index": index, "class_name": "Red Light", "confidence": 0.9}]))
+        for index in range(2):
+            grouped.append((f"stop_{index}", [{"frame_index": 20 + index, "class_name": "Stop", "confidence": 0.9}]))
+
+        selected = yolo_report.select_grouped_rows_for_images(
+            grouped,
+            max_images=4,
+            image_sample_mode="class-balanced",
+        )
+
+        class_names = [rows[0]["class_name"] for _, rows in selected]
+        self.assertIn("Red Light", class_names)
+        self.assertIn("Stop", class_names)
+        self.assertLess(class_names.count("Red Light"), 4)
+
+    def test_filter_stationary_rows_splits_stationary_frames(self):
+        """位置がほぼ変わらないフレームの検出を非破壊フィルタ対象にできる。"""
+        positions = {
+            0: (35.0, 135.0),
+            60: (35.0, 135.0),
+            120: (35.0001, 135.0),
+        }
+        rows = [
+            {"frame_index": 30, "class_name": "Red Light"},
+            {"frame_index": 90, "class_name": "Stop"},
+        ]
+
+        moving, stationary = yolo_report.filter_stationary_rows(
+            rows,
+            positions,
+            window_frames=30,
+            distance_m=0.5,
+        )
+
+        self.assertEqual([row["frame_index"] for row in stationary], [30])
+        self.assertEqual([row["frame_index"] for row in moving], [90])
+
     def test_html_gallery_is_sorted_by_frame_index(self):
         """HTMLギャラリーは信頼度順ではなくframe番号順に並べる。"""
         early_image_path = self.image_dir / "frame_0000010_front.jpg"

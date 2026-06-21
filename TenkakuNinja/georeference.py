@@ -47,6 +47,8 @@ class GeoreferenceConfig:
     video_front_offset_deg: float = 0.0
     fallback_distance_m: float = DEFAULT_FALLBACK_DISTANCE_M
     max_ground_distance_m: float | None = DEFAULT_MAX_GROUND_DISTANCE_M
+    exclude_stationary: bool = False
+    stationary_distance_m: float = 0.5
     limit: int | None = None
     clear_existing: bool = False
     target_sources: tuple[str, ...] = ()
@@ -569,6 +571,19 @@ def generate_poi_candidates(config: GeoreferenceConfig) -> dict:
                     }
                 )
                 continue
+            if config.exclude_stationary and heading.distance_m <= max(0.0, float(config.stationary_distance_m)):
+                skipped.append(
+                    {
+                        "target_id": target.get("target_id"),
+                        "frame_index": frame_index,
+                        "reason": "stationary_camera",
+                        "trajectory_distance_m": heading.distance_m,
+                        "stationary_distance_m": float(config.stationary_distance_m),
+                        "trajectory_before_frame": heading.before_frame,
+                        "trajectory_after_frame": heading.after_frame,
+                    }
+                )
+                continue
             candidate, skip = poi_candidate_from_target(
                 target,
                 camera_position=camera_position,
@@ -597,6 +612,8 @@ def generate_poi_candidates(config: GeoreferenceConfig) -> dict:
             "skipped_count": len(skipped),
             "deleted_count": deleted_count,
             "trajectory_window_frames": config.trajectory_window_frames,
+            "exclude_stationary": bool(config.exclude_stationary),
+            "stationary_distance_m": float(config.stationary_distance_m),
             "video_front_offset_deg": config.video_front_offset_deg,
             "fallback_distance_m": config.fallback_distance_m,
             "max_ground_distance_m": normalize_optional_max_distance(config.max_ground_distance_m),
@@ -661,6 +678,17 @@ def build_arg_parser():
         default=DEFAULT_MAX_GROUND_DISTANCE_M,
         help="Skip ground-plane targets farther than this. Use 0 to disable.",
     )
+    parser.add_argument(
+        "--exclude-stationary",
+        action="store_true",
+        help="Skip targets whose trajectory baseline moved less than --stationary-distance-m.",
+    )
+    parser.add_argument(
+        "--stationary-distance-m",
+        type=float,
+        default=0.5,
+        help="Maximum trajectory baseline distance treated as stationary when --exclude-stationary is set.",
+    )
     parser.add_argument("--limit", type=int, help="Limit selected semantic targets for testing.")
     parser.add_argument("--clear-existing", action="store_true", help="Delete candidates for selected targets first.")
     parser.add_argument("--target-sources", nargs="+", default=[], help="Optional target_source filters.")
@@ -685,6 +713,8 @@ def config_from_args(args) -> GeoreferenceConfig:
         video_front_offset_deg=float(args.video_front_offset_deg),
         fallback_distance_m=float(args.fallback_distance_m),
         max_ground_distance_m=normalize_optional_max_distance(args.max_ground_distance_m),
+        exclude_stationary=bool(args.exclude_stationary),
+        stationary_distance_m=max(0.0, float(args.stationary_distance_m)),
         limit=args.limit,
         clear_existing=bool(args.clear_existing),
         target_sources=normalize_text_values(args.target_sources),
@@ -713,6 +743,8 @@ def main(argv=None):
     print(f"  ground distance: {result['ground_distance_candidate_count']}")
     print(f"  fixed distance: {result['fixed_distance_candidate_count']}")
     print(f"Skipped: {result['skipped_count']}")
+    if result.get("exclude_stationary"):
+        print(f"Stationary filter: distance<={result['stationary_distance_m']:.2f}m")
     if result["deleted_count"]:
         print(f"Deleted existing candidates: {result['deleted_count']}")
     print(f"Done in {elapsed:.2f}s.")

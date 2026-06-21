@@ -455,7 +455,8 @@ python TenkakuNinja/yolo_report.py \
   --classes Stop "Speed Limit 40" \
   --min-conf 0.5 \
   --max-bbox-area-ratio 0.30 \
-  --max-images 200
+  --max-images 200 \
+  --image-sample-mode class-balanced
 ```
 
 この工程は地図座標を作りません。モデルの誤検出、誤分類、bboxの当たり方を確認するための
@@ -465,6 +466,14 @@ python TenkakuNinja/yolo_report.py \
 `--max-bbox-area-ratio` は、生の `yolo_detections_raw` を消さずにレポート対象だけを
 絞るためのフィルタです。標識や信号のような小物体で、CubeMap面の3割以上をbboxが
 占める検出は誤検出候補として扱えます。
+
+`--max-images` は注釈画像の出力数上限です。既定の `--image-sample-mode first` では
+frame順の先頭画像面を出すため、停車中の信号機など同じ場面が連続すると偏ります。
+全体を間引いて見る場合は `even`、クラスごとの挙動を見たい場合は `class-balanced` を指定します。
+
+停車中の重複観測をレポート上だけ外す場合は `--exclude-stationary` を指定します。
+必要に応じて `--position-db tmp.gpkg --position-layer video_gpx_points` を渡します。
+これは確認用の非破壊フィルタであり、`yolo_detections_raw` は全件残します。
 
 複数モデルが同じDBに入っている場合は、`--model-names` または `--model-run-ids` で
 確認対象を切り出します。`model_run_summary.csv` にはモデル実行単位の件数を出力します。
@@ -535,6 +544,8 @@ trajectory_heading(positions_by_frame, frame_index, window_frames)
 - `quality`, `position_method`, `distance_method` を保存する。
 - `ground_plane` は `ground_distance_m`、`elevated_object` と `direction_only` は
   `--fallback-distance-m` の固定外円を使う。
+- `--exclude-stationary` 指定時は、trajectory heading算出区間の移動量が
+  `--stationary-distance-m` 以下のtargetを `stationary_camera` として候補化しない。
 
 ### `gpkg_merge.py`
 
@@ -543,6 +554,35 @@ trajectory_heading(positions_by_frame, frame_index, window_frames)
 現在の実装レイヤ:
 
 - `poi_candidates_360`
+- `poi_clusters_360`
+
+### `poi_cluster.py`
+
+`poi_candidates_360` を読み、同一物らしい観測を束ねて `poi_clusters_360` と
+`poi_cluster_members_360` を作ります。
+
+- `model_name` と `semantic_class` ごとに分ける。
+- `--cluster-radius-m` 内に入る候補を同一クラスタへ束ねる。
+- `elevated_object` / `direction_only` / `fixed_distance_bearing` は
+  `--direction-cluster-radius-m` を使い、撮影点と `bearing_deg` から作る観測レイで中心を推定する。
+- `--min-observations` で単発候補を代表POIから外せる。
+- 代表点の `object_lat/lon` はクラスタ中心を使う。
+- 360ビューアへ渡す代表観測は、confidenceだけでなくfaceごとの移動ルールで選ぶ。
+
+代表観測の時間軸ルール:
+
+```text
+front / left / right:
+  フレーム番号が大きい側、かつbboxが大きい観測を優先
+
+back:
+  フレーム番号が小さい側、かつbboxが大きい観測を優先
+
+up / down:
+  bboxサイズは大きく変わりにくいため、クラスタ時間軸の中央に近い観測を優先
+```
+
+この評価内容は `payload_json.representative_eval` に残します。
 
 手動クリック点の `click_targets_360` とは分けます。`semantic_work.sqlite` は処理途中の
 内部DB、ユーザがQGISで開いて操作する対象は `tmp.gpkg` です。
@@ -551,14 +591,35 @@ NAVモードで自動認識できるように、GPKGへ出す候補レイヤ名�
 
 - 汎用候補レイヤ: `poi_candidates_360`
 - モデル別候補レイヤ: `poi_candidates_{model_slug}_360`
+- モデル別クラスタレイヤ: `poi_clusters_{model_slug}_360`
 
-QGISプラグインは、GPKG読込時にまず `poi_candidates_360` を探します。
-存在しない場合は、`gpkg_contents` のfeatures layerから `poi_candidates...` 系レイヤを探し、
-`360 Detection Candidates` の一時メモリレイヤとして読み込みます。
-このレイヤがNavの `Detection check` 対象になります。
+QGISプラグインは、GPKG読込時に `gpkg_contents` のfeatures layerから
+`poi_candidates...` / `poi_clusters...` 系レイヤを探し、
+候補/クラスタレイヤをすべて一時メモリレイヤとして読み込みます。
+表示名は `360 Detection Candidates: poi_candidates_pothole_360` のように元レイヤ名を含めます。
+これらのレイヤがNavの `Detection check` 対象になります。
+`Detection check` には `Scope` を持たせ、`Active layer` ではQGISで現在選択中の候補レイヤだけ、
+`All candidates` では候補レイヤ全体、`Selected features` では選択中featureだけを巡回します。
+レイヤのsubset filterは `getFeatures()` に反映されるため、たとえば
+`semantic_class LIKE 'Speed Limit%'` で絞った結果だけをNavできます。
+`|<<` / `>>|` は現在のNav mode、Scope、subset filter、選択状態で決まる対象集合の
+先頭/最後尾へ移動します。
+
+QGISプラグインは候補/クラスタレイヤを作業用メモリレイヤへ読み替えます。
+閲覧だけで終了した場合は、GPKG由来レイヤを再保存しません。
+feature削除、feature追加、属性変更、ジオメトリ変更が入ったレイヤだけ保存対象に昇格し、
+`tmp.gpkg` へ書き戻します。これにより、QGISテーブルで余計なclassや誤検出を削除してから
+同じ `poi_candidates...` / `poi_clusters...` レイヤ名へ反映できます。
 
 `DetectionCheck` など任意のレイヤ名は標準運用では使わず、モデル別に分けたい場合も
 `poi_candidates_` prefix を維持します。
+`semantic_class` はモデル出力class名を保持するため、交通標識モデルでも
+`traffic_sign` ではなく `Red Light`, `Green Light`, `Speed Limit 40` などになります。
+
+停止中の重複観測は、YOLO raw検出やsemantic targetからは削除しません。
+車両・列車の停車時間は実撮影では無視できず、同じ信号や標識を大量に検出します。
+ただしrawは観測ログとして保持し、レポートでは `--exclude-stationary` で確認対象から外し、
+POI候補化ではgeoreferenceの `--exclude-stationary` で `stationary_camera` としてskipします。
 
 属性には次を持たせます。
 

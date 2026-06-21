@@ -30,6 +30,7 @@ class GpkgMergeConfig:
     database: Path | None = None
     run_id: str | None = None
     layer_name: str = DEFAULT_LAYER_NAME
+    source: str = "candidates"
     replace: bool = False
     limit: int | None = None
     model_run_ids: tuple[str, ...] = ()
@@ -44,6 +45,8 @@ GPKG_COLUMNS = (
     (GEOMETRY_COLUMN, "POINT"),
     ("run_id", "TEXT"),
     ("candidate_id", "TEXT"),
+    ("cluster_id", "TEXT"),
+    ("representative_candidate_id", "TEXT"),
     ("target_id", "TEXT"),
     ("frame", "INTEGER"),
     ("record_type", "TEXT"),
@@ -79,6 +82,11 @@ GPKG_COLUMNS = (
     ("position_method", "TEXT"),
     ("distance_method", "TEXT"),
     ("quality", "TEXT"),
+    ("observation_count", "INTEGER"),
+    ("cluster_score", "REAL"),
+    ("cluster_radius_m", "REAL"),
+    ("min_frame", "INTEGER"),
+    ("max_frame", "INTEGER"),
     ("created_at", "TEXT"),
     ("payload_json", "TEXT"),
 )
@@ -409,6 +417,80 @@ def select_poi_candidates(
     return [dict(row) for row in conn.execute(sql, tuple(params)).fetchall()]
 
 
+def select_poi_clusters(
+    conn: sqlite3.Connection,
+    run_id: str,
+    config: GpkgMergeConfig,
+) -> list[dict]:
+    """Read clustered POIs with optional filters, shaped like candidate rows."""
+
+    where = [f"c.{schema.quote_identifier('run_id')} = ?"]
+    params: list[object] = [run_id]
+    filters = (
+        ("model_run_id", config.model_run_ids),
+        ("model_name", config.model_names),
+        ("semantic_class", config.classes),
+        ("quality", config.qualities),
+        ("position_method", config.position_methods),
+    )
+    for column, values in filters:
+        if not values:
+            continue
+        where.append(f"c.{schema.quote_identifier(column)} IN ({', '.join('?' for _ in values)})")
+        params.extend(values)
+
+    sql = f"""
+        SELECT
+            c.cluster_id AS cluster_id,
+            c.cluster_id AS candidate_id,
+            c.representative_candidate_id AS representative_candidate_id,
+            c.target_id AS target_id,
+            c.run_id AS run_id,
+            c.frame_index AS frame_index,
+            c.target_source AS target_source,
+            c.semantic_class AS semantic_class,
+            c.confidence AS confidence,
+            c.projection AS projection,
+            c.model_run_id AS model_run_id,
+            c.model_name AS model_name,
+            c.evidence_face AS evidence_face,
+            c.camera_lat AS camera_lat,
+            c.camera_lon AS camera_lon,
+            c.object_lat AS object_lat,
+            c.object_lon AS object_lon,
+            c.bearing_deg AS bearing_deg,
+            c.distance_m AS distance_m,
+            c.position_method AS position_method,
+            c.distance_method AS distance_method,
+            c.quality AS quality,
+            c.observation_count AS observation_count,
+            c.cluster_score AS cluster_score,
+            c.cluster_radius_m AS cluster_radius_m,
+            c.min_frame_index AS min_frame_index,
+            c.max_frame_index AS max_frame_index,
+            c.created_at AS created_at,
+            c.payload_json AS payload_json,
+            t.detection_id AS target_detection_id,
+            t.target_yaw_to_camera_heading AS target_yaw,
+            t.target_pitch_deg AS target_pitch,
+            t.ground_distance_m AS target_ground_distance_m,
+            t.evidence_plane_id AS target_evidence_plane_id,
+            t.evidence_image_path AS target_evidence_image_path,
+            t.evidence_bbox_json AS target_evidence_bbox_json,
+            t.bbox_anchor AS target_bbox_anchor,
+            t.payload_json AS target_payload_json
+        FROM {schema.quote_identifier(schema.POI_CLUSTERS_TABLE)} AS c
+        LEFT JOIN {schema.quote_identifier(schema.SEMANTIC_TARGETS_TABLE)} AS t
+            ON t.target_id = c.target_id
+        WHERE {" AND ".join(where)}
+        ORDER BY c.semantic_class, c.model_name, c.frame_index, c.cluster_id
+    """
+    if config.limit is not None:
+        sql += " LIMIT ?"
+        params.append(max(0, int(config.limit)))
+    return [dict(row) for row in conn.execute(sql, tuple(params)).fetchall()]
+
+
 def gpkg_row_from_candidate(candidate: dict) -> dict | None:
     """Convert a poi_candidates_360 row to a GeoPackage feature row."""
 
@@ -429,9 +511,11 @@ def gpkg_row_from_candidate(candidate: dict) -> dict | None:
         GEOMETRY_COLUMN: gpkg_point_blob(lon, lat),
         "run_id": candidate.get("run_id"),
         "candidate_id": candidate.get("candidate_id"),
+        "cluster_id": candidate.get("cluster_id"),
+        "representative_candidate_id": candidate.get("representative_candidate_id"),
         "target_id": candidate.get("target_id"),
         "frame": candidate.get("frame_index"),
-        "record_type": "yolo_candidate",
+        "record_type": "poi_cluster" if candidate.get("cluster_id") else "yolo_candidate",
         "review_status": "unreviewed",
         "target_source": candidate.get("target_source"),
         "semantic_class": candidate.get("semantic_class"),
@@ -464,6 +548,11 @@ def gpkg_row_from_candidate(candidate: dict) -> dict | None:
         "position_method": candidate.get("position_method"),
         "distance_method": candidate.get("distance_method"),
         "quality": candidate.get("quality"),
+        "observation_count": candidate.get("observation_count"),
+        "cluster_score": candidate.get("cluster_score"),
+        "cluster_radius_m": candidate.get("cluster_radius_m"),
+        "min_frame": candidate.get("min_frame_index"),
+        "max_frame": candidate.get("max_frame_index"),
         "created_at": candidate.get("created_at"),
         "payload_json": candidate.get("payload_json"),
     }
@@ -508,7 +597,10 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
         run_row = resolve_run(work_conn, config.run_id)
         run_id = str(run_row["run_id"])
         gpkg_path = resolve_database_path(config, run_row)
-        candidates = select_poi_candidates(work_conn, run_id, config)
+        if config.source == "clusters":
+            candidates = select_poi_clusters(work_conn, run_id, config)
+        else:
+            candidates = select_poi_candidates(work_conn, run_id, config)
     finally:
         work_conn.close()
 
@@ -552,6 +644,7 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
         "run_id": run_id,
         "database": str(gpkg_path),
         "layer_name": layer_name,
+        "source": config.source,
         "candidate_count": len(candidates),
         "feature_count": len(feature_rows),
         "inserted_count": inserted_count,
@@ -571,6 +664,12 @@ def build_arg_parser():
     parser.add_argument("--database", help="Output GeoPackage path. Default: runs.source_gpkg.")
     parser.add_argument("--run-id", help="Run id. Default: latest run in work DB.")
     parser.add_argument("--layer-name", default=DEFAULT_LAYER_NAME, help="Output GeoPackage layer name.")
+    parser.add_argument(
+        "--source",
+        choices=("candidates", "clusters"),
+        default="candidates",
+        help="Source table to export.",
+    )
     parser.add_argument("--replace", action="store_true", help="Replace the output layer when it exists.")
     parser.add_argument("--limit", type=int, help="Limit selected candidates for testing.")
     parser.add_argument("--model-run-ids", nargs="+", default=[], help="Optional model_run_id filters.")
@@ -590,6 +689,7 @@ def config_from_args(args) -> GpkgMergeConfig:
         database=database,
         run_id=args.run_id,
         layer_name=args.layer_name,
+        source=args.source,
         replace=bool(args.replace),
         limit=args.limit,
         model_run_ids=normalize_text_values(args.model_run_ids),
@@ -614,6 +714,7 @@ def main(argv=None):
     print(f"GeoPackage: {result['database']}")
     print(f"Run ID: {result['run_id']}")
     print(f"Layer: {result['layer_name']}")
+    print(f"Source: {result['source']}")
     print(f"Candidates: {result['candidate_count']}")
     print(f"Features: {result['feature_count']}")
     print(f"Skipped: {result['skipped_count']}")

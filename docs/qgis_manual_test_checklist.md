@@ -98,10 +98,16 @@
 - [ ] 数値入力やコンボボックス編集中は、矢印キーが入力操作として扱われる。
 - [ ] 既存の地物登録プラグインがMapToolを持っている状態でも、操作パネルにフォーカスがあればナビゲーションできる。
 - [ ] `Nav` が `Frame step` / `Layer point` / `KP matched CSV` / `Detection check` の各モードで期待通り移動する。
+- [ ] `|<<` / `>>|` で、現在Nav対象の先頭/最後尾へ移動できる。
 - [ ] `KP matched CSV` がない状態で `KP matched CSV` モードを使うと、警告が出て `Frame step` へ自動的に戻る。
 - [ ] GPKG内に `poi_candidates_360` がある場合、`Detection check` がその候補フレームだけを辿る。
 - [ ] GPKG内に `poi_candidates_360` がなく `poi_candidates_pothole_360` などモデル別候補レイヤだけがある場合も、`Detection check` が候補フレームだけを辿る。
-- [ ] GPKG内の候補レイヤがQGIS上で `360 Detection Candidates` として読み込まれる。
+- [ ] GPKG内の候補レイヤがQGIS上で `360 Detection Candidates: <layer_name>` として読み込まれる。
+- [ ] GPKG内のクラスタレイヤがQGIS上で `360 POI Clusters: <layer_name>` として読み込まれる。
+- [ ] `Detection check` の `Scope=Active layer` で、アクティブ候補/クラスタレイヤだけを辿る。
+- [ ] `Detection check` の `Scope=All candidates` で、読み込まれている候補/クラスタレイヤ全体を辿る。
+- [ ] `Detection check` の `Scope=Selected features` で、選択中featureだけを辿る。
+- [ ] QGISのsubset filterで `semantic_class` などを絞ると、Nav対象も同じ絞り込み結果になる。
 - [ ] `Detection check` でフレーム移動すると、同一frameのYOLO候補が360ビューア上に候補マーカーとして復元される。
 
 ## 8. Followと地図中心移動
@@ -179,6 +185,9 @@
 ## 14. 終了時成果物
 
 - [ ] `終了` により生成レイヤが `tmp.gpkg` へ保存される。
+- [ ] GPKGから読み込んだ候補/クラスタレイヤを編集せずに `終了` した場合、重い再保存が発生せず終了できる。
+- [ ] QGISテーブル上で候補/クラスタfeatureを削除して `終了` した場合、同じ `poi_candidates...` / `poi_clusters...` レイヤ名へ変更が書き戻る。
+- [ ] 候補/クラスタレイヤの属性変更やジオメトリ変更後に `終了` した場合、変更済みレイヤだけが保存対象になる。
 - [ ] 保存後、生成レイヤがQGISプロジェクトから削除される。
 - [ ] `tmp.gpkg` 内の撮影点レイヤ名が `video_gpx_points`、クリック点レイヤ名が `click_targets_360` になっている。
 - [ ] `tmp.gpkg` を再読込し、`frame` など主要属性が保持されている。

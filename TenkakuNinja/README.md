@@ -9,8 +9,10 @@ GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフ�
 - [semantic_360_pipeline.md](semantic_360_pipeline.md): 360動画をCubeMap化し、YOLO結果をクリック点互換の `semantic_targets_360` へ加工するCLIパイプライン設計。
 - [semantic_360_py_reference.md](semantic_360_py_reference.md): 追加した各pyの入出力、主要パラメータ、内部処理、チェックポイント仕様。
 - [env_notes.md](env_notes.md): `venv_yolo`, `venv310_yolo_gpu` などPython環境の役割と確認コマンド。
+- [../docs/tenkaku_ninja_poi_direction.md](../docs/tenkaku_ninja_poi_direction.md): `tenkaku_ninja_poi` として独立整理するための役割定義、core/model/QGISとの接続規約、将来構想。
 - [../docs/session_2026-06-18_semantic_360_auto_candidate.md](../docs/session_2026-06-18_semantic_360_auto_candidate.md): CubeMap/YOLO/POI候補化/360視点復元まで到達した日のR&D経緯メモ。
 - [../docs/session_2026-06-18_semantic_360_implementation_worklog.md](../docs/session_2026-06-18_semantic_360_implementation_worklog.md): 実装中の節目、確認、判断、次アクションを時系列で追う作業ログ。
+- [../docs/session_2026-06-21_qgis_poi_review_worklog.md](../docs/session_2026-06-21_qgis_poi_review_worklog.md): QGIS上でPOI候補を絞り込み、360Viewer連動でレビューするUI/保存仕様の午前作業ログ。
 
 ## Install
 
@@ -99,6 +101,22 @@ python TenkakuNinja/yolo_report.py \
 大きすぎるbboxを確認対象から外す場合は `--max-bbox-area-ratio 0.30` を指定します。
 特定モデルだけ見る場合は `--model-names pothole_detector` または
 `--model-run-ids model_...` を指定します。
+`--max-images` は既定ではframe順の先頭画像面を切り出すため、停車中の信号機など
+同じ場面が連続する場合は偏ります。全体を味見する場合は `--image-sample-mode even`、
+クラスごとの癖を見たい場合は `--image-sample-mode class-balanced` を併用します。
+停車中の重複観測をレポート上だけ外す場合は、位置レイヤを持つGPKGを指定して
+`--exclude-stationary` を使います。これは `yolo_detections_raw` を削除しない
+確認用フィルタです。
+
+```bash
+python TenkakuNinja/yolo_report.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --model-run-ids model_... \
+  --position-db path/to/tmp.gpkg \
+  --max-images 300 \
+  --exclude-stationary \
+  --image-sample-mode class-balanced
+```
 
 YOLO検出結果を360クリック点互換targetへ加工する場合:
 
@@ -127,13 +145,39 @@ python TenkakuNinja/georeference.py \
   --database path/to/tmp.gpkg \
   --fallback-distance-m 10 \
   --max-ground-distance-m 10 \
+  --exclude-stationary \
   --clear-existing
 ```
 
 `ground_plane` のtargetは `ground_distance_m` を使い、`elevated_object` や
 `direction_only` は方角だけ信じて `--fallback-distance-m` の外円上に置きます。
 結果は `semantic_work.sqlite` の `poi_candidates_360` に保存します。
+`--exclude-stationary` を指定すると、trajectory heading算出区間の移動量が
+`--stationary-distance-m` 以下のtargetは `stationary_camera` として候補化しません。
+YOLOのraw検出は消さず、POI候補化で重複観測を圧縮するためのフィルタです。
 動画正面と進行方向にずれがある場合は `--video-front-offset-deg` で補正します。
+
+複数観測から同一POIらしい代表点を作る場合:
+
+```bash
+python TenkakuNinja/poi_cluster.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --cluster-radius-m 3.0 \
+  --direction-cluster-radius-m 10.0 \
+  --min-observations 2 \
+  --clear-existing
+```
+
+`poi_candidates_360` は生に近い候補を保持し、`poi_cluster.py` は
+`poi_clusters_360` と `poi_cluster_members_360` を作ります。
+クラスタは `model_name` と `semantic_class` ごとに分け、近接する候補を束ねます。
+代表点の緯度経度はクラスタ中心、360で開く代表観測はfaceごとの移動ルールで選びます。
+`front/left/right` は時間軸の後半かつbboxが大きい観測、`back` は前半かつbboxが大きい観測、
+`up/down` は時間軸中央の観測を優先します。
+`elevated_object` / `direction_only` / `fixed_distance_bearing` は、10mなどの仮距離に置いた
+点同士ではなく、撮影点と `bearing_deg` から作る観測レイを使って中心を推定します。
+このため空中物は `--direction-cluster-radius-m` で地面系とは別に許容幅を調整します。
+`--min-observations 2` にすると単発候補を代表POIから外せます。
 
 POI候補をQGISで扱う `tmp.gpkg` へ集約する場合:
 
@@ -144,17 +188,44 @@ python TenkakuNinja/gpkg_merge.py \
   --replace
 ```
 
+クラスタ代表POIだけを出す場合:
+
+```bash
+python TenkakuNinja/gpkg_merge.py \
+  --work-db path/to/work/semantic_work.sqlite \
+  --database path/to/tmp.gpkg \
+  --source clusters \
+  --layer-name poi_clusters_pothole_360 \
+  --replace
+```
+
 `semantic_work.sqlite` は処理途中の内部DBです。ユーザがQGISで開いて操作する成果物は
 `tmp.gpkg` とし、YOLO由来候補は `poi_candidates_360` レイヤへ出力します。
 モデル別にレイヤを分ける場合は、NAVモードの自動認識に合わせて
 `poi_candidates_{model_slug}_360` 形式にします。
+代表POIクラスタは `poi_clusters_{model_slug}_360` 形式にします。
 手動クリック点の `click_targets_360` とは別レイヤなので、候補点と手動点を混同しません。
 `poi_candidates_360` には `target_yaw`, `target_pitch`, `evidence_bbox_json`,
 `bbox_anchor`, `anchor_x_px/y_px`, `cubemap_u/v`, `semantic_class`, `confidence` も出力するため、
 地図上の候補点から360ビューア上の検出方向へ点マーカーを復元できます。
-QGISプラグインは `poi_candidates_360` を優先して読み、存在しない場合は
-`poi_candidates...` 系features layerを `360 Detection Candidates` として読みます。
-この候補レイヤがNavの `Detection check` 対象です。
+QGISプラグインは `poi_candidates...` 系features layerをすべて読み、
+`360 Detection Candidates: <layer_name>` として表示します。
+`poi_clusters...` 系features layerも `360 POI Clusters: <layer_name>` として読みます。
+これらの候補レイヤがNavの `Detection check` 対象です。
+`Detection check` の `Scope` で `Active layer`, `All candidates`, `Selected features`
+を切り替えられます。レイヤのsubset filterはQGIS側で適用された状態でNavに反映され、
+`Selected features` では選択中featureだけを巡回します。
+Navボタンの `|<<` / `>>|` は、現在のNav mode、Scope、subset filter、選択状態に基づく
+対象集合の先頭/最後尾へ移動します。地物種類やclassフィルタを変えながら、
+同じ路線を始点から終点まで繰り返しレビューできます。
+`semantic_class` はモデル出力class名を保持するため、交通標識モデルでも
+`traffic_sign` ではなく `Red Light`, `Green Light`, `Speed Limit 40` などになります。
+
+GPKGから読み込んだ候補/クラスタレイヤは一時メモリレイヤとして扱います。
+閲覧だけで `終了` した場合は重い候補レイヤを再保存しません。
+QGISテーブル上でfeature削除、属性変更、ジオメトリ変更、feature追加が入ったレイヤだけ
+`tmp.gpkg` へ書き戻します。書き戻し時は `poi_candidates...` / `poi_clusters...`
+の元レイヤ名を維持します。
 
 ## Examples
 

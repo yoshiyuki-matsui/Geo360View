@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import sqlite3
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CUBEMAP_FACE_NAMES = ("front", "right", "back", "left", "up", "down")
 DEFAULT_CUBEMAP_EXPORT_FACES = CUBEMAP_FACE_NAMES
@@ -18,6 +18,8 @@ MODEL_RUNS_TABLE = "model_runs"
 YOLO_DETECTIONS_TABLE = "yolo_detections_raw"
 SEMANTIC_TARGETS_TABLE = "semantic_targets_360"
 POI_CANDIDATES_TABLE = "poi_candidates_360"
+POI_CLUSTERS_TABLE = "poi_clusters_360"
+POI_CLUSTER_MEMBERS_TABLE = "poi_cluster_members_360"
 METADATA_TABLE = "metadata"
 
 
@@ -217,6 +219,57 @@ TABLES = (
         ),
     ),
     Table(
+        POI_CLUSTERS_TABLE,
+        (
+            Column("cluster_id", "TEXT", "PRIMARY KEY"),
+            Column("run_id", "TEXT", "NOT NULL"),
+            Column("representative_candidate_id", "TEXT", "NOT NULL"),
+            Column("target_id", "TEXT", "NOT NULL"),
+            Column("frame_index", "INTEGER", "NOT NULL"),
+            Column("target_source", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("semantic_class", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("confidence", "REAL"),
+            Column("projection", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("model_run_id", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("model_name", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("evidence_face", "TEXT"),
+            Column("camera_lat", "REAL"),
+            Column("camera_lon", "REAL"),
+            Column("object_lat", "REAL"),
+            Column("object_lon", "REAL"),
+            Column("bearing_deg", "REAL"),
+            Column("distance_m", "REAL"),
+            Column("position_method", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("distance_method", "TEXT", "NOT NULL DEFAULT ''"),
+            Column("quality", "TEXT", "NOT NULL DEFAULT 'unknown'"),
+            Column("observation_count", "INTEGER", "NOT NULL DEFAULT 0"),
+            Column("min_frame_index", "INTEGER"),
+            Column("max_frame_index", "INTEGER"),
+            Column("min_confidence", "REAL"),
+            Column("max_confidence", "REAL"),
+            Column("mean_confidence", "REAL"),
+            Column("cluster_score", "REAL"),
+            Column("cluster_radius_m", "REAL"),
+            Column("member_candidate_ids_json", "TEXT", "NOT NULL DEFAULT '[]'"),
+            Column("payload_json", "TEXT", "NOT NULL DEFAULT '{}'"),
+            Column("created_at", "TEXT", "NOT NULL"),
+        ),
+    ),
+    Table(
+        POI_CLUSTER_MEMBERS_TABLE,
+        (
+            Column("cluster_id", "TEXT", "NOT NULL"),
+            Column("candidate_id", "TEXT", "NOT NULL"),
+            Column("run_id", "TEXT", "NOT NULL"),
+            Column("member_rank", "INTEGER", "NOT NULL DEFAULT 0"),
+            Column("is_representative", "INTEGER", "NOT NULL DEFAULT 0"),
+            Column("member_score", "REAL"),
+            Column("distance_to_center_m", "REAL"),
+            Column("created_at", "TEXT", "NOT NULL"),
+        ),
+        ('PRIMARY KEY ("cluster_id", "candidate_id")',),
+    ),
+    Table(
         METADATA_TABLE,
         (
             Column("scope", "TEXT", "NOT NULL"),
@@ -239,6 +292,9 @@ INDEX_DDLS = (
     f'CREATE INDEX IF NOT EXISTS "idx_semantic_targets_run_frame" ON {quote_identifier(SEMANTIC_TARGETS_TABLE)} ("run_id", "frame_index")',
     f'CREATE INDEX IF NOT EXISTS "idx_poi_candidates_target" ON {quote_identifier(POI_CANDIDATES_TABLE)} ("target_id")',
     f'CREATE INDEX IF NOT EXISTS "idx_poi_candidates_run_frame" ON {quote_identifier(POI_CANDIDATES_TABLE)} ("run_id", "frame_index")',
+    f'CREATE INDEX IF NOT EXISTS "idx_poi_clusters_run_class" ON {quote_identifier(POI_CLUSTERS_TABLE)} ("run_id", "semantic_class")',
+    f'CREATE INDEX IF NOT EXISTS "idx_poi_clusters_representative" ON {quote_identifier(POI_CLUSTERS_TABLE)} ("representative_candidate_id")',
+    f'CREATE INDEX IF NOT EXISTS "idx_poi_cluster_members_candidate" ON {quote_identifier(POI_CLUSTER_MEMBERS_TABLE)} ("candidate_id")',
 )
 
 

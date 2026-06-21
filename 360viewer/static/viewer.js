@@ -190,7 +190,7 @@
   }
 
   function logDebug(message) {
-    if (!debugLog) {
+    if (!debugLog || !debugLogVisible) {
       return;
     }
     const line = document.createElement("div");

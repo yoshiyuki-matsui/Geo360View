@@ -8,5 +8,6 @@
   "viewer_max_width": 3072,
   "viewer_cache_dir": "D:\\nexco\\VID_20250324_135428_033_rot170\\viewer_cache",
   "viewer_camera_height_m": 2.2,
-  "viewer_hud_height_scale": 0.95
+  "viewer_hud_height_scale": 0.95,
+  "viewer_debug_log_enabled": false
 }

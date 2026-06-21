@@ -55,6 +55,19 @@ class SemanticWorkSchemaTests(unittest.TestCase):
         self.assertIn("evidence_face", columns)
         self.assertIn("payload_json", columns)
 
+    def test_poi_clusters_have_representative_and_member_columns(self):
+        """poi_clusters_360は代表観測と集約根拠を保持する。"""
+        cluster_columns = set(schema.column_names(schema.POI_CLUSTERS_TABLE))
+        member_columns = set(schema.column_names(schema.POI_CLUSTER_MEMBERS_TABLE))
+
+        self.assertIn("representative_candidate_id", cluster_columns)
+        self.assertIn("observation_count", cluster_columns)
+        self.assertIn("cluster_score", cluster_columns)
+        self.assertIn("member_candidate_ids_json", cluster_columns)
+        self.assertIn("cluster_id", member_columns)
+        self.assertIn("candidate_id", member_columns)
+        self.assertIn("is_representative", member_columns)
+
     def test_cubemap_default_export_faces_are_all_six_faces(self):
         """CubeMap生成は既定で6面を定義する。YOLO対象面は後段で絞る。"""
         self.assertEqual(

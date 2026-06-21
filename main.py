@@ -141,6 +141,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_hud_height_scale_value = 1.0
         self.viewer_hud_height_scale_dirty = False
         self.created_layer_ids = []
+        self.save_on_exit_layer_ids = set()
+        self.loaded_layer_feature_counts = {}
         self.frame_layer_id = None
         self.target_layer_id = None
         self.candidate_layer_id = None
@@ -150,6 +152,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.current_frame = None
         self.viewer_session_timer = None
         self.last_viewer_session_signature = None
+        self.verbose_log_enabled = False
         self.radar_grid_band = None
         self.radar_circle_band = None
         self.radar_outer_circle_band = None
@@ -195,9 +198,31 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """既存の詳細文字列をそのまま正常系メッセージとして表示する移行用入口。"""
         self.iface.messageBar().pushMessage(PLUGIN_TITLE, text)
 
+    def debugLogEnabled(self):
+        """高頻度な調査用ログをQGISへ流してよいかを返す。"""
+        checkbox = getattr(self, "verbose_log_checkbox", None)
+        if checkbox is not None:
+            return bool(checkbox.isChecked())
+        return bool(getattr(self, "verbose_log_enabled", False))
+
+    def notifyDebug(self, key, **params):
+        """詳細ログON時だけQGIS messageBarへ流す。"""
+        if self.debugLogEnabled():
+            self.notifyInfo(key, **params)
+
+    def notifyDebugText(self, text):
+        """詳細ログON時だけ、既存の詳細文字列をQGIS messageBarへ流す。"""
+        if self.debugLogEnabled():
+            self.notifyInfoText(text)
+
     def notifyWarningText(self, text):
         """既存の詳細文字列をそのまま警告メッセージとして表示する移行用入口。"""
         self.iface.messageBar().pushWarning(PLUGIN_TITLE, text)
+
+    def onVerboseLogToggled(self, checked):
+        """詳細ログON/OFFをセッションをまたいで保持する。"""
+        self.verbose_log_enabled = bool(checked)
+        QSettings().setValue(f"{PLUGIN_TITLE}/verbose_log", bool(checked))
 
     def validationErrorText(self, errors, limit=5):
         """複数のvalidationエラーをmessageBar向けの短い文へまとめる。"""
@@ -413,6 +438,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.follow_frame_checkbox = QCheckBox(self.uiText("ui.checkbox.follow"))
         self.follow_frame_checkbox.setChecked(True)
         self.applyHelp("ui.help.follow", self.follow_frame_checkbox)
+        self.verbose_log_checkbox = QCheckBox(self.uiText("ui.checkbox.log"))
+        self.verbose_log_enabled = self.parseViewerBool(
+            QSettings().value(f"{PLUGIN_TITLE}/verbose_log", False)
+        )
+        self.verbose_log_checkbox.setChecked(self.verbose_log_enabled)
+        self.verbose_log_checkbox.toggled.connect(self.onVerboseLogToggled)
+        self.applyHelp("ui.help.log", self.verbose_log_checkbox)
 
         self.nav_label = QLabel("Nav:")
         self.current_frame_label = QLabel(self.uiText("ui.status.current_empty"))
@@ -424,6 +456,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode.addItem("KP matched CSV", "kp")
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 146)
+        self.nav_scope_label = QLabel("Scope:")
+        self.nav_scope = QComboBox()
+        self.nav_scope.addItem("Active layer", "active")
+        self.nav_scope.addItem("All candidates", "all")
+        self.nav_scope.addItem("Selected features", "selected")
+        self.nav_scope.setToolTip(
+            "Detection check target scope. Layer subset filters are applied by QGIS."
+        )
+        self.nav_scope_label.setToolTip(self.nav_scope.toolTip())
+        set_fixed_width(self.nav_scope, 126)
         self.nav_step_label = QLabel("Step:")
         self.nav_step = QSpinBox()
         self.nav_step.setRange(1, 1000000)
@@ -437,14 +479,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.nav_fast", self.nav_fast_label, self.nav_fast_step)
         set_fixed_width(self.nav_fast_step, 76)
 
+        self.nav_first_button = QPushButton("|<<")
         self.nav_back_fast_button = QPushButton("<<")
         self.nav_back_button = QPushButton("<")
         self.nav_forward_button = QPushButton(">")
         self.nav_forward_fast_button = QPushButton(">>")
+        self.nav_last_button = QPushButton(">>|")
+        self.nav_first_button.clicked.connect(lambda _checked=False: self.navigateEdge(-1))
         self.nav_back_fast_button.clicked.connect(lambda _checked=False: self.navigateRelative(-1, fast=True))
         self.nav_back_button.clicked.connect(lambda _checked=False: self.navigateRelative(-1, fast=False))
         self.nav_forward_button.clicked.connect(lambda _checked=False: self.navigateRelative(1, fast=False))
         self.nav_forward_fast_button.clicked.connect(lambda _checked=False: self.navigateRelative(1, fast=True))
+        self.nav_last_button.clicked.connect(lambda _checked=False: self.navigateEdge(1))
+        for button in (self.nav_first_button, self.nav_last_button):
+            set_fixed_width(button, 42)
         for button in (
             self.nav_back_fast_button,
             self.nav_back_button,
@@ -456,10 +504,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_button_layout = QHBoxLayout()
         self.nav_button_layout.setContentsMargins(0, 0, 0, 0)
         self.nav_button_layout.setSpacing(2)
+        self.nav_button_layout.addWidget(self.nav_first_button)
         self.nav_button_layout.addWidget(self.nav_back_fast_button)
         self.nav_button_layout.addWidget(self.nav_back_button)
         self.nav_button_layout.addWidget(self.nav_forward_button)
         self.nav_button_layout.addWidget(self.nav_forward_fast_button)
+        self.nav_button_layout.addWidget(self.nav_last_button)
 
         self.radar_radius_label = QLabel("Range:")
         self.radar_radius = QDoubleSpinBox()
@@ -596,6 +646,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.click_mode_button,
             self.stop_click_mode_button,
             self.follow_frame_checkbox,
+            self.verbose_log_checkbox,
             "stretch",
         )
         compact_row(
@@ -603,6 +654,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.nav_label,
             self.current_frame_label,
             self.nav_mode,
+            self.nav_scope_label,
+            self.nav_scope,
             self.nav_step_label,
             self.nav_step,
             self.nav_fast_label,
@@ -1311,10 +1364,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def gpkgCandidateLayer(self, gpkg_path):
         """GeoPackage内のYOLO候補レイヤをQGISレイヤとして開く。"""
-        layer = self.gpkgLayer(gpkg_path, GPKG_CANDIDATE_LAYER_NAME, "360 Detection Candidates")
-        if layer is not None:
-            return layer
+        layers = self.gpkgCandidateLayers(gpkg_path)
+        return layers[0] if layers else None
 
+    def gpkgCandidateLayerDisplayName(self, layer_name):
+        """GPKG候補レイヤ名からQGIS表示名を作る。"""
+        text = str(layer_name or "").strip()
+        if not text or text == GPKG_CANDIDATE_LAYER_NAME:
+            return "360 Detection Candidates"
+        if text.startswith("poi_clusters"):
+            return f"360 POI Clusters: {text}"
+        return f"360 Detection Candidates: {text}"
+
+    def gpkgCandidateLayers(self, gpkg_path):
+        """GeoPackage内のYOLO候補レイヤをすべてQGISレイヤとして開く。"""
         try:
             conn = sqlite3.connect(f"file:{gpkg_path}?mode=ro", uri=True)
             try:
@@ -1329,14 +1392,35 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             finally:
                 conn.close()
         except sqlite3.Error:
-            return None
+            return []
 
-        for row in rows:
-            layer_name = str(row[0] or "")
-            if not self.isCandidateLayerName(layer_name):
+        layer_names = []
+        for name in [GPKG_CANDIDATE_LAYER_NAME] + [str(row[0] or "") for row in rows]:
+            if not self.isCandidateLayerName(name):
                 continue
-            layer = self.gpkgLayer(gpkg_path, layer_name, "360 Detection Candidates")
+            if name in layer_names:
+                continue
+            layer_names.append(name)
+
+        layers = []
+        for layer_name in layer_names:
+            display_name = self.gpkgCandidateLayerDisplayName(layer_name)
+            layer = self.gpkgLayer(gpkg_path, layer_name, display_name)
             if layer is not None and self.isCandidateLayer(layer):
+                layers.append(layer)
+        return layers
+
+    def layerFeatureCountTotal(self, layers):
+        """複数レイヤのfeatureCount合計を返す。"""
+        total = 0
+        for layer in layers or []:
+            total += self.layerFeatureCount(layer)
+        return total
+
+    def firstLayer(self, layers):
+        """レイヤリストの先頭、またはNoneを返す。"""
+        for layer in layers or []:
+            if layer is not None:
                 return layer
         return None
 
@@ -1376,7 +1460,24 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if features:
             pr.addFeatures(features)
         layer.updateExtents()
+        self.createLayerSpatialIndex(layer)
         return layer
+
+    def createLayerSpatialIndex(self, layer):
+        """可能ならメモリレイヤに空間インデックスを作成する。"""
+        if layer is None:
+            return False
+        try:
+            provider = layer.dataProvider()
+        except Exception:
+            return False
+        creator = getattr(provider, "createSpatialIndex", None)
+        if not callable(creator):
+            return False
+        try:
+            return bool(creator())
+        except Exception:
+            return False
 
     def layerFeatureCount(self, layer):
         """featureCountが使えない場合も安全に件数を返す。"""
@@ -1622,12 +1723,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def saveAndRemoveGeneratedLayersBeforeDatabaseLoad(self):
         """DB読込前に既存の一時レイヤを退避してから取り除く。"""
-        if not self.generatedLayers():
-            return True
-        saved_path, _saved_count, save_error = self.saveGeneratedLayers()
-        if save_error:
-            self.notifyWarning("save_generated_layers_failed", path=saved_path, error=save_error)
-            return False
+        if self.generatedLayers():
+            saved_path, _saved_count, save_error = self.saveGeneratedLayers()
+            if save_error:
+                self.notifyWarning("save_generated_layers_failed", path=saved_path, error=save_error)
+                return False
         self.removeGeneratedLayers()
         return True
 
@@ -1646,36 +1746,42 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.notifyWarning("database_load_failed", error=f"layer not found: {GPKG_FRAME_LAYER_NAME}")
             return False
         target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, "360 Click Targets")
-        candidate_source = self.gpkgCandidateLayer(gpkg_path)
+        candidate_sources = self.gpkgCandidateLayers(gpkg_path)
 
         frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points")
         target_layer = self.cloneLayerToMemory(target_source, "360 Click Targets") if target_source is not None else None
-        candidate_layer = (
-            self.cloneLayerToMemory(candidate_source, "360 Detection Candidates")
-            if candidate_source is not None
-            else None
-        )
+        candidate_layers = [
+            self.cloneLayerToMemory(source_layer, source_layer.name())
+            for source_layer in candidate_sources
+        ]
+        candidate_layer = self.firstLayer(candidate_layers)
 
         project = QgsProject.instance()
         project.addMapLayer(frame_layer)
         self.created_layer_ids = [frame_layer.id()]
+        self.save_on_exit_layer_ids = set()
+        self.loaded_layer_feature_counts = {}
+        self.registerLoadedLayerForChangeTracking(frame_layer)
         self.frame_layer_id = frame_layer.id()
 
         if target_layer is not None:
             self.applyViewerTargetHiddenColumns(target_layer)
             project.addMapLayer(target_layer)
             self.created_layer_ids.append(target_layer.id())
+            self.registerLoadedLayerForChangeTracking(target_layer)
             self.target_layer_id = target_layer.id()
         else:
             self.target_layer_id = None
 
-        if candidate_layer is not None:
+        self.candidate_layer_id = None
+        for candidate_layer in candidate_layers:
             self.applyCandidateHiddenColumns(candidate_layer)
             project.addMapLayer(candidate_layer)
             self.created_layer_ids.append(candidate_layer.id())
-            self.candidate_layer_id = candidate_layer.id()
-        else:
-            self.candidate_layer_id = None
+            self.registerLoadedLayerForChangeTracking(candidate_layer)
+            if self.candidate_layer_id is None:
+                self.candidate_layer_id = candidate_layer.id()
+        candidate_layer = self.firstLayer(candidate_layers)
 
         self.database_file = gpkg_path
         self.loaded_gpkg_path = gpkg_path
@@ -1744,7 +1850,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "database_loaded",
             frame_layer=self.layerFeatureCount(frame_layer),
             target_layer=self.layerFeatureCount(target_layer),
-            candidate_layer=self.layerFeatureCount(candidate_layer),
+            candidate_layer=self.layerFeatureCountTotal(candidate_layers),
             path=gpkg_path,
         )
         return True
@@ -1789,6 +1895,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return False
         layer.dataProvider().addAttributes(missing_fields)
         layer.updateFields()
+        self.markLayerSaveOnExit(layer)
         self.applyViewerTargetHiddenColumns(layer)
         return True
 
@@ -1826,6 +1933,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyViewerTargetHiddenColumns(layer)
         QgsProject.instance().addMapLayer(layer)
         self.created_layer_ids.append(layer.id())
+        self.markLayerSaveOnExit(layer)
         self.target_layer_id = layer.id()
         return layer
 
@@ -2038,6 +2146,78 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return layer
         return None
 
+    def currentDetectionScope(self):
+        """Detection check Navで使う候補レイヤ範囲を返す。"""
+        try:
+            value = self.nav_scope.currentData()
+        except Exception:
+            return "active"
+        return str(value or "active")
+
+    def activeCandidateLayer(self):
+        """QGISで現在アクティブなYOLO候補レイヤを返す。"""
+        try:
+            layer = self.iface.activeLayer()
+        except Exception:
+            return None
+        if self.isCandidateLayer(layer):
+            self.applyCandidateHiddenColumns(layer)
+            return layer
+        return None
+
+    def layerSelectedFeatureIds(self, layer):
+        """レイヤ上で選択中のfeature id集合を返す。"""
+        if layer is None:
+            return set()
+        try:
+            if int(layer.selectedFeatureCount()) <= 0:
+                return set()
+            return set(layer.selectedFeatureIds())
+        except Exception:
+            return set()
+
+    def candidateFeatures(self, layer, selected_only=False):
+        """候補レイヤの地物を返す。subset filterはQGISのgetFeatures()に委ねる。"""
+        if layer is None:
+            return
+
+        selected_ids = self.layerSelectedFeatureIds(layer) if selected_only else set()
+        if selected_only and not selected_ids:
+            return
+
+        for feature in layer.getFeatures():
+            if selected_only and feature.id() not in selected_ids:
+                continue
+            yield feature
+
+    def projectCandidateLayers(self):
+        """現在プロジェクト内のYOLO候補レイヤを重複なしで返す。"""
+        project = QgsProject.instance()
+        layers = []
+        seen = set()
+
+        def add_layer(layer):
+            if not self.isCandidateLayer(layer):
+                return
+            layer_id = layer.id()
+            if layer_id in seen:
+                return
+            self.applyCandidateHiddenColumns(layer)
+            layers.append(layer)
+            seen.add(layer_id)
+
+        add_layer(self.candidateLayer())
+
+        for layer in reversed(list(project.mapLayers().values())):
+            if self.isCurrentGpkgCandidateLayer(layer):
+                add_layer(layer)
+
+        for layer in reversed(list(project.mapLayers().values())):
+            if self.isNamedCandidateLayer(layer):
+                add_layer(layer)
+
+        return layers
+
     def isCurrentGpkgCandidateLayer(self, layer):
         """現在ジョブのtmp.gpkg内poi_candidates_360レイヤかを判定する。"""
         if not self.isCandidateLayer(layer):
@@ -2055,8 +2235,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         text = str(value or "").lower()
         return (
             "360 detection candidates" in text
+            or "360 poi clusters" in text
             or GPKG_CANDIDATE_LAYER_NAME.lower() in text
             or "poi_candidates" in text
+            or "poi_clusters" in text
         )
 
     def isNamedCandidateLayer(self, layer):
@@ -2073,16 +2255,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             source = ""
         return self.isCandidateLayerName(f"{name}\n{source}")
 
-    def layerHasVideoFrameCandidate(self, layer, video_name, frame_num=None):
+    def layerHasVideoFrameCandidate(self, layer, video_name, frame_num=None, selected_only=False):
         """指定動画/任意フレームのYOLO候補点を持つレイヤか確認する。"""
         if not self.isCandidateLayer(layer):
             return False
-        if not video_name:
-            return True
 
-        for feature in layer.getFeatures():
+        for feature in self.candidateFeatures(layer, selected_only=selected_only):
             feature_video = self.targetFeatureValue(feature, "video")
-            if feature_video and str(feature_video) != str(video_name):
+            if video_name and feature_video and str(feature_video) != str(video_name):
                 continue
             if frame_num is None:
                 return True
@@ -2091,40 +2271,36 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return True
         return False
 
-    def candidateReadLayers(self, frame_num=None):
+    def candidateReadLayers(self, frame_num=None, scope=None):
         """復元参照に使うYOLO候補レイヤを現在ジョブに絞って返す。"""
-        project = QgsProject.instance()
         current_video = os.path.basename(self.video_file or "")
-        layers = []
-        seen = set()
+        scope = str(scope or self.currentDetectionScope() or "active")
 
-        def add_layer(layer):
-            """重複とスキーマ不一致を避けて候補へ追加する。"""
-            if not self.isCandidateLayer(layer):
-                return
-            layer_id = layer.id()
-            if layer_id in seen:
-                return
-            layers.append(layer)
-            seen.add(layer_id)
+        def layer_matches(layer, selected_only=False):
+            return self.layerHasVideoFrameCandidate(
+                layer,
+                current_video,
+                frame_num,
+                selected_only=selected_only,
+            )
 
-        candidate_layer = self.candidateLayer()
-        if (
-            candidate_layer is not None
-            and self.layerHasVideoFrameCandidate(candidate_layer, current_video, frame_num)
-        ):
-            add_layer(candidate_layer)
+        if scope == "active":
+            layer = self.activeCandidateLayer()
+            if layer is not None:
+                return [layer] if layer_matches(layer) else []
 
-        for layer in reversed(list(project.mapLayers().values())):
-            if self.isCurrentGpkgCandidateLayer(layer):
-                add_layer(layer)
+        layers = self.projectCandidateLayers()
 
-        for layer in reversed(list(project.mapLayers().values())):
-            if not self.isNamedCandidateLayer(layer):
-                continue
-            if not self.layerHasVideoFrameCandidate(layer, current_video, frame_num):
-                continue
-            add_layer(layer)
+        if scope == "selected":
+            return [
+                layer for layer in layers
+                if self.layerSelectedFeatureIds(layer) and layer_matches(layer, selected_only=True)
+            ]
+
+        layers = [
+            layer for layer in layers
+            if layer_matches(layer)
+        ]
 
         return layers
 
@@ -2181,7 +2357,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def viewerDetectionTargetsForFrame(self, frame_num):
         """指定フレームのYOLO候補点をビューア確認用payloadとして返す。"""
         target_frame = int(frame_num)
-        layers = self.candidateReadLayers(target_frame)
+        scope = self.currentDetectionScope()
+        selected_only = scope == "selected"
+        layers = self.candidateReadLayers(target_frame, scope=scope)
         if not layers:
             return []
 
@@ -2190,7 +2368,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         seen_candidates = set()
 
         for layer in layers:
-            for feature in layer.getFeatures():
+            for feature in self.candidateFeatures(layer, selected_only=selected_only):
                 frame_value = self.targetFeatureFloat(feature, "frame")
                 if frame_value is None or int(frame_value) != target_frame:
                     continue
@@ -2392,6 +2570,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layer.dataProvider().addFeatures(features)
         layer.updateExtents()
         layer.triggerRepaint()
+        self.markLayerSaveOnExit(layer)
         self.saved_viewer_target_keys = existing_keys
 
     def matchedFrameCsvPaths(self):
@@ -2454,8 +2633,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def detectionFrames(self):
         """YOLO候補点が存在するframe一覧を返す。"""
         frames = []
-        for layer in self.candidateReadLayers():
-            for feature in layer.getFeatures():
+        scope = self.currentDetectionScope()
+        selected_only = scope == "selected"
+        for layer in self.candidateReadLayers(scope=scope):
+            for feature in self.candidateFeatures(layer, selected_only=selected_only):
                 frame_value = self.targetFeatureFloat(feature, "frame")
                 if frame_value is None:
                     continue
@@ -2505,6 +2686,70 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def frameStepNavigationTarget(self, current_frame, direction, step_count):
         """Frame stepモードとして次フレームを決める。"""
         target = max(0, int(current_frame) + int(direction) * int(step_count))
+        return target, self.findFeatureByFrame(target)
+
+    def frameStepEdgeTarget(self, direction):
+        """Frame stepモードで撮影点レコードの先頭/最後尾を返す。"""
+        layer = self.activeFrameLayer()
+        if layer is None:
+            self.notifyWarning("video_gpx_layer_missing")
+            return None, None
+
+        frames = self.layerFrames(layer)
+        if not frames:
+            self.notifyWarning("no_layer_frame", direction="first" if direction < 0 else "last")
+            return None, None
+
+        target = frames[0] if direction < 0 else frames[-1]
+        return target, self.findFeatureByFrame(target)
+
+    def navigationEdgeTargetFrame(self, direction):
+        """UIのナビモードに応じて、先頭/最後尾レコードのフレームと地物を返す。"""
+        config = self.collectNavigationConfig()
+        if config is None:
+            return None, None
+
+        edge_name = "first" if direction < 0 else "last"
+        mode = config.mode
+
+        if mode == "frame":
+            return self.frameStepEdgeTarget(direction)
+
+        if mode == "kp":
+            frames, path = self.matchedFrames()
+            if not frames:
+                self.setNavigationModeByData("frame")
+                self.notifyWarning("kp_navigation_fallback_frame")
+                return self.frameStepEdgeTarget(direction)
+            target = frames[0] if direction < 0 else frames[-1]
+            return target, self.findFeatureByFrame(target)
+
+        if mode == "picked":
+            frames = self.pickedFrames()
+            if not frames:
+                self.notifyWarning("no_picked_frame", direction=edge_name)
+                return None, None
+            target = frames[0] if direction < 0 else frames[-1]
+            return target, self.findFeatureByFrame(target)
+
+        if mode == "detect":
+            frames = self.detectionFrames()
+            if not frames:
+                self.notifyWarning("no_detection_frame", direction=edge_name)
+                return None, None
+            target = frames[0] if direction < 0 else frames[-1]
+            return target, self.findFeatureByFrame(target)
+
+        layer = self.activeFrameLayer()
+        if layer is None:
+            self.notifyWarning("video_gpx_layer_missing")
+            return None, None
+
+        frames = self.layerFrames(layer)
+        if not frames:
+            self.notifyWarning("no_layer_frame", direction=edge_name)
+            return None, None
+        target = frames[0] if direction < 0 else frames[-1]
         return target, self.findFeatureByFrame(target)
 
     def navigationTargetFrame(self, direction, fast=False):
@@ -2573,6 +2818,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
         self.displayFrame(target, feature=feature)
 
+    def navigateEdge(self, direction):
+        """現在ナビゲーション対象レコードの先頭または最後尾へ移動する。"""
+        target, feature = self.navigationEdgeTargetFrame(direction)
+        if target is None:
+            return
+        self.displayFrame(target, feature=feature)
+
 
     def stopWorker(self, wait_ms=1000, show_message=True):
         """実行中workerへ中断要求を出し、一定時間だけ終了を待つ。"""
@@ -2614,20 +2866,72 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 self.candidate_layer_id = None
 
         self.created_layer_ids = remaining_layer_ids
+        self.save_on_exit_layer_ids = set()
+        self.loaded_layer_feature_counts = {}
         self.saved_viewer_target_keys = set()
         return removed_count
+
+    def markLayerSaveOnExit(self, layer):
+        """終了時にtmp.gpkgへ退避すべき揮発レイヤとして記録する。"""
+        if layer is None:
+            return False
+        try:
+            layer_id = layer.id()
+        except Exception:
+            return False
+        if not layer_id:
+            return False
+        self.save_on_exit_layer_ids.add(layer_id)
+        return True
+
+    def registerLoadedLayerForChangeTracking(self, layer):
+        """GPKGから読み込んだ作業用メモリレイヤの変更を検知する。"""
+        if layer is None:
+            return False
+        try:
+            layer_id = layer.id()
+        except Exception:
+            return False
+        if not layer_id:
+            return False
+
+        self.loaded_layer_feature_counts[layer_id] = self.layerFeatureCount(layer)
+
+        for signal_name in (
+            "featureAdded",
+            "featureDeleted",
+            "attributeValueChanged",
+            "geometryChanged",
+        ):
+            try:
+                signal = getattr(layer, signal_name)
+                signal.connect(lambda *args, layer=layer: self.markLayerSaveOnExit(layer))
+            except Exception:
+                pass
+        return True
+
+    def shouldSaveLayerOnExit(self, layer_id, layer):
+        """終了時にレイヤをGPKGへ保存すべきか判定する。"""
+        if layer_id in self.save_on_exit_layer_ids:
+            return True
+        if layer_id not in self.loaded_layer_feature_counts:
+            return False
+        try:
+            return self.layerFeatureCount(layer) != int(self.loaded_layer_feature_counts[layer_id])
+        except Exception:
+            return False
 
     def generatedLayerBackupPath(self):
         """Exit時に生成レイヤを退避保存するGeoPackageパスを返す。"""
         return os.path.join(self.resolvedOutputDir(), "tmp.gpkg")
 
     def generatedLayers(self):
-        """現在QGISに残っている、プラグイン生成レイヤだけを取得する。"""
+        """現在QGISに残っている、終了時バックアップ対象レイヤだけを取得する。"""
         project = QgsProject.instance()
         layers = []
         for layer_id in self.created_layer_ids:
             layer = project.mapLayer(layer_id)
-            if layer is not None:
+            if layer is not None and self.shouldSaveLayerOnExit(layer_id, layer):
                 layers.append(layer)
         return layers
 
@@ -2637,6 +2941,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if fields is None:
             return _safe_gpkg_layer_name(f"{base_layer_name}_{index:02d}")
         if self.isCandidateLayer(layer):
+            display_name = str(getattr(layer, "name", lambda: "")() or "")
+            for prefix in ("360 Detection Candidates: ", "360 POI Clusters: "):
+                if display_name.startswith(prefix):
+                    return _safe_gpkg_layer_name(display_name[len(prefix):])
+            if display_name.startswith(("poi_candidates", "poi_clusters")):
+                return _safe_gpkg_layer_name(display_name)
             return GPKG_CANDIDATE_LAYER_NAME
         if fields.indexFromName("target_id") >= 0:
             return GPKG_TARGET_LAYER_NAME
@@ -2721,6 +3031,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_layer_id = None
         self.target_layer_id = None
         self.candidate_layer_id = None
+        self.save_on_exit_layer_ids = set()
+        self.loaded_layer_feature_counts = {}
         self.database_file = ""
         self.loaded_gpkg_path = ""
         self.setDatabaseRestoreMode(False)
@@ -2894,8 +3206,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
             pr.addFeatures(features)
             layer.updateExtents()
+            self.createLayerSpatialIndex(layer)
             QgsProject.instance().addMapLayer(layer)
             self.created_layer_ids.append(layer.id())
+            self.markLayerSaveOnExit(layer)
             self.frame_layer_id = layer.id()
             print("Layer added successfully.")
             self.notifyInfo("layer_added", count=len(features))

@@ -106,6 +106,7 @@ class ViewerControllerMixin:
             "viewer_cache_dir": viewer_config.cache_dir,
             "viewer_camera_height_m": viewer_config.camera_height_m,
             "viewer_hud_height_scale": viewer_config.hud_height_scale,
+            "viewer_debug_log_enabled": self.viewerDebugLogEnabled(),
         }
 
         try:
@@ -125,6 +126,18 @@ class ViewerControllerMixin:
         """現在設定のhost/portからビューア基底URLを組み立てる。"""
         self.loadViewerDefaults()
         return f"http://{self.viewer_host}:{self.viewer_port}"
+
+    def viewerDebugLogEnabled(self):
+        """プラグイン本体の詳細ログ設定を、Viewer制御側から参照する。"""
+        checker = getattr(self, "debugLogEnabled", None)
+        if callable(checker):
+            return bool(checker())
+        return False
+
+    def viewerDebugPrint(self, message):
+        """詳細ログON時だけQGIS Pythonコンソール側へ補助ログを出す。"""
+        if self.viewerDebugLogEnabled():
+            print(message)
 
     def viewerUrl(self, frame_num=None):
         """ブラウザで開くビューアURLを返す。フレーム指定なしならトップURL。"""
@@ -370,7 +383,7 @@ class ViewerControllerMixin:
 
     def openViewerWhenReady(self, frame_num=None, attempts=20):
         """ビューア応答を待ってからブラウザを開く。起動直後の遅延を吸収する。"""
-        if self.viewerHealth(timeout=0.25):
+        if self.viewerHealth(timeout=0.75):
             opens_viewer_page = frame_num is not None and bool(self.video_file)
             if not opens_viewer_page:
                 self.iface.messageBar().pushMessage(
@@ -393,6 +406,25 @@ class ViewerControllerMixin:
             return
 
         QTimer.singleShot(250, lambda: self.openViewerWhenReady(frame_num, attempts - 1))
+
+    def updateViewerWhenReady(self, frame_num, attempts=8):
+        """既存ビューアページが一時的にbusyな場合、開き直さず更新だけをリトライする。"""
+        frame_num = int(frame_num)
+        if getattr(self, "pending_viewer_update_frame", frame_num) != frame_num:
+            return
+
+        if self.viewerHealth(timeout=0.75) and self.postViewerNavigation(frame_num):
+            self.notifyDebugText(f"360Viewer frame updated: {frame_num}")
+            return
+
+        if attempts <= 0:
+            self.iface.messageBar().pushWarning(
+                PLUGIN_TITLE,
+                f"360Viewer navigation did not respond: {self.viewerBaseUrl()}"
+            )
+            return
+
+        QTimer.singleShot(350, lambda: self.updateViewerWhenReady(frame_num, attempts - 1))
 
     def postViewerNavigation(self, frame_num):
         """既存ビューアページへHTTP APIで表示フレーム変更を通知する。"""
@@ -422,7 +454,7 @@ class ViewerControllerMixin:
             try:
                 targets_payload = target_payload_getter(frame_num)
             except Exception as e:
-                print(f"360Viewer target restore payload failed: {e}")
+                self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
         if targets_payload:
             payload["targets"] = targets_payload
 
@@ -432,7 +464,7 @@ class ViewerControllerMixin:
                 try:
                     picked_view = view_getter(frame_num)
                 except Exception as e:
-                    print(f"360Viewer picked view restore failed: {e}")
+                    self.viewerDebugPrint(f"360Viewer picked view restore failed: {e}")
                     picked_view = None
                 if picked_view:
                     payload.update(picked_view)
@@ -442,7 +474,7 @@ class ViewerControllerMixin:
                 try:
                     detection_view = view_getter(frame_num)
                 except Exception as e:
-                    print(f"360Viewer detection view restore failed: {e}")
+                    self.viewerDebugPrint(f"360Viewer detection view restore failed: {e}")
                     detection_view = None
                 if detection_view:
                     payload.update(detection_view)
@@ -457,29 +489,34 @@ class ViewerControllerMixin:
             with urlopen(request, timeout=1.0):
                 return True
         except (HTTPError, URLError, OSError) as e:
-            print(f"360Viewer navigation failed: {e}")
+            self.viewerDebugPrint(f"360Viewer navigation failed: {e}")
             return False
 
     def showFrameInViewer(self, frame_num):
         """QGIS側のフレーム選択に合わせて360Viewer表示を更新する。"""
         if not self.video_file:
             return
+        frame_num = int(frame_num)
+        self.pending_viewer_update_frame = frame_num
         self.startViewerSessionPolling()
         if not self.ensureViewerStarted():
             return
 
-        if not self.viewerHealth(timeout=0.25):
-            self.openViewerWhenReady(frame_num)
+        if not self.viewerHealth(timeout=0.75):
+            if self.viewer_browser_opened:
+                self.updateViewerWhenReady(frame_num)
+            else:
+                self.openViewerWhenReady(frame_num)
             return
 
         if self.viewer_browser_opened and self.postViewerNavigation(frame_num):
-            self.iface.messageBar().pushMessage(
-                PLUGIN_TITLE,
-                f"360Viewer frame updated: {frame_num}"
-            )
+            self.notifyDebugText(f"360Viewer frame updated: {frame_num}")
             return
 
-        self.openViewerWhenReady(frame_num)
+        if self.viewer_browser_opened:
+            self.updateViewerWhenReady(frame_num)
+        else:
+            self.openViewerWhenReady(frame_num)
 
     def stopViewerProcess(self):
         """このプラグインが起動した360Viewerプロセスを停止する。"""

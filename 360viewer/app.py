@@ -94,6 +94,7 @@ def load_config() -> dict[str, Any]:
         "viewer_cache_dir": viewer_cache_dir,
         "viewer_camera_height_m": normalize_camera_height(raw.get("viewer_camera_height_m")),
         "viewer_hud_height_scale": normalize_hud_height_scale(raw.get("viewer_hud_height_scale")),
+        "viewer_debug_log_enabled": parse_bool(raw.get("viewer_debug_log_enabled", False)),
     }
 
 
@@ -759,9 +760,12 @@ class ViewerHandler(BaseHTTPRequestHandler):
     """360ViewerのHTTPエンドポイントを処理するリクエストハンドラ。"""
 
     server_version = "360ViewerHTTP/1.0"
+    debug_log_enabled = False
 
     def log_message(self, format: str, *args: Any) -> None:
         """標準のHTTPログをQGIS側で見やすい形式にする。"""
+        if not self.debug_log_enabled:
+            return
         print(f"360Viewer {self.address_string()} - {format % args}")
 
     def do_GET(self) -> None:
@@ -1019,6 +1023,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 def main() -> None:
     """設定を読み、ThreadingHTTPServerで360Viewerを起動する。"""
     config = load_config()
+    ViewerHandler.debug_log_enabled = bool(config.get("viewer_debug_log_enabled"))
     server = ThreadingHTTPServer((config["host"], config["port"]), ViewerHandler)
     print(f"360Viewer serving on http://{config['host']}:{config['port']}")
     try:
