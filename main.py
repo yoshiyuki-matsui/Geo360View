@@ -16,7 +16,8 @@ from qgis.PyQt.QtCore import (
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
-    QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform
+    QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform,
+    QgsFeatureRequest, QgsExpression,
 )
 try:
     from qgis.core import QgsEditorWidgetSetup
@@ -459,13 +460,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_scope_label = QLabel("Scope:")
         self.nav_scope = QComboBox()
         self.nav_scope.addItem("Active layer", "active")
+        self.nav_scope.addItem("Visible layers", "visible")
         self.nav_scope.addItem("All candidates", "all")
         self.nav_scope.addItem("Selected features", "selected")
+        self.nav_scope.setCurrentIndex(1)
         self.nav_scope.setToolTip(
-            "Detection check target scope. Layer subset filters are applied by QGIS."
+            "Detection check target scope. QGIS visibility, selection, and subset filters can limit Nav targets."
         )
         self.nav_scope_label.setToolTip(self.nav_scope.toolTip())
-        set_fixed_width(self.nav_scope, 126)
+        set_fixed_width(self.nav_scope, 132)
         self.nav_step_label = QLabel("Step:")
         self.nav_step = QSpinBox()
         self.nav_step.setRange(1, 1000000)
@@ -2151,8 +2154,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         try:
             value = self.nav_scope.currentData()
         except Exception:
-            return "active"
-        return str(value or "active")
+            return "visible"
+        return str(value or "visible")
 
     def activeCandidateLayer(self):
         """QGISで現在アクティブなYOLO候補レイヤを返す。"""
@@ -2165,6 +2168,25 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return layer
         return None
 
+    def layerTreeVisible(self, layer):
+        """QGISレイヤツリー上で表示対象になっているかを返す。"""
+        if layer is None:
+            return False
+        try:
+            node = QgsProject.instance().layerTreeRoot().findLayer(layer.id())
+        except Exception:
+            node = None
+        if node is None:
+            return True
+        for method_name in ("isVisible", "itemVisibilityChecked"):
+            method = getattr(node, method_name, None)
+            if callable(method):
+                try:
+                    return bool(method())
+                except Exception:
+                    pass
+        return True
+
     def layerSelectedFeatureIds(self, layer):
         """レイヤ上で選択中のfeature id集合を返す。"""
         if layer is None:
@@ -2176,8 +2198,27 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except Exception:
             return set()
 
+    def candidateFeatureRequest(self, layer):
+        """候補レイヤのQGIS subset/filter式を明示的に反映したFeatureRequestを返す。"""
+        request = QgsFeatureRequest()
+        if layer is None:
+            return request
+        try:
+            subset = str(layer.subsetString() or "").strip()
+        except Exception:
+            subset = ""
+        if not subset:
+            return request
+        try:
+            expression = QgsExpression(subset)
+            if not expression.hasParserError():
+                request.setFilterExpression(subset)
+        except Exception:
+            pass
+        return request
+
     def candidateFeatures(self, layer, selected_only=False):
-        """候補レイヤの地物を返す。subset filterはQGISのgetFeatures()に委ねる。"""
+        """候補レイヤの地物を返す。QGIS subset/filter式と選択状態をNav対象へ反映する。"""
         if layer is None:
             return
 
@@ -2185,12 +2226,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if selected_only and not selected_ids:
             return
 
-        for feature in layer.getFeatures():
+        request = self.candidateFeatureRequest(layer)
+        for feature in layer.getFeatures(request):
             if selected_only and feature.id() not in selected_ids:
                 continue
             yield feature
 
-    def projectCandidateLayers(self):
+    def projectCandidateLayers(self, visible_only=False):
         """現在プロジェクト内のYOLO候補レイヤを重複なしで返す。"""
         project = QgsProject.instance()
         layers = []
@@ -2198,6 +2240,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         def add_layer(layer):
             if not self.isCandidateLayer(layer):
+                return
+            if visible_only and not self.layerTreeVisible(layer):
                 return
             layer_id = layer.id()
             if layer_id in seen:
@@ -2286,10 +2330,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         if scope == "active":
             layer = self.activeCandidateLayer()
-            if layer is not None:
-                return [layer] if layer_matches(layer) else []
+            return [layer] if layer is not None and layer_matches(layer) else []
 
-        layers = self.projectCandidateLayers()
+        layers = self.projectCandidateLayers(visible_only=(scope == "visible"))
 
         if scope == "selected":
             return [
