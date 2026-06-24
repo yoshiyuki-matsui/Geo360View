@@ -187,6 +187,30 @@ button:disabled {
   background: rgba(255, 190, 80, 0.96);
 }
 
+.click-target-marker-label {
+  background: rgba(0, 0, 0, 0.70);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+  color: #fff8dc;
+  display: block;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  left: 50%;
+  line-height: 1.25;
+  max-width: 240px;
+  overflow: hidden;
+  padding: 2px 4px;
+  position: absolute;
+  text-overflow: ellipsis;
+  top: 21px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.click-target-marker-label[hidden] {
+  display: none;
+}
+
 .click-target-marker[hidden] {
   display: none;
 }

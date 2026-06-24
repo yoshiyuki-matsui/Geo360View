@@ -599,6 +599,7 @@ QGISプラグインは、GPKG読込時に `gpkg_contents` のfeatures layerか�
 表示名は `360 Detection Candidates: poi_candidates_pothole_360` のように元レイヤ名を含めます。
 これらのレイヤがNavの `Detection check` 対象になります。
 `Detection check` には `Scope` を持たせ、`Active layer` ではQGISで現在選択中の候補レイヤだけ、
+既定の `Visible layers` ではQGISレイヤツリーで表示ONの候補/クラスタレイヤだけ、
 `All candidates` では候補レイヤ全体、`Selected features` では選択中featureだけを巡回します。
 レイヤのsubset filterは `getFeatures()` に反映されるため、たとえば
 `semantic_class LIKE 'Speed Limit%'` で絞った結果だけをNavできます。

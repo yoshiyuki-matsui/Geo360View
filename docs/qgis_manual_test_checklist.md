@@ -105,6 +105,7 @@
 - [ ] GPKG内の候補レイヤがQGIS上で `360 Detection Candidates: <layer_name>` として読み込まれる。
 - [ ] GPKG内のクラスタレイヤがQGIS上で `360 POI Clusters: <layer_name>` として読み込まれる。
 - [ ] `Detection check` の `Scope=Active layer` で、アクティブ候補/クラスタレイヤだけを辿る。
+- [ ] `Detection check` の既定Scopeが `Visible layers` で、QGIS表示ONの候補/クラスタレイヤだけを辿る。
 - [ ] `Detection check` の `Scope=All candidates` で、読み込まれている候補/クラスタレイヤ全体を辿る。
 - [ ] `Detection check` の `Scope=Selected features` で、選択中featureだけを辿る。
 - [ ] QGISのsubset filterで `semantic_class` などを絞ると、Nav対象も同じ絞り込み結果になる。

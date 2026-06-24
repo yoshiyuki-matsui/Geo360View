@@ -722,6 +722,32 @@
     return state.target && typeof state.target === "object" ? [state.target] : [];
   }
 
+  function clickTargetLabelText(target) {
+    const id = Number(target.id || target.order);
+    const idText = Number.isFinite(id) && id > 0 ? `[${id}]` : "";
+    const semanticClass = target.semantic_class ? String(target.semantic_class) : "";
+    const confidence = Number(target.confidence);
+    const confidenceText = Number.isFinite(confidence) ? `(${confidence.toFixed(2)})` : "";
+
+    if (semanticClass) {
+      return `${idText || "[]"}:${semanticClass}${confidenceText}`;
+    }
+    if (idText) {
+      return idText;
+    }
+    return "";
+  }
+
+  function ensureClickTargetLabel(marker) {
+    let label = marker.querySelector(".click-target-marker-label");
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "click-target-marker-label";
+      marker.appendChild(label);
+    }
+    return label;
+  }
+
   function setClickTargetMarker(marker, target) {
     const projected = projectClickTargetMarker(target);
     if (!projected) {
@@ -746,6 +772,10 @@
       titleParts.push(`#${target.id}`);
     }
     marker.title = titleParts.join(" ");
+    const label = ensureClickTargetLabel(marker);
+    const labelText = clickTargetLabelText(target);
+    label.textContent = labelText;
+    label.hidden = !labelText;
     marker.hidden = false;
   }
 

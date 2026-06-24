@@ -257,9 +257,10 @@ UIは、マニュアルレスで触り始められることと、パネルのコ
 
 `KP matched CSV` が存在しない、または空の場合は、警告を表示してナビゲーションモードを `Frame step` へ自動的に戻します。KPを指定していない作業でKPモードが残り続けると毎回同じエラーになるため、デフォルト動作へフォールバックします。
 
-`Detection check` の `Scope` は以下です。
+`Detection check` の `Scope` は以下です。既定値は、地図上で表示している候補だけを辿る `Visible layers` です。
 
 - `Active layer`: QGISで現在選択中の候補/クラスタレイヤだけを辿る。
+- `Visible layers`: QGISレイヤツリーで表示ONの候補/クラスタレイヤだけを辿る。
 - `All candidates`: 読み込まれている候補/クラスタレイヤ全体を辿る。
 - `Selected features`: QGIS上で選択中のfeatureだけを辿る。
 

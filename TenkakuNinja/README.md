@@ -1,5 +1,14 @@
 # TenkakuNinja Standalone Exporter
 
+## Migration Note
+
+360 semantic pipeline / POI生成系CLIは、新しい独立先として
+`/home/ns0521/TenkakuNinjaProject/tenkaku_ninja_poi` へ転出を開始しました。
+
+当面は互換性維持のため、このプラグイン内 `TenkakuNinja/` にも同じ実行入口を残します。
+既存の `python TenkakuNinja/yolo_detect.py ...` 形式はまだ壊しません。
+次段階で、POI系ファイルを薄いshimへ置き換えます。
+
 GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフレーム画像を証跡用JPEGとして一括抽出する単体Exporterです。
 
 このフォルダは、QGISプラグイン外へコピーして単体利用できます。
@@ -212,8 +221,9 @@ QGISプラグインは `poi_candidates...` 系features layerをすべて読み�
 `360 Detection Candidates: <layer_name>` として表示します。
 `poi_clusters...` 系features layerも `360 POI Clusters: <layer_name>` として読みます。
 これらの候補レイヤがNavの `Detection check` 対象です。
-`Detection check` の `Scope` で `Active layer`, `All candidates`, `Selected features`
+`Detection check` の `Scope` で `Active layer`, `Visible layers`, `All candidates`, `Selected features`
 を切り替えられます。レイヤのsubset filterはQGIS側で適用された状態でNavに反映され、
+既定の `Visible layers` ではQGISレイヤツリーで表示ONの候補/クラスタレイヤだけ、
 `Selected features` では選択中featureだけを巡回します。
 Navボタンの `|<<` / `>>|` は、現在のNav mode、Scope、subset filter、選択状態に基づく
 対象集合の先頭/最後尾へ移動します。地物種類やclassフィルタを変えながら、
