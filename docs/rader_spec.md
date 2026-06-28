@@ -1,6 +1,6 @@
 # レーダ表示 実寸準拠仕様
 
-更新日: 2026-06-06
+更新日: 2026-06-28
 
 この文書は、GPXVideoProcessor のQGIS地図上レーダ表示について、実寸準拠の考え方と現在の実装仕様をまとめるものです。
 
@@ -20,6 +20,7 @@
 - `DESIGN.ja.md`
 - `realize_rader.md`
 - `docs/yolo_georeference_spec.md`
+- `docs/yaw_front_offset_alignment.md`
 
 ## 目的
 
@@ -75,6 +76,7 @@ WEBビューアは `viewer_session.json` へ現在状態を書き出します。
 - `pitch`
 - `zoom`
 - `viewer_camera_height_m`
+- `viewer_front_offset_deg`
 - `radar`
 - `target`
 - `targets`
@@ -214,6 +216,12 @@ FOVが90度の場合、`tan(45deg)=1` なので、視野幅10mを基準にする
 
 将来的に「進行方向=動画正面」を保証した素材だけを扱う場合は、`0deg` を標準値として使います。
 
+ただし、Detection Checkで表示するPOIにはGPKG由来の `bearing_deg` と `target_yaw` があるため、
+QGIS側はそこから元MP4正面の補正量を `viewer_front_offset_deg` として復元できます。
+`viewer_front_offset_deg` がsessionにある場合、レーダ表示とPickedPoint投影ではこの値を
+UIの `Offset` より優先します。UIの `Offset` は補正情報が無い通常ビューや手動確認の
+フォールバックです。
+
 ## heading算出
 
 headingはGPXの `direction` 属性や地物属性から取得せず、フレーム前後の移動軌跡から推定します。
@@ -317,13 +325,17 @@ trajectory_distance_m < 0.5
 
 ## viewerBearing
 
-WEBビューアの `yaw_to_camera_heading` は、動画正面からのビューア相対角として扱います。
+WEBビューアの `yaw_to_camera_heading` は、元MP4の動画正面からのビューア相対角として扱います。
 
-`Offset` は「進行方向から動画正面までの時計回り角度」、`yaw_to_camera_heading` は「動画正面から現在視線までの時計回り角度」です。この2つを移動軌跡headingへ加算して、地図上の視線方位を求めます。
+`viewer_front_offset_deg` は「進行方向から元MP4動画正面までの時計回り角度」、
+`yaw_to_camera_heading` は「元MP4動画正面から現在視線までの時計回り角度」です。
+この2つを移動軌跡headingへ加算して、地図上の視線方位を求めます。
 
 ```text
-viewer_bearing = (heading + Offset + yaw_to_camera_heading) % 360
+viewer_bearing = (heading + viewer_front_offset_deg + yaw_to_camera_heading) % 360
 ```
+
+`viewer_front_offset_deg` がsessionに無い場合は、UIの `Offset` を使います。
 
 `viewer_bearing` は、地図上で扇形中心線、direction線、先端垂線を描画する方向です。
 
@@ -461,10 +473,11 @@ forward_distance_m = max(1.0, CalDist * Scale * tan(click_fov / 2) / tan(CalFOV 
 target_distance_m = forward_distance_m / cos(yaw_delta_deg)
 ```
 
-地図上の方位は、移動軌跡heading、動画offset、クリック点絶対yawから求めます。
+地図上の方位は、移動軌跡heading、sessionの `viewer_front_offset_deg`、
+クリック点絶対yawから求めます。`viewer_front_offset_deg` が無い場合だけUIの `Offset` を使います。
 
 ```text
-target_bearing = (heading + Offset + target_yaw_to_camera_heading) % 360
+target_bearing = (heading + viewer_front_offset_deg + target_yaw_to_camera_heading) % 360
 ```
 
 最後に、撮影点から `target_bearing` 方向へ `target_distance_m` だけ方位距離投影し、QGIS上に一時RubberBandとして線と点を描きます。複数点の場合は、それぞれのクリック点について同じ計算を行い、1つのMultiLine/MultiPoint RubberBandとしてまとめて描画します。

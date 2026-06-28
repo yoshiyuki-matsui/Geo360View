@@ -361,6 +361,13 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
             load_config()["viewer_hud_height_scale"],
         ),
     }
+    if payload.get("viewer_front_offset_deg") is not None:
+        try:
+            state["viewer_front_offset_deg"] = normalize_signed_yaw(
+                parse_float(payload.get("viewer_front_offset_deg"), "viewer_front_offset_deg")
+            )
+        except ApiError:
+            pass
     target = validate_target_payload(payload.get("target"))
     if target:
         state["target"] = target
@@ -551,6 +558,16 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
             load_config()["viewer_hud_height_scale"],
         ),
     }
+    viewer_front_offset = payload.get("viewer_front_offset_deg")
+    if viewer_front_offset is None and session.get("video") == video:
+        viewer_front_offset = session.get("viewer_front_offset_deg")
+    if viewer_front_offset is not None:
+        try:
+            state["viewer_front_offset_deg"] = normalize_signed_yaw(
+                parse_float(viewer_front_offset, "viewer_front_offset_deg")
+            )
+        except ApiError:
+            pass
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
         state["radar"] = radar
@@ -861,6 +878,17 @@ class ViewerHandler(BaseHTTPRequestHandler):
                         previous.get("viewer_hud_height_scale"),
                         load_config()["viewer_hud_height_scale"],
                     )
+                if (
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and "viewer_front_offset_deg" not in payload
+                    and previous.get("viewer_front_offset_deg") is not None
+                ):
+                    try:
+                        state["viewer_front_offset_deg"] = normalize_signed_yaw(
+                            parse_float(previous.get("viewer_front_offset_deg"), "viewer_front_offset_deg")
+                        )
+                    except ApiError:
+                        pass
                 state = write_session(state)
                 self.send_json(state)
                 return

@@ -2077,6 +2077,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         target_order = int(target_order) if target_order is not None else target_id
         projection = self.targetFeatureValue(feature, "projection") or "ground_plane"
         distance_m = self.targetFeatureFloat(feature, "distance_m")
+        map_bearing = self.targetFeatureFloat(feature, "bearing_deg")
         quality = self.targetFeatureValue(feature, "quality")
 
         target = {
@@ -2095,6 +2096,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         }
         if str(projection) == "ground_plane" and distance_m is not None and distance_m > 0:
             target["ground_distance_m"] = float(distance_m)
+        if map_bearing is not None:
+            target["map_bearing_deg"] = float(map_bearing) % 360.0
         if quality:
             target["quality"] = str(quality)
         return target

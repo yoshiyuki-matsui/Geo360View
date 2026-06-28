@@ -457,6 +457,17 @@ class ViewerControllerMixin:
                 self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
         if targets_payload:
             payload["targets"] = targets_payload
+            heading_getter = getattr(self, "radarHeadingAndRadius", None)
+            offset_getter = getattr(self, "viewerBearingOffsetFromTargets", None)
+            if callable(heading_getter) and callable(offset_getter):
+                try:
+                    heading, _radius_m = heading_getter(frame_num)
+                    viewer_front_offset = offset_getter(heading, {"targets": targets_payload})
+                except Exception as e:
+                    self.viewerDebugPrint(f"360Viewer front offset payload failed: {e}")
+                    viewer_front_offset = None
+                if viewer_front_offset is not None:
+                    payload["viewer_front_offset_deg"] = viewer_front_offset
 
         if nav_mode == "picked":
             view_getter = getattr(self, "viewerViewForPickedFrame", None)

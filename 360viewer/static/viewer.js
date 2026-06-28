@@ -151,8 +151,9 @@
     const pitch = Number(krpano.get("view.vlookat")) || 0;
     const fov = Number(krpano.get("view.fov")) || 90;
     const zoom = 90 / Math.max(fov, 1);
+    const viewerFrontOffset = Number(state.viewer_front_offset_deg);
 
-    return {
+    const view = {
       video: state.video,
       frame_index: Number(state.frame_index),
       yaw_to_camera_heading: yaw,
@@ -161,6 +162,10 @@
       viewer_camera_height_m: viewerCameraHeightM,
       viewer_hud_height_scale: viewerHudHeightScale
     };
+    if (Number.isFinite(viewerFrontOffset)) {
+      view.viewer_front_offset_deg = normalizeSignedYaw(viewerFrontOffset);
+    }
+    return view;
   }
 
   function updateReadout(viewState) {
@@ -896,6 +901,10 @@
     const current = Object.assign({}, sourceState || readKrpanoView() || state);
     current.viewer_camera_height_m = viewerCameraHeightM;
     current.viewer_hud_height_scale = viewerHudHeightScale;
+    const viewerFrontOffset = Number(state.viewer_front_offset_deg);
+    if (Number.isFinite(viewerFrontOffset)) {
+      current.viewer_front_offset_deg = normalizeSignedYaw(viewerFrontOffset);
+    }
     if (state.target) {
       current.target = state.target;
     }
@@ -1289,6 +1298,9 @@
 
     updateRadarState(session.radar);
     updateCameraHeight(session.viewer_camera_height_m);
+    if (Number.isFinite(Number(session.viewer_front_offset_deg))) {
+      state.viewer_front_offset_deg = normalizeSignedYaw(Number(session.viewer_front_offset_deg));
+    }
     state.targets = Array.isArray(session.targets) ? session.targets : [];
     state.target = session.target && typeof session.target === "object"
       ? session.target

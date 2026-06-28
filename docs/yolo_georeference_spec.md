@@ -32,7 +32,13 @@ YOLO検出矩形
 ## 関連仕様
 
 - `docs/rader_spec.md`
+- `docs/yaw_front_offset_alignment.md`
 - `DESIGN.ja.md`
+
+2026-06-28時点では、CubeMap生成時のyaw補正、GPKG出力列、Detection Check、
+地図レーダ、PickedPoint復元の整合仕様は `docs/yaw_front_offset_alignment.md` に分離しています。
+本書の `video_front_offset_deg` や `camera_relative_yaw_deg` を読む場合は、同文書の
+`target_yaw` / `bearing_deg` / `viewer_front_offset_deg` の使い分けも合わせて確認します。
 
 レーダ表示で使っている以下の定義を、この仕様でも継承します。
 

@@ -108,6 +108,7 @@ class RadarMixin:
             round(yaw or 0.0, 3),
             round(pitch or 0.0, 3),
             round(zoom or 1.0, 3),
+            round(_parse_float(state.get("viewer_front_offset_deg")) or 0.0, 3),
             round(_parse_float(target.get("target_yaw_to_camera_heading")) or 0.0, 3),
             round(_parse_float(target.get("yaw_delta_deg")) or 0.0, 3),
             round(_parse_float(target.get("target_pitch_deg")) or 0.0, 3),
@@ -184,10 +185,23 @@ class RadarMixin:
         radar sector follows the original MP4 view without shifting the POI.
         """
 
+        state_offset = self.viewerBearingOffsetFromState(state)
+        if state_offset is not None:
+            return state_offset
         target_offset = self.viewerBearingOffsetFromTargets(heading, state)
         if target_offset is not None:
             return target_offset
         return self.radarBearingOffsetValue()
+
+    def viewerBearingOffsetFromState(self, state):
+        """Return the persisted video-front offset from viewer_session.json."""
+
+        if not isinstance(state, dict):
+            return None
+        offset = _parse_float(state.get("viewer_front_offset_deg"))
+        if offset is None:
+            return None
+        return self.signedAngleDelta(0.0, offset)
 
     def viewerBearingOffsetFromTargets(self, heading, state):
         """Derive original video-front offset from detection target payload."""
@@ -201,6 +215,28 @@ class RadarMixin:
                 continue
             return self.signedAngleDelta(0.0, float(map_bearing) - float(heading) - float(target_yaw))
         return None
+
+    def persistViewerBearingOffsetForState(self, heading, state):
+        """Persist a target-derived video-front offset so manual picks reuse it."""
+
+        if not isinstance(state, dict):
+            return state
+        target_offset = self.viewerBearingOffsetFromTargets(heading, state)
+        if target_offset is None:
+            return state
+
+        state_offset = self.viewerBearingOffsetFromState(state)
+        if state_offset is not None and self.headingDelta(state_offset, target_offset) < 0.01:
+            return state
+
+        updated_state = dict(state)
+        updated_state["viewer_front_offset_deg"] = self.signedAngleDelta(0.0, target_offset)
+        write_state = getattr(self, "writeViewerSessionState", None)
+        if callable(write_state):
+            written_state = write_state(updated_state)
+            if isinstance(written_state, dict):
+                return written_state
+        return updated_state
 
     def viewerFov(self, state):
         """ビューアzoomから扇形の水平視野角を求める。"""
@@ -742,7 +778,7 @@ class RadarMixin:
         map_target_yaw = _parse_float(target.get("map_target_yaw_to_camera_heading"))
         if target_bearing is None:
             bearing_yaw = map_target_yaw if map_target_yaw is not None else target_yaw
-            target_bearing = (heading + self.radarBearingOffsetValue() + bearing_yaw) % 360.0
+            target_bearing = (heading + self.viewerBearingOffsetForState(heading, state) + bearing_yaw) % 360.0
         point = self.destinationPoint(lat, lon, target_bearing, distance_m)
         quality = self.targetDistanceQuality(distance_m)
         projection = {
@@ -821,6 +857,7 @@ class RadarMixin:
         fixed_radius_m = radar_config.range_m
         outer_radius_m = fixed_radius_m * 2.0
         heading, _trajectory_radius_m = self.radarHeadingAndRadius(frame_index)
+        state = self.persistViewerBearingOffsetForState(heading, state)
         sector_radius_m = self.calibratedMarkerDistance(state)
         bearing = self.viewerBearing(heading, state)
         fov = self.viewerFov(state)
