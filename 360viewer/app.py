@@ -428,6 +428,15 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         target["ground_distance_m"] = ground_distance_m
     if quality:
         target["quality"] = quality
+    for key in ("map_bearing_deg", "map_target_yaw_to_camera_heading"):
+        if payload.get(key) is None:
+            continue
+        try:
+            angle = parse_float(payload.get(key), f"target.{key}")
+            if math.isfinite(angle):
+                target[key] = normalize_yaw(angle)
+        except ApiError:
+            pass
     for key in ("target_source", "semantic_class", "review_status", "candidate_id", "viewer_marker"):
         value = payload.get(key)
         if value not in (None, ""):

@@ -87,6 +87,7 @@ class RadarMixin:
             (
                 target_item.get("id"),
                 round(_parse_float(target_item.get("target_yaw_to_camera_heading")) or 0.0, 3),
+                round(_parse_float(target_item.get("map_bearing_deg")) or 0.0, 3),
                 round(_parse_float(target_item.get("yaw_delta_deg")) or 0.0, 3),
                 round(_parse_float(target_item.get("target_pitch_deg")) or 0.0, 3),
                 round(_parse_float(target_item.get("view_zoom")) or 0.0, 3),
@@ -171,7 +172,35 @@ class RadarMixin:
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         yaw = (yaw or 0.0) % 360.0
         # yawは動画正面からのビューア相対角として扱う。
-        return (heading + self.radarBearingOffsetValue() + yaw) % 360.0
+        return (heading + self.viewerBearingOffsetForState(heading, state) + yaw) % 360.0
+
+    def viewerBearingOffsetForState(self, heading, state):
+        """Return the video-front offset for the current viewer state.
+
+        Detection-check targets can come from CubeMap images whose front face was
+        yaw-corrected before YOLO.  In that case the restored viewer yaw is in
+        the original MP4 coordinate system, while map POI coordinates already
+        carry their absolute bearing.  Prefer the target-derived offset so the
+        radar sector follows the original MP4 view without shifting the POI.
+        """
+
+        target_offset = self.viewerBearingOffsetFromTargets(heading, state)
+        if target_offset is not None:
+            return target_offset
+        return self.radarBearingOffsetValue()
+
+    def viewerBearingOffsetFromTargets(self, heading, state):
+        """Derive original video-front offset from detection target payload."""
+
+        for target in self.viewerTargetPayloads(state):
+            if not isinstance(target, dict):
+                continue
+            map_bearing = _parse_float(target.get("map_bearing_deg"))
+            target_yaw = _parse_float(target.get("target_yaw_to_camera_heading"))
+            if map_bearing is None or target_yaw is None:
+                continue
+            return self.signedAngleDelta(0.0, float(map_bearing) - float(heading) - float(target_yaw))
+        return None
 
     def viewerFov(self, state):
         """ビューアzoomから扇形の水平視野角を求める。"""
@@ -709,7 +738,11 @@ class RadarMixin:
             projection_name = target.get("projection") or "center_plane"
             projected_ground_distance_m = None
 
-        target_bearing = (heading + self.radarBearingOffsetValue() + target_yaw) % 360.0
+        target_bearing = _parse_float(target.get("map_bearing_deg"))
+        map_target_yaw = _parse_float(target.get("map_target_yaw_to_camera_heading"))
+        if target_bearing is None:
+            bearing_yaw = map_target_yaw if map_target_yaw is not None else target_yaw
+            target_bearing = (heading + self.radarBearingOffsetValue() + bearing_yaw) % 360.0
         point = self.destinationPoint(lat, lon, target_bearing, distance_m)
         quality = self.targetDistanceQuality(distance_m)
         projection = {
@@ -719,6 +752,7 @@ class RadarMixin:
             "forward_distance_m": forward_distance_m,
             "yaw_delta_deg": yaw_delta,
             "target_yaw_to_camera_heading": target_yaw,
+            "map_target_yaw_to_camera_heading": map_target_yaw,
             "target_pitch_deg": target_pitch,
             "view_yaw_to_camera_heading": view_yaw,
             "view_pitch": view_pitch,
@@ -732,7 +766,7 @@ class RadarMixin:
             projection["id"] = target.get("id")
         if target.get("order") is not None:
             projection["order"] = target.get("order")
-        for key in ("target_source", "viewer_marker", "candidate_id", "semantic_class", "confidence"):
+        for key in ("target_source", "viewer_marker", "candidate_id", "semantic_class", "confidence", "map_bearing_deg"):
             if target.get(key) is not None:
                 projection[key] = target.get(key)
         return projection

@@ -2359,6 +2359,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         ground_distance_m = self.targetFeatureFloat(feature, "ground_distance_m")
         if ground_distance_m is None:
             ground_distance_m = self.targetFeatureFloat(feature, "distance_m")
+        map_target_yaw = self.targetFeatureFloat(feature, "map_target_yaw")
+        if map_target_yaw is None:
+            map_target_yaw = self.targetFeatureFloat(feature, "cubemap_target_yaw")
+        map_bearing = self.targetFeatureFloat(feature, "bearing_deg")
 
         candidate_id = (
             self.targetFeatureValue(feature, "candidate_id")
@@ -2383,6 +2387,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "target_source": "yolo_candidate",
             "viewer_marker": self.targetFeatureValue(feature, "viewer_marker") or "target_point",
         }
+        if map_target_yaw is not None:
+            target["map_target_yaw_to_camera_heading"] = float(map_target_yaw) % 360.0
+        if map_bearing is not None:
+            target["map_bearing_deg"] = float(map_bearing) % 360.0
         if ground_distance_m is not None and ground_distance_m > 0:
             target["ground_distance_m"] = float(ground_distance_m)
         if quality:
