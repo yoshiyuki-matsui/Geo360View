@@ -8,15 +8,17 @@ GPXVideoProcessor GeoPackage, and writes poi_candidates_360.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import json
 from pathlib import Path
 import sqlite3
 import time
 
 try:
     from . import projection as geo_projection
-    from . import schema, sqlite_io
+    from . import job_guard, schema, sqlite_io
 except ImportError:
+    import job_guard
     import projection as geo_projection
     import schema
     import sqlite_io
@@ -26,6 +28,7 @@ DEFAULT_GPX_LAYER = "video_gpx_points"
 DEFAULT_FALLBACK_DISTANCE_M = 10.0
 DEFAULT_MAX_GROUND_DISTANCE_M = 10.0
 DEFAULT_TRAJECTORY_WINDOW_FRAMES = 60
+GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
 
 POSITION_METHOD_GROUND_PLANE = "ground_plane_bearing"
 POSITION_METHOD_FIXED_DISTANCE = "fixed_distance_bearing"
@@ -44,7 +47,7 @@ class GeoreferenceConfig:
     gpx_layer: str = DEFAULT_GPX_LAYER
     frame_column: str | None = None
     trajectory_window_frames: int = DEFAULT_TRAJECTORY_WINDOW_FRAMES
-    video_front_offset_deg: float = 0.0
+    video_front_offset_deg: float | None = None
     fallback_distance_m: float = DEFAULT_FALLBACK_DISTANCE_M
     max_ground_distance_m: float | None = DEFAULT_MAX_GROUND_DISTANCE_M
     exclude_stationary: bool = False
@@ -97,6 +100,42 @@ def normalize_text_values(values) -> tuple[str, ...]:
         if text and text not in result:
             result.append(text)
     return tuple(result)
+
+
+def read_gpkg_job_metadata(database: Path) -> dict:
+    """Read GPXVideoProcessor job metadata from tmp.gpkg when available."""
+
+    try:
+        with sqlite3.connect(database) as conn:
+            rows = conn.execute(
+                f"SELECT key, value FROM {GPKG_JOB_METADATA_TABLE}"
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    metadata = {}
+    for key, raw_value in rows:
+        try:
+            metadata[str(key)] = json.loads(raw_value)
+        except (TypeError, json.JSONDecodeError):
+            metadata[str(key)] = raw_value
+    return metadata
+
+
+def resolve_video_front_offset_deg(config: GeoreferenceConfig, database_path: Path) -> float:
+    """Use the CLI value if supplied, otherwise use tmp.gpkg metadata."""
+
+    if config.video_front_offset_deg is not None:
+        return float(config.video_front_offset_deg)
+    metadata = read_gpkg_job_metadata(database_path)
+    for key in ("video_front_offset_deg", "viewer_front_offset_deg"):
+        value = metadata.get(key)
+        try:
+            if value not in (None, ""):
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def normalize_optional_max_distance(value: float | None) -> float | None:
@@ -529,6 +568,11 @@ def generate_poi_candidates(config: GeoreferenceConfig) -> dict:
         run_row = resolve_run(conn, config.run_id)
         run_id = str(run_row["run_id"])
         database_path = resolve_database_path(config, run_row)
+        job_guard.ensure_run_matches_job(config.work_db, run_row, database_path)
+        config = replace(
+            config,
+            video_front_offset_deg=resolve_video_front_offset_deg(config, database_path),
+        )
         positions = read_camera_positions(
             database_path,
             layer=config.gpx_layer,
@@ -663,8 +707,8 @@ def build_arg_parser():
     parser.add_argument(
         "--video-front-offset-deg",
         type=float,
-        default=0.0,
-        help="Clockwise offset from trajectory heading to video front direction.",
+        default=None,
+        help="Clockwise offset from trajectory heading to video front direction. Default: tmp.gpkg metadata or 0.",
     )
     parser.add_argument(
         "--fallback-distance-m",
@@ -710,7 +754,7 @@ def config_from_args(args) -> GeoreferenceConfig:
         gpx_layer=args.gpx_layer,
         frame_column=args.frame_column,
         trajectory_window_frames=max(1, int(args.trajectory_window_frames)),
-        video_front_offset_deg=float(args.video_front_offset_deg),
+        video_front_offset_deg=None if args.video_front_offset_deg is None else float(args.video_front_offset_deg),
         fallback_distance_m=float(args.fallback_distance_m),
         max_ground_distance_m=normalize_optional_max_distance(args.max_ground_distance_m),
         exclude_stationary=bool(args.exclude_stationary),

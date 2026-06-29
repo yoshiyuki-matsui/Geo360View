@@ -141,6 +141,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_camera_height_dirty = False
         self.viewer_hud_height_scale_value = 1.0
         self.viewer_hud_height_scale_dirty = False
+        self.video_front_offset_deg = 0.0
         self.created_layer_ids = []
         self.save_on_exit_layer_ids = set()
         self.loaded_layer_feature_counts = {}
@@ -583,6 +584,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.radar_offset.addItem(f"{offset}deg", offset)
         self.applyHelp("ui.help.offset", self.radar_offset_label, self.radar_offset)
         set_fixed_width(self.radar_offset, 78)
+        self.video_front_offset_label = QLabel("Front:")
+        self.video_front_offset = QDoubleSpinBox()
+        self.video_front_offset.setRange(-180.0, 180.0)
+        self.video_front_offset.setDecimals(1)
+        self.video_front_offset.setSingleStep(1.0)
+        self.video_front_offset.setValue(self.video_front_offset_deg)
+        self.video_front_offset.setSuffix(" deg")
+        self.video_front_offset.valueChanged.connect(self.onVideoFrontOffsetChanged)
+        set_fixed_width(self.video_front_offset, 92)
 
         self.click_mode_button = QPushButton(self.uiText("ui.button.click_layer"))
         self.click_mode_button.clicked.connect(self.activateClickMode)
@@ -675,6 +685,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.viewer_camera_height,
             self.viewer_hud_height_scale_label,
             self.viewer_hud_height_scale,
+            self.video_front_offset_label,
+            self.video_front_offset,
             self.radar_offset_label,
             self.radar_offset,
             "stretch",
@@ -853,6 +865,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.database_restore_mode = bool(enabled)
         if getattr(self, "_gui_initialized", False):
             self.setInputWidgetsEnabled(not self.database_restore_mode)
+            if self.database_restore_mode:
+                # MP4は実行時参照で、GPKGを開くマシンごとに異なる。
+                self.video_button.setEnabled(True)
             self.database_button.setEnabled(not self.database_restore_mode)
 
     def dialogSettingsKey(self, name):
@@ -908,8 +923,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def selectVideo(self):
         """MP4動画を選択し、出力先既定値とビューア設定を更新する。"""
-        if self.database_restore_mode:
-            return
+        restore_mode = self.database_restore_mode
         start_dir = self.dialogStartDir("video", self.video_file, self.gpx_file, self.output_dir)
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", start_dir, "MP4 Files (*.mp4)")
         if file_path:
@@ -917,15 +931,28 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.video_file = file_path
             self.setPathLabel(self.video_path, file_path, self.uiText("ui.path.no_video"))
             self.viewer_browser_opened = False
-            self.setCurrentFrame(None)
-            if not self.output_dir_user_selected:
+            if not restore_mode:
+                self.setCurrentFrame(None)
+            if not restore_mode and not self.output_dir_user_selected:
                 self.setPathLabel(self.output_path, self.defaultOutputDir(), self.uiText("ui.path.default_output"))
-            self.setViewerCameraHeightValue(1.5)
-            self.viewer_camera_height_dirty = False
-            self.setViewerHudHeightScaleValue(1.0)
-            self.viewer_hud_height_scale_dirty = False
+            if not restore_mode:
+                self.setViewerCameraHeightValue(1.5)
+                self.viewer_camera_height_dirty = False
+                self.setViewerHudHeightScaleValue(1.0)
+                self.viewer_hud_height_scale_dirty = False
             self.loadViewerSessionCameraHeight()
             self.writeViewerRuntimeConfig(show_error=False)
+            if restore_mode and self.current_frame is not None:
+                self.writeViewerSessionState({
+                    "video": os.path.basename(self.video_file),
+                    "frame_index": int(self.current_frame),
+                    "yaw_to_camera_heading": 0.0,
+                    "pitch": 0.0,
+                    "zoom": 1.0,
+                    "viewer_camera_height_m": self.viewerCameraHeightValue(),
+                    "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+                    "viewer_front_offset_deg": self.videoFrontOffsetValue(),
+                })
 
     def selectKP(self):
         """KPマスタCSVを選択する。KP未指定でも通常処理は可能。"""
@@ -1152,6 +1179,39 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 widget.blockSignals(previous_blocked)
         return True
 
+    def normalizeVideoFrontOffset(self, value):
+        """動画正面補正角を-180..180度へ正規化する。"""
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        return self.signedAngleDelta(0.0, numeric)
+
+    def videoFrontOffsetValue(self):
+        """動画正面と進行方向の補正角を取得する。"""
+        widget = getattr(self, "video_front_offset", None)
+        if widget is not None:
+            value = float(widget.value())
+        else:
+            value = float(getattr(self, "video_front_offset_deg", 0.0))
+        return self.normalizeVideoFrontOffset(value) or 0.0
+
+    def setVideoFrontOffsetValue(self, value):
+        """GPKGやviewer_sessionから読んだ動画正面補正角をUIへ反映する。"""
+        numeric = self.normalizeVideoFrontOffset(value)
+        if numeric is None:
+            return False
+        self.video_front_offset_deg = numeric
+
+        widget = getattr(self, "video_front_offset", None)
+        if widget is not None and abs(float(widget.value()) - numeric) > 0.0005:
+            previous_blocked = widget.blockSignals(True)
+            try:
+                widget.setValue(numeric)
+            finally:
+                widget.blockSignals(previous_blocked)
+        return True
+
     def loadViewerSessionCameraHeight(self, force=False):
         """既存viewer_session.jsonがあれば、ジョブ固有のカメラ高さを復元する。"""
         camera_dirty = getattr(self, "viewer_camera_height_dirty", False)
@@ -1178,11 +1238,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             restored_camera = self.setViewerCameraHeightValue(state.get("viewer_camera_height_m"))
         if "viewer_hud_height_scale" in state and (force or not hud_dirty):
             restored_hud = self.setViewerHudHeightScaleValue(state.get("viewer_hud_height_scale"))
+        restored_front = False
+        if "viewer_front_offset_deg" in state:
+            restored_front = self.setVideoFrontOffsetValue(state.get("viewer_front_offset_deg"))
         if restored_camera:
             self.viewer_camera_height_dirty = False
         if restored_hud:
             self.viewer_hud_height_scale_dirty = False
-        return restored_camera or restored_hud
+        return restored_camera or restored_hud or restored_front
 
     def writeViewerCameraHeightSessionValue(self):
         """動画選択済みならカメラ高さとHUD補正だけでもviewer_session.jsonへ残す。"""
@@ -1206,6 +1269,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         state["video"] = current_video
         state["viewer_camera_height_m"] = self.viewerCameraHeightValue()
         state["viewer_hud_height_scale"] = self.viewerHudHeightScaleValue()
+        state["viewer_front_offset_deg"] = self.videoFrontOffsetValue()
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
         try:
@@ -1223,6 +1287,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """QGIS側で補完したビューア状態をviewer_session.jsonへ原子的に書き戻す。"""
         path = self.viewerSessionPath()
         state = dict(state)
+        if "viewer_front_offset_deg" in state:
+            self.setVideoFrontOffsetValue(state.get("viewer_front_offset_deg"))
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1247,6 +1313,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """HUD高さ倍率変更をランタイム設定と開いているビューアへ反映する。"""
         self.setViewerHudHeightScaleValue(self.viewerHudHeightScaleValue(), mark_dirty=True)
         self.writeViewerRuntimeConfig(show_error=False)
+        self.writeViewerCameraHeightSessionValue()
+        if self.current_frame is not None and self.viewerHealth(timeout=0.15):
+            self.postViewerNavigation(self.current_frame)
+
+    def onVideoFrontOffsetChanged(self, _value):
+        """動画正面補正をviewer_sessionへ残し、ビューア表示へ反映する。"""
+        self.setVideoFrontOffsetValue(self.videoFrontOffsetValue())
         self.writeViewerCameraHeightSessionValue()
         if self.current_frame is not None and self.viewerHealth(timeout=0.15):
             self.postViewerNavigation(self.current_frame)
@@ -1568,11 +1641,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def jobMetadataPayload(self):
         """GPKGへ残すジョブ入力・校正パラメータを返す。"""
         process_config = getattr(self, "last_process_config", None)
+        video_file = process_config.video_file if process_config else self.video_file
         return {
             "metadata_version": 1,
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "gpx_file": process_config.gpx_file if process_config else self.gpx_file,
-            "video_file": process_config.video_file if process_config else self.video_file,
+            # GPKGは別マシンへ持ち回るため、MP4の絶対パスは保存しない。
+            "video_file": "",
+            "video_name": os.path.basename(video_file) if video_file else "",
             "kp_file": (process_config.kp_file or "") if process_config else self.kp_file,
             "output_dir": self.resolvedOutputDir(),
             "frame_shift": int(process_config.frame_shift) if process_config else int(self.frame_shift.value()),
@@ -1584,6 +1660,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "radar_offset_deg": int(self.radar_offset.currentData() or 0),
             "viewer_camera_height_m": float(self.viewerCameraHeightValue()),
             "viewer_hud_height_scale": float(self.viewerHudHeightScaleValue()),
+            "video_front_offset_deg": float(self.videoFrontOffsetValue()),
+            "viewer_front_offset_deg": float(self.videoFrontOffsetValue()),
             "nav_step": int(self.nav_step.value()),
             "nav_fast_step": int(self.nav_fast_step.value()),
             "follow_frame": bool(self.follow_frame_checkbox.isChecked()),
@@ -1674,6 +1752,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.setViewerCameraHeightValue(metadata.get("viewer_camera_height_m"))
         if "viewer_hud_height_scale" in metadata:
             self.setViewerHudHeightScaleValue(metadata.get("viewer_hud_height_scale"))
+        if "video_front_offset_deg" in metadata:
+            self.setVideoFrontOffsetValue(metadata.get("video_front_offset_deg"))
+        elif "viewer_front_offset_deg" in metadata:
+            self.setVideoFrontOffsetValue(metadata.get("viewer_front_offset_deg"))
 
         if "follow_frame" in metadata:
             self.follow_frame_checkbox.setChecked(self.parseViewerBool(metadata.get("follow_frame")))
@@ -1793,10 +1875,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.setPathLabel(self.database_path, gpkg_path, self.uiText("ui.path.no_database"))
         self.setPathLabel(self.output_path, self.output_dir, self.uiText("ui.path.default_output"))
 
-        metadata_video = self.metadataText(job_metadata, "video_file")
-        restored_video = metadata_video if metadata_video and os.path.isfile(metadata_video) else ""
-        if not restored_video:
-            restored_video = self.inferVideoPathFromDatabase(gpkg_path, target_layer or candidate_layer)
+        # GPKG内のMP4絶対パスは別マシンでは信用しない。
+        # 読み込み前にローカル/NAS上のMP4を選んでいれば維持し、
+        # 未選択なら空にして復元モード内で選ばせる。
+        restored_video = self.video_file if self.video_file and os.path.isfile(self.video_file) else ""
         restored_gpx = self.metadataText(job_metadata, "gpx_file") or self.inferGpxPathFromDatabase(gpkg_path)
         restored_kp = self.metadataText(job_metadata, "kp_file")
         self.video_file = restored_video
@@ -1831,6 +1913,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "zoom": 1.0,
                 "viewer_camera_height_m": self.viewerCameraHeightValue(),
                 "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+                "viewer_front_offset_deg": self.videoFrontOffsetValue(),
             }
             initial_targets = []
             picked_view = self.viewerViewForPickedFrame(first_frame) if picked_frames else None

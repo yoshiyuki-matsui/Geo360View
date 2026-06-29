@@ -13,8 +13,9 @@ import time
 
 try:
     from . import projection as geo_projection
-    from . import schema, sqlite_io
+    from . import job_guard, schema, sqlite_io
 except ImportError:
+    import job_guard
     import projection as geo_projection
     import schema
     import sqlite_io
@@ -786,6 +787,7 @@ def generate_poi_clusters(config: PoiClusterConfig) -> dict:
     conn = sqlite_io.initialize(config.work_db)
     try:
         run_row = resolve_run(conn, config.run_id)
+        job_guard.ensure_run_matches_job(config.work_db, run_row)
         run_id = str(run_row["run_id"])
         candidates = select_poi_candidates(conn, run_id, config)
         deleted_count = clear_poi_clusters(conn, run_id, config) if config.clear_existing else 0

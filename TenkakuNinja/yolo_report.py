@@ -19,10 +19,11 @@ import sqlite3
 import time
 
 try:
-    from . import schema, sqlite_io
+    from . import job_guard, schema, sqlite_io
     from .cubemap import normalize_faces
     from .yolo_detect import resolve_run, resolve_image_path
 except ImportError:
+    import job_guard
     import schema
     import sqlite_io
     from cubemap import normalize_faces
@@ -876,6 +877,7 @@ def build_report(config: YoloReportConfig) -> dict:
     conn = open_report_db(config.work_db)
     try:
         run_row = resolve_run(conn, config.run_id)
+        job_guard.ensure_run_matches_job(config.work_db, run_row)
         run_id = str(run_row["run_id"])
         output_dir = output_dir_for_run(config.work_db, run_row, config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

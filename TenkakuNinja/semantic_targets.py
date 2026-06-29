@@ -15,8 +15,9 @@ from pathlib import Path
 import time
 
 try:
-    from . import schema, sqlite_io
+    from . import job_guard, schema, sqlite_io
 except ImportError:
+    import job_guard
     import schema
     import sqlite_io
 
@@ -591,6 +592,7 @@ def generate_semantic_targets(config: SemanticTargetConfig) -> dict:
     conn = sqlite_io.initialize(config.work_db)
     try:
         run_row = resolve_run(conn, config.run_id)
+        job_guard.ensure_run_matches_job(config.work_db, run_row)
         run_id = str(run_row["run_id"])
         input_detections = select_yolo_detections(
             conn,

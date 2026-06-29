@@ -70,7 +70,8 @@ class SemanticTargetDbTests(unittest.TestCase):
         self.run_id = sqlite_io.create_run(
             self.conn,
             source_video="source.mp4",
-            work_dir=self.root / "work",
+            source_gpkg="tmp.gpkg",
+            work_dir=self.root,
             config={"cubemap_faces": list(schema.DEFAULT_CUBEMAP_EXPORT_FACES)},
         )
         self.model_run_id = sqlite_io.insert_model_run(

@@ -14,12 +14,14 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import sqlite3
 import time
 
 try:
-    from . import exporter, schema, sqlite_io
+    from . import exporter, job_guard, schema, sqlite_io
 except ImportError:
     import exporter
+    import job_guard
     import schema
     import sqlite_io
 
@@ -30,6 +32,7 @@ DEFAULT_JPEG_QUALITY = 92
 DEFAULT_CONVERTER = "auto"
 OPENCV_CONVERTER = "opencv_remap"
 PY360_CONVERTER = "py360convert"
+GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
 
 
 @dataclass(frozen=True)
@@ -343,9 +346,43 @@ def parent_image_reference(record, config: CubemapConfig) -> str:
     ).as_posix()
 
 
+def read_gpkg_job_metadata(database: Path) -> dict:
+    """Read GPXVideoProcessor job metadata from tmp.gpkg when available."""
+
+    try:
+        with sqlite3.connect(database) as conn:
+            rows = conn.execute(
+                f"SELECT key, value FROM {GPKG_JOB_METADATA_TABLE}"
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    metadata = {}
+    for key, raw_value in rows:
+        try:
+            metadata[str(key)] = json.loads(raw_value)
+        except (TypeError, json.JSONDecodeError):
+            metadata[str(key)] = raw_value
+    return metadata
+
+
+def metadata_float(metadata: dict, *keys: str, default: float = 0.0) -> float:
+    """Return the first numeric metadata value found for the given keys."""
+
+    for key in keys:
+        value = metadata.get(key)
+        try:
+            if value not in (None, ""):
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
 def create_run_config(config: CubemapConfig, layer: str, frame_column: str, record_count: int) -> dict:
     """Create self-describing run config for semantic_work.sqlite."""
 
+    job_metadata = read_gpkg_job_metadata(config.database)
     return {
         "step": "cubemap",
         "database": str(config.database),
@@ -360,6 +397,11 @@ def create_run_config(config: CubemapConfig, layer: str, frame_column: str, reco
         "face_convention": FACE_CONVENTION,
         "frames_per_folder": int(config.frames_per_folder),
         "checkpoint_interval": int(config.checkpoint_interval),
+        "video_front_offset_deg": metadata_float(
+            job_metadata,
+            "video_front_offset_deg",
+            "viewer_front_offset_deg",
+        ),
     }
 
 
@@ -531,14 +573,26 @@ def generate_cubemaps(config: CubemapConfig):
     conn = sqlite_io.initialize(config.work_db)
     started_at = time.perf_counter()
     try:
-        run_id = config.run_id or sqlite_io.create_run(
-            conn,
-            source_video=config.video,
-            source_gpkg=config.database,
-            work_dir=output_dir,
-            config=create_run_config(config, layer, frame_column, len(records)),
-            status="cubemap_running",
-        )
+        if config.run_id:
+            rows = sqlite_io.fetch_rows(
+                conn,
+                schema.RUNS_TABLE,
+                where="run_id = ?",
+                params=(config.run_id,),
+            )
+            if not rows:
+                raise ValueError(f"run_id not found: {config.run_id}")
+            job_guard.ensure_run_matches_job(config.work_db, rows[0], config.database)
+            run_id = config.run_id
+        else:
+            run_id = sqlite_io.create_run(
+                conn,
+                source_video=config.video,
+                source_gpkg=config.database,
+                work_dir=output_dir,
+                config=create_run_config(config, layer, frame_column, len(records)),
+                status="cubemap_running",
+            )
         sqlite_io.update_run_status(conn, run_id, "cubemap_running")
         sqlite_io.commit_with_retry(conn)
 
@@ -775,8 +829,8 @@ def build_arg_parser():
     )
     parser.add_argument("--database", default="tmp.gpkg", help="Input GeoPackage. Default: tmp.gpkg")
     parser.add_argument("--video", required=True, help="Source equirectangular MP4 video path.")
-    parser.add_argument("--work-db", help="semantic_work.sqlite path. Default: <output-dir>/semantic_work.sqlite")
-    parser.add_argument("--output-dir", help="Work/output directory. Default: <database parent>/work")
+    parser.add_argument("--work-db", help="semantic_work.sqlite path. Default: <database parent>/semantic_work.sqlite")
+    parser.add_argument("--output-dir", help="Work/output directory. Default: <database parent>")
     parser.add_argument("--layer", help="GeoPackage layer/table name. Default: first feature layer.")
     parser.add_argument("--frame-column", help="Frame column name. Default: frame/frame_number/frame_index auto.")
     parser.add_argument("--frame-start", "--start", dest="frame_start", type=int, help="Inclusive start frame.")
@@ -820,16 +874,23 @@ def config_from_args(args) -> CubemapConfig:
     output_dir = (
         Path(args.output_dir).expanduser().resolve()
         if args.output_dir
-        else database.parent / "work"
+        else database.parent
     )
     work_db = (
         Path(args.work_db).expanduser().resolve()
         if args.work_db
-        else output_dir / "semantic_work.sqlite"
+        else database.parent / "semantic_work.sqlite"
     )
+    video = Path(args.video).expanduser().resolve()
+    job_root = job_guard.ensure_cubemap_job_root(database, video, work_db)
+    if output_dir != job_root and not output_dir.is_relative_to(job_root):
+        raise ValueError(
+            "CubeMap output_dir must be under the project directory containing MP4, "
+            f"tmp.gpkg, and semantic_work.sqlite ({output_dir} != {job_root})."
+        )
     return CubemapConfig(
         database=database,
-        video=Path(args.video).expanduser().resolve(),
+        video=video,
         work_db=work_db,
         output_dir=output_dir,
         layer=args.layer,

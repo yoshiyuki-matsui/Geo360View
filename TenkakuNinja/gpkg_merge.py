@@ -11,8 +11,9 @@ import struct
 import time
 
 try:
-    from . import schema, sqlite_io
+    from . import job_guard, schema, sqlite_io
 except ImportError:
+    import job_guard
     import schema
     import sqlite_io
 
@@ -597,6 +598,7 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
         run_row = resolve_run(work_conn, config.run_id)
         run_id = str(run_row["run_id"])
         gpkg_path = resolve_database_path(config, run_row)
+        job_guard.ensure_run_matches_job(config.work_db, run_row, gpkg_path)
         if config.source == "clusters":
             candidates = select_poi_clusters(work_conn, run_id, config)
         else:
