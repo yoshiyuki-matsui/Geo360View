@@ -69,6 +69,10 @@ POI Center
 QGISは食べる場所、`tenkaku_ninja_poi` は厨房です。
 この分離を守ると、QGIS Python環境、GPU依存、長時間ジョブ、DB lock、UI固まりが絡みにくくなります。
 
+`tmp.gpkg` は GPXVideoProcessor が位置合わせまで終えた入力です。
+`gpkg_merge.py` が書き出す `auto_poi.gpkg` は conductor の出力です。
+つまり、conductor の入力は `tmp.gpkg`、出力は `auto_poi.gpkg` です。
+
 ## 3. 現在のpipeline
 
 現在の処理ラインは次の形です。
@@ -94,7 +98,7 @@ video_gpx_points / MP4
 | `targets` | bboxを360クリック点互換targetへ変換 | `semantic_targets_360` |
 | `georef` | targetを地図上の候補点へ変換 | `poi_candidates_360` |
 | `cluster` | 複数観測を束ねて代表POIを作る | `poi_clusters_360`, `poi_cluster_members_360` |
-| `merge` | QGISで開くGPKGへ出荷 | `poi_candidates_{model_slug}_360`, `poi_clusters_{model_slug}_360` |
+| `merge` | QGISで開くGPKGへ出荷 | `auto_poi.gpkg` 内の `poi_candidates_{model_slug}_360`, `All_Classes`, `poi_clusters_<class>` |
 
 重要なのは、`yolo_detections_raw` を原観測として残すことです。
 停止中の重複、誤検出、大きすぎるbbox、海外モデルの癖も、まずは観測ログとして残します。

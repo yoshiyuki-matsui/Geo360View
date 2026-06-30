@@ -1443,13 +1443,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layers = self.gpkgCandidateLayers(gpkg_path)
         return layers[0] if layers else None
 
-    def gpkgCandidateLayerDisplayName(self, layer_name):
+    def gpkgCandidateLayerDisplayName(self, layer_name, identifier="", description=""):
         """GPKG候補レイヤ名からQGIS表示名を作る。"""
+        text = str(identifier or "").strip()
+        if text:
+            return text
         text = str(layer_name or "").strip()
         if not text or text == GPKG_CANDIDATE_LAYER_NAME:
             return "360 Detection Candidates"
+        if text.lower() == "all_classes":
+            return "360 POI Clusters: All_Classes"
         if text.startswith("poi_clusters"):
             return f"360 POI Clusters: {text}"
+        if text.startswith("poi_candidates"):
+            return f"360 Detection Candidates: {text}"
         return f"360 Detection Candidates: {text}"
 
     def gpkgCandidateLayers(self, gpkg_path):
@@ -1459,7 +1466,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             try:
                 rows = conn.execute(
                     """
-                    SELECT table_name
+                    SELECT table_name, identifier, description
                     FROM gpkg_contents
                     WHERE data_type = 'features'
                     ORDER BY table_name
@@ -1470,17 +1477,26 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except sqlite3.Error:
             return []
 
-        layer_names = []
-        for name in [GPKG_CANDIDATE_LAYER_NAME] + [str(row[0] or "") for row in rows]:
-            if not self.isCandidateLayerName(name):
+        layer_entries = []
+        seen = set()
+        for row in rows:
+            layer_name = str(row[0] or "")
+            identifier = str(row[1] or "")
+            description = str(row[2] or "")
+            display_name = self.gpkgCandidateLayerDisplayName(layer_name, identifier, description)
+            if not self.isCandidateLayerName(display_name) and not self.isCandidateLayerName(layer_name):
                 continue
-            if name in layer_names:
+            if layer_name in seen:
                 continue
-            layer_names.append(name)
+            seen.add(layer_name)
+            layer_entries.append((layer_name, identifier, description))
+
+        if not layer_entries:
+            layer_entries.append((GPKG_CANDIDATE_LAYER_NAME, "", ""))
 
         layers = []
-        for layer_name in layer_names:
-            display_name = self.gpkgCandidateLayerDisplayName(layer_name)
+        for layer_name, identifier, description in layer_entries:
+            display_name = self.gpkgCandidateLayerDisplayName(layer_name, identifier, description)
             layer = self.gpkgLayer(gpkg_path, layer_name, display_name)
             if layer is not None and self.isCandidateLayer(layer):
                 layers.append(layer)

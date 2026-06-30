@@ -250,6 +250,8 @@ class PoiClusterTests(unittest.TestCase):
 
         self.assertEqual(result["source"], "clusters")
         self.assertEqual(result["feature_count"], 1)
+        self.assertIn("poi_clusters_pothole_360", result["layer_names"])
+        self.assertIn("poi_clusters_pothole", result["layer_names"])
 
         conn = sqlite3.connect(self.gpkg)
         try:
@@ -260,6 +262,14 @@ class PoiClusterTests(unittest.TestCase):
                        semantic_class, target_yaw, target_pitch
                 FROM poi_clusters_pothole_360
                 """
+            ).fetchone()
+            class_row = conn.execute(
+                """
+                SELECT identifier
+                FROM gpkg_contents
+                WHERE table_name = ?
+                """,
+                ("poi_clusters_pothole",),
             ).fetchone()
         finally:
             conn.close()
@@ -274,6 +284,47 @@ class PoiClusterTests(unittest.TestCase):
         self.assertEqual(row[6], "pothole")
         self.assertAlmostEqual(row[7], 14.0)
         self.assertAlmostEqual(row[8], -14.0)
+        self.assertEqual(class_row[0], "360 POI Clusters: pothole")
+
+    def test_gpkg_merge_defaults_cluster_combined_layer_to_all_classes(self):
+        """clusters出力の既定の全体レイヤ名はAll_Classesになる。"""
+        poi_cluster.generate_poi_clusters(
+            poi_cluster.PoiClusterConfig(
+                work_db=self.work_db,
+                run_id=self.run_id,
+                cluster_radius_m=2.0,
+                min_observations=2,
+                clear_existing=True,
+            )
+        )
+        result = gpkg_merge.export_poi_candidates(
+            gpkg_merge.GpkgMergeConfig(
+                work_db=self.work_db,
+                database=self.root / "auto_poi.gpkg",
+                run_id=self.run_id,
+                source="clusters",
+                replace=True,
+            )
+        )
+
+        self.assertEqual(result["layer_name"], "All_Classes")
+        self.assertIn("All_Classes", result["layer_names"])
+        self.assertIn("poi_clusters_pothole", result["layer_names"])
+
+        conn = sqlite3.connect(self.root / "auto_poi.gpkg")
+        try:
+            row = conn.execute(
+                "SELECT identifier FROM gpkg_contents WHERE table_name = ?",
+                ("All_Classes",),
+            ).fetchone()
+            class_row = conn.execute(
+                "SELECT identifier FROM gpkg_contents WHERE table_name = ?",
+                ("poi_clusters_pothole",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row[0], "360 POI Clusters: All_Classes")
+        self.assertEqual(class_row[0], "360 POI Clusters: pothole")
 
     def test_direction_only_candidates_use_direction_radius_and_ray_center(self):
         """固定距離で流れた空中物は観測レイと専用半径で束ねる。"""

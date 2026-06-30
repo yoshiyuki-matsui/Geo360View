@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 import struct
+import re
 import time
 
 try:
@@ -22,6 +23,8 @@ DEFAULT_LAYER_NAME = "poi_candidates_360"
 DEFAULT_OUTPUT_GPKG_NAME = "auto_poi.gpkg"
 DEFAULT_SRS_ID = 4326
 GEOMETRY_COLUMN = "geom"
+ALL_CLASSES_LAYER_NAME = "All_Classes"
+CLUSTER_LAYER_PREFIX = "poi_clusters"
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,45 @@ def safe_layer_name(value: str) -> str:
     if text[0].isdigit():
         raise ValueError("Layer name must not start with a digit.")
     return text
+
+
+def slug_token(value: str, fallback: str = "poi") -> str:
+    """Return a compact ASCII token for layer names."""
+
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text[:40] or fallback
+
+
+def normalize_semantic_class(value: str | None) -> str:
+    """Normalize semantic class text for display and grouping."""
+
+    text = str(value or "").strip()
+    return text or ALL_CLASSES_LAYER_NAME
+
+
+def source_display_label(source: str) -> str:
+    """Return the user-facing family label for exported layers."""
+
+    return "360 POI Clusters" if source == "clusters" else "360 Detection Candidates"
+
+
+def resolve_combined_layer_name(config: GpkgMergeConfig) -> str:
+    """Return the combined layer table name for this export."""
+
+    if config.layer_name and config.layer_name != DEFAULT_LAYER_NAME:
+        return safe_layer_name(config.layer_name)
+    if config.source == "clusters":
+        return ALL_CLASSES_LAYER_NAME
+    return DEFAULT_LAYER_NAME
+
+
+def class_layer_name(source: str, semantic_class: str) -> str:
+    """Return a stable per-class layer table name."""
+
+    prefix = CLUSTER_LAYER_PREFIX if source == "clusters" else "poi_candidates"
+    return safe_layer_name(f"{prefix}_{slug_token(semantic_class)}")
 
 
 def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -293,10 +335,12 @@ def register_feature_layer(
     layer_name: str,
     feature_count: int,
     extent: tuple[float, float, float, float] | None,
+    identifier: str | None = None,
 ):
     """Register a feature table in GeoPackage metadata tables."""
 
     now = sqlite_io.utc_now_text()
+    identifier_text = str(identifier or layer_name)
     if extent is None:
         min_x = min_y = max_x = max_y = None
     else:
@@ -309,7 +353,7 @@ def register_feature_layer(
         """,
         (
             layer_name,
-            layer_name,
+            identifier_text,
             "YOLO-derived 360 POI candidates generated from semantic_work.sqlite",
             now,
             min_x,
@@ -381,6 +425,46 @@ def resolve_database_path(config: GpkgMergeConfig, run_row: dict) -> Path:
     if not path.parent.exists():
         raise FileNotFoundError(f"GeoPackage parent directory not found: {path.parent}")
     return path
+
+
+def build_output_layers(
+    source: str,
+    combined_layer_name: str,
+    feature_rows: list[dict],
+) -> list[tuple[str, str, list[dict]]]:
+    """Build output layer specs as (table_name, identifier, rows)."""
+
+    family = source_display_label(source)
+    if source != "clusters":
+        return [
+            (
+                combined_layer_name,
+                f"{family}: {ALL_CLASSES_LAYER_NAME}",
+                feature_rows,
+            )
+        ]
+
+    grouped: dict[str, list[dict]] = {}
+    for row in feature_rows:
+        semantic_class = normalize_semantic_class(row.get("semantic_class"))
+        grouped.setdefault(semantic_class, []).append(row)
+
+    layers: list[tuple[str, str, list[dict]]] = [
+        (
+            combined_layer_name,
+            f"{family}: {ALL_CLASSES_LAYER_NAME}",
+            feature_rows,
+        )
+    ]
+    for semantic_class in sorted(grouped):
+        layers.append(
+            (
+                class_layer_name(source, semantic_class),
+                f"{family}: {semantic_class}",
+                grouped[semantic_class],
+            )
+        )
+    return layers
 
 
 def select_poi_candidates(
@@ -602,7 +686,6 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
 
     if not config.work_db.is_file():
         raise FileNotFoundError(f"semantic_work.sqlite not found: {config.work_db}")
-    layer_name = safe_layer_name(config.layer_name)
 
     work_conn = connect_readonly_work_db(config.work_db)
     try:
@@ -636,21 +719,29 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
             continue
         feature_rows.append(row)
 
+    combined_layer_name = resolve_combined_layer_name(config)
+    output_layers = build_output_layers(config.source, combined_layer_name, feature_rows)
+
     gpkg_conn = sqlite3.connect(gpkg_path)
     try:
         ensure_gpkg_core(gpkg_conn)
-        if table_exists(gpkg_conn, layer_name):
-            if not config.replace:
-                raise ValueError(f"Layer already exists: {layer_name}. Use --replace to overwrite it.")
-            drop_existing_layer(gpkg_conn, layer_name)
-        create_feature_layer(gpkg_conn, layer_name)
-        inserted_count = insert_gpkg_rows(gpkg_conn, layer_name, feature_rows)
-        register_feature_layer(
-            gpkg_conn,
-            layer_name=layer_name,
-            feature_count=inserted_count,
-            extent=extent_for_rows(feature_rows),
-        )
+        for layer_name, _identifier, _rows in output_layers:
+            if table_exists(gpkg_conn, layer_name):
+                if not config.replace:
+                    raise ValueError(
+                        f"Layer already exists: {layer_name}. Use --replace to overwrite it."
+                    )
+                drop_existing_layer(gpkg_conn, layer_name)
+        for layer_name, identifier, rows in output_layers:
+            create_feature_layer(gpkg_conn, layer_name)
+            insert_gpkg_rows(gpkg_conn, layer_name, rows)
+            register_feature_layer(
+                gpkg_conn,
+                layer_name=layer_name,
+                feature_count=len(rows),
+                extent=extent_for_rows(rows),
+                identifier=identifier,
+            )
         gpkg_conn.commit()
     except Exception:
         gpkg_conn.rollback()
@@ -661,11 +752,12 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
     return {
         "run_id": run_id,
         "database": str(gpkg_path),
-        "layer_name": layer_name,
+        "layer_name": combined_layer_name,
+        "layer_names": [layer_name for layer_name, _identifier, _rows in output_layers],
         "source": config.source,
         "candidate_count": len(candidates),
         "feature_count": len(feature_rows),
-        "inserted_count": inserted_count,
+        "inserted_count": len(feature_rows),
         "skipped_count": len(skipped),
         "skipped": skipped[:50],
     }
@@ -681,7 +773,11 @@ def build_arg_parser():
     parser.add_argument("--work-db", required=True, help="semantic_work.sqlite path.")
     parser.add_argument("--database", help="Output GeoPackage path. Default: <runs.source_gpkg parent>/auto_poi.gpkg.")
     parser.add_argument("--run-id", help="Run id. Default: latest run in work DB.")
-    parser.add_argument("--layer-name", default=DEFAULT_LAYER_NAME, help="Output GeoPackage layer name.")
+    parser.add_argument(
+        "--layer-name",
+        default=None,
+        help="Combined GeoPackage layer name. Default: All_Classes for clusters, poi_candidates_360 for candidates.",
+    )
     parser.add_argument(
         "--source",
         choices=("candidates", "clusters"),
@@ -706,7 +802,7 @@ def config_from_args(args) -> GpkgMergeConfig:
         work_db=Path(args.work_db).expanduser().resolve(),
         database=database,
         run_id=args.run_id,
-        layer_name=args.layer_name,
+        layer_name=args.layer_name or DEFAULT_LAYER_NAME,
         source=args.source,
         replace=bool(args.replace),
         limit=args.limit,
@@ -732,6 +828,8 @@ def main(argv=None):
     print(f"GeoPackage: {result['database']}")
     print(f"Run ID: {result['run_id']}")
     print(f"Layer: {result['layer_name']}")
+    if len(result.get("layer_names", [])) > 1:
+        print(f"Layers: {', '.join(result['layer_names'])}")
     print(f"Source: {result['source']}")
     print(f"Candidates: {result['candidate_count']}")
     print(f"Features: {result['feature_count']}")

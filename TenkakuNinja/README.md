@@ -209,8 +209,12 @@ python TenkakuNinja/gpkg_merge.py \
 ```
 
 `semantic_work.sqlite` は処理途中の内部DBです。`tmp.gpkg` はGPXVideoProcessorの位置合わせ済み入力、
-`auto_poi.gpkg` はconductorの出力として扱います。YOLO由来候補は `poi_candidates_360`
+`auto_poi.gpkg` はconductorの出力として扱います。つまり、conductor の入力は `tmp.gpkg`、
+出力は `auto_poi.gpkg` です。YOLO由来候補は `poi_candidates_360`
 レイヤへ出力します。
+`source=clusters` の場合は、`All_Classes` に全クラス集約レイヤを書き、あわせて
+`poi_clusters_<class>` の個別レイヤも出力します。QGIS側では表示名を
+`360 POI Clusters: All_Classes` と `360 POI Clusters: <class>` にします。
 モデル別にレイヤを分ける場合は、NAVモードの自動認識に合わせて
 `poi_candidates_{model_slug}_360` 形式にします。
 代表POIクラスタは `poi_clusters_{model_slug}_360` 形式にします。

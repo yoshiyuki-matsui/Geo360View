@@ -549,7 +549,9 @@ trajectory_heading(positions_by_frame, frame_index, window_frames)
 
 ### `gpkg_merge.py`
 
-中間DBの結果を `tmp.gpkg` へ別レイヤとして追加します。
+conductor の入力である `tmp.gpkg` を読み、出力先 `auto_poi.gpkg` へ書き出します。
+`source=clusters` の場合は、全クラス集約レイヤ `All_Classes` に加えて
+`poi_clusters_<class>` の個別レイヤも書き出します。
 
 現在の実装レイヤ:
 
@@ -585,7 +587,8 @@ up / down:
 この評価内容は `payload_json.representative_eval` に残します。
 
 手動クリック点の `click_targets_360` とは分けます。`semantic_work.sqlite` は処理途中の
-内部DB、ユーザがQGISで開いて操作する対象は `tmp.gpkg` です。
+内部DB、GPXVideoProcessorの位置合わせ済み入力は `tmp.gpkg`、conductorの出力は
+`auto_poi.gpkg` です。
 
 NAVモードで自動認識できるように、GPKGへ出す候補レイヤ名は標準化します。
 
@@ -609,7 +612,7 @@ QGISプラグインは、GPKG読込時に `gpkg_contents` のfeatures layerか�
 QGISプラグインは候補/クラスタレイヤを作業用メモリレイヤへ読み替えます。
 閲覧だけで終了した場合は、GPKG由来レイヤを再保存しません。
 feature削除、feature追加、属性変更、ジオメトリ変更が入ったレイヤだけ保存対象に昇格し、
-`tmp.gpkg` へ書き戻します。これにより、QGISテーブルで余計なclassや誤検出を削除してから
+`auto_poi.gpkg` へ書き戻します。これにより、QGISテーブルで余計なclassや誤検出を削除してから
 同じ `poi_candidates...` / `poi_clusters...` レイヤ名へ反映できます。
 
 `DetectionCheck` など任意のレイヤ名は標準運用では使わず、モデル別に分けたい場合も
