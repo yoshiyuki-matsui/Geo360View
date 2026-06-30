@@ -259,6 +259,19 @@ class GpkgMergeTests(unittest.TestCase):
 
         self.assertEqual(rows, [("pothole", "pothole_detector", "trusted")])
 
+    def test_default_output_gpkg_is_auto_poi(self):
+        """--database省略時の出力先はauto_poi.gpkgになる。"""
+        resolved = gpkg_merge.resolve_database_path(
+            gpkg_merge.GpkgMergeConfig(
+                work_db=self.work_db,
+                run_id=self.run_id,
+            ),
+            {
+                "source_gpkg": str(self.gpkg),
+            },
+        )
+        self.assertEqual(resolved, self.root / "auto_poi.gpkg")
+
 
 if __name__ == "__main__":
     unittest.main()

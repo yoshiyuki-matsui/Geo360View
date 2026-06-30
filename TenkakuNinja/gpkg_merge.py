@@ -19,6 +19,7 @@ except ImportError:
 
 
 DEFAULT_LAYER_NAME = "poi_candidates_360"
+DEFAULT_OUTPUT_GPKG_NAME = "auto_poi.gpkg"
 DEFAULT_SRS_ID = 4326
 GEOMETRY_COLUMN = "geom"
 
@@ -361,12 +362,22 @@ def resolve_run(conn: sqlite3.Connection, requested_run_id: str | None = None) -
 
 
 def resolve_database_path(config: GpkgMergeConfig, run_row: dict) -> Path:
-    """Resolve output GeoPackage path from CLI or runs.source_gpkg."""
+    """Resolve output GeoPackage path from CLI or the run's project root."""
 
-    value = config.database or run_row.get("source_gpkg")
-    if not value:
-        raise ValueError("--database is required because runs.source_gpkg is empty.")
-    path = Path(value).expanduser().resolve()
+    if config.database is not None:
+        path = config.database.expanduser().resolve()
+    else:
+        source_gpkg_text = str(run_row.get("source_gpkg") or "").strip()
+        if not source_gpkg_text:
+            raise ValueError(
+                "--database is required because runs.source_gpkg is empty."
+            )
+        path = (
+            Path(source_gpkg_text)
+            .expanduser()
+            .resolve()
+            .with_name(DEFAULT_OUTPUT_GPKG_NAME)
+        )
     if not path.parent.exists():
         raise FileNotFoundError(f"GeoPackage parent directory not found: {path.parent}")
     return path
@@ -598,7 +609,12 @@ def export_poi_candidates(config: GpkgMergeConfig) -> dict:
         run_row = resolve_run(work_conn, config.run_id)
         run_id = str(run_row["run_id"])
         gpkg_path = resolve_database_path(config, run_row)
-        job_guard.ensure_run_matches_job(config.work_db, run_row, gpkg_path)
+        job_guard.ensure_run_matches_job(
+            config.work_db,
+            run_row,
+            gpkg_path,
+            require_database_match=False,
+        )
         if config.source == "clusters":
             candidates = select_poi_clusters(work_conn, run_id, config)
         else:
@@ -659,11 +675,11 @@ def build_arg_parser():
     """Build CLI argument parser."""
 
     parser = argparse.ArgumentParser(
-        description="Export poi_candidates_360 from semantic_work.sqlite to tmp.gpkg.",
+        description="Export poi_candidates_360 from semantic_work.sqlite to auto_poi.gpkg.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--work-db", required=True, help="semantic_work.sqlite path.")
-    parser.add_argument("--database", help="Output GeoPackage path. Default: runs.source_gpkg.")
+    parser.add_argument("--database", help="Output GeoPackage path. Default: <runs.source_gpkg parent>/auto_poi.gpkg.")
     parser.add_argument("--run-id", help="Run id. Default: latest run in work DB.")
     parser.add_argument("--layer-name", default=DEFAULT_LAYER_NAME, help="Output GeoPackage layer name.")
     parser.add_argument(

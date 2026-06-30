@@ -6,5 +6,6 @@
   "zoom": 1.0,
   "viewer_camera_height_m": 1.5,
   "viewer_hud_height_scale": 1.0,
-  "updated_at": "2026-06-29T10:53:18+09:00"
+  "viewer_front_offset_deg": 103.5903977114749,
+  "updated_at": "2026-06-30T14:12:56+09:00"
 }

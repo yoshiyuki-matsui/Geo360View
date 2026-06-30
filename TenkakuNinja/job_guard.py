@@ -70,6 +70,7 @@ def ensure_run_matches_job(
     work_db: str | Path,
     run_row: dict,
     database: str | Path | None = None,
+    require_database_match: bool = True,
 ) -> Path:
     """Validate a later stage against the run provenance stored in SQLite."""
 
@@ -98,7 +99,7 @@ def ensure_run_matches_job(
         }
     )
 
-    if database_path is not None and database_path != source_gpkg:
+    if require_database_match and database_path is not None and database_path != source_gpkg:
         raise ValueError(
             "Job GeoPackage mismatch: CLI --database must match runs.source_gpkg "
             f"({database_path} != {source_gpkg})."

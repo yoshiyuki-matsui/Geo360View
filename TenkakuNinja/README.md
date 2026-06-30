@@ -188,12 +188,12 @@ python TenkakuNinja/poi_cluster.py \
 このため空中物は `--direction-cluster-radius-m` で地面系とは別に許容幅を調整します。
 `--min-observations 2` にすると単発候補を代表POIから外せます。
 
-POI候補をQGISで扱う `tmp.gpkg` へ集約する場合:
+POI候補をQGISで扱う `auto_poi.gpkg` へ集約する場合:
 
 ```bash
 python TenkakuNinja/gpkg_merge.py \
   --work-db path/to/work/semantic_work.sqlite \
-  --database path/to/tmp.gpkg \
+  --database path/to/auto_poi.gpkg \
   --replace
 ```
 
@@ -202,14 +202,15 @@ python TenkakuNinja/gpkg_merge.py \
 ```bash
 python TenkakuNinja/gpkg_merge.py \
   --work-db path/to/work/semantic_work.sqlite \
-  --database path/to/tmp.gpkg \
+  --database path/to/auto_poi.gpkg \
   --source clusters \
   --layer-name poi_clusters_pothole_360 \
   --replace
 ```
 
-`semantic_work.sqlite` は処理途中の内部DBです。ユーザがQGISで開いて操作する成果物は
-`tmp.gpkg` とし、YOLO由来候補は `poi_candidates_360` レイヤへ出力します。
+`semantic_work.sqlite` は処理途中の内部DBです。`tmp.gpkg` はGPXVideoProcessorの位置合わせ済み入力、
+`auto_poi.gpkg` はconductorの出力として扱います。YOLO由来候補は `poi_candidates_360`
+レイヤへ出力します。
 モデル別にレイヤを分ける場合は、NAVモードの自動認識に合わせて
 `poi_candidates_{model_slug}_360` 形式にします。
 代表POIクラスタは `poi_clusters_{model_slug}_360` 形式にします。
@@ -234,7 +235,7 @@ Navボタンの `|<<` / `>>|` は、現在のNav mode、Scope、subset filter、
 GPKGから読み込んだ候補/クラスタレイヤは一時メモリレイヤとして扱います。
 閲覧だけで `終了` した場合は重い候補レイヤを再保存しません。
 QGISテーブル上でfeature削除、属性変更、ジオメトリ変更、feature追加が入ったレイヤだけ
-`tmp.gpkg` へ書き戻します。書き戻し時は `poi_candidates...` / `poi_clusters...`
+`auto_poi.gpkg` へ書き戻します。書き戻し時は `poi_candidates...` / `poi_clusters...`
 の元レイヤ名を維持します。
 
 ## Examples
