@@ -272,6 +272,30 @@ class GpkgMergeTests(unittest.TestCase):
         )
         self.assertEqual(resolved, self.root / "auto_poi.gpkg")
 
+    def test_empty_layer_name_defaults_to_all_classes_for_clusters(self):
+        """空のlayer_nameはclusters出力ではAll_Classes扱いになる。"""
+        config = gpkg_merge.GpkgMergeConfig(
+            work_db=self.work_db,
+            database=self.root / "auto_poi.gpkg",
+            run_id=self.run_id,
+            source="clusters",
+            layer_name="",
+            replace=True,
+        )
+        self.assertEqual(gpkg_merge.resolve_combined_layer_name(config), "All_Classes")
+
+    def test_explicit_layer_name_is_preserved(self):
+        """明示したlayer_nameはそのまま使う。"""
+        config = gpkg_merge.GpkgMergeConfig(
+            work_db=self.work_db,
+            database=self.root / "auto_poi.gpkg",
+            run_id=self.run_id,
+            source="clusters",
+            layer_name="poi_clusters_road_360",
+            replace=True,
+        )
+        self.assertEqual(gpkg_merge.resolve_combined_layer_name(config), "poi_clusters_road_360")
+
 
 if __name__ == "__main__":
     unittest.main()

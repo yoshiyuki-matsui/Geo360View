@@ -32,6 +32,8 @@ POI Center
 
 `tenkaku_ninja_poi` は、地図を作るシステムではありません。
 巨大な360視覚情報から、現場が確認・判断するための軽量な意味情報を抽出するPOI生成エンジンです。
+QGIS側は `styles/default_style.qml` を見た目の正本にし、`All_Classes` のカテゴリスタイルを
+class別レイヤの単一シンボルへ同期します。
 
 ## 2. 境界線
 
@@ -61,7 +63,9 @@ POI Center
 ### QGIS Plugin が持つもの
 
 - `tmp.gpkg` の読み込み
+- `all_poi.gpkg` の読み込み
 - `poi_candidates_360` / `poi_candidates_{model_slug}_360` のNAV確認
+- `All_Classes` を起点にした class別レイヤの表示同期
 - 360ビューアでの証跡確認
 - 採用/除外/保留のレビューUI
 - 手動Pickerとの相互運用
@@ -70,8 +74,8 @@ QGISは食べる場所、`tenkaku_ninja_poi` は厨房です。
 この分離を守ると、QGIS Python環境、GPU依存、長時間ジョブ、DB lock、UI固まりが絡みにくくなります。
 
 `tmp.gpkg` は GPXVideoProcessor が位置合わせまで終えた入力です。
-`gpkg_merge.py` が書き出す `auto_poi.gpkg` は conductor の出力です。
-つまり、conductor の入力は `tmp.gpkg`、出力は `auto_poi.gpkg` です。
+`gpkg_merge.py` が書き出す `all_poi.gpkg` は conductor の出力です。
+つまり、conductor の入力は `tmp.gpkg`、出力は `all_poi.gpkg` です。
 
 ## 3. 現在のpipeline
 
@@ -98,7 +102,10 @@ video_gpx_points / MP4
 | `targets` | bboxを360クリック点互換targetへ変換 | `semantic_targets_360` |
 | `georef` | targetを地図上の候補点へ変換 | `poi_candidates_360` |
 | `cluster` | 複数観測を束ねて代表POIを作る | `poi_clusters_360`, `poi_cluster_members_360` |
-| `merge` | QGISで開くGPKGへ出荷 | `auto_poi.gpkg` 内の `poi_candidates_{model_slug}_360`, `All_Classes`, `poi_clusters_<class>` |
+| `merge` | QGISで開くGPKGへ出荷 | `all_poi.gpkg` 内の `poi_candidates_{model_slug}_360`, `All_Classes`, `poi_clusters_<class>` |
+
+`merge` の出力は `tmp.gpkg` を input にした `all_poi.gpkg` です。`all_poi.gpkg` には
+`Video GPX Points` や `click_targets_360` も含め、QGISプラグイン単体で完結動作できるようにします。
 
 重要なのは、`yolo_detections_raw` を原観測として残すことです。
 停止中の重複、誤検出、大きすぎるbbox、海外モデルの癖も、まずは観測ログとして残します。

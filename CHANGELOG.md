@@ -2,6 +2,25 @@
 
 このファイルは、GPXVideoProcessor の主要な仕様変更、実装変更、運用上の意味を記録します。
 
+## 0.2.1 - 2026-07-01
+
+### Added
+
+- `styles/default_style.qml` をプラグイン配下の正本スタイルとして読み込み、`All_Classes` の分類スタイルを起点に class 別レイヤへ単一シンボルを同期するようにした。
+- `all_poi.gpkg` 読み込み時に `Session` と `All_POIs` のレイヤグループを自動生成し、終了時には空グループを自動削除するようにした。
+- `All_Classes` を中心に、class 別レイヤをレイヤツリー上の凡例として扱えるようにした。
+
+### Changed
+
+- `tmp.gpkg` は GPXVideoProcessor の位置合わせ済み入力、`all_poi.gpkg` は conductor の出力、という役割分担を明確化した。
+- `all_poi.gpkg` を開いた後の Nav は、QGIS のレイヤ選択と scope に追従する前提へ整理した。
+- `Session` / `All_POIs` グループは、レイヤがなくなれば残さないようにした。
+
+### Fixed
+
+- `all_poi.gpkg` を読み込んだときに、class 別レイヤのアイコンや表示が `All_Classes` と一致しない問題を修正した。
+- プラグイン終了後に空の `Session` / `All_POIs` グループだけがレイヤパネルに残る問題を修正した。
+
 ## 0.2.0 - 2026-06-12
 
 ### Added
@@ -60,4 +79,3 @@
 - QGIS地図上の一時レーダ表示。
 - `CalFOV` / `CalDist` / `Scale` / `Offset` による距離目安の校正。
 - QGISパネルの日本語UI、tooltip、手動チェックリスト、品質保証メモ。
-

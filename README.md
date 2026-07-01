@@ -17,3 +17,27 @@ The current implementation focuses on:
 - Opening the 360 viewer in a dedicated Edge/Chrome app window when available.
 
 See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version. See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+## Navigation mode and scope
+
+The plugin has two navigation controls that work together:
+
+- `Navigation mode`: what the plugin should move through.
+- `Scope`: which layer set should be used when the mode is `Detection check`.
+
+Recommended use:
+
+- `Frame step`: move by frame number.
+- `Layer point`: follow the `Video GPX Points` layer.
+- `Picked point`: follow frames that have 360 click targets.
+- `Detection check`: follow POI candidate / cluster layers.
+- `KP matched CSV`: follow KP-matched frames if the CSV exists.
+
+For `Detection check`, the `Scope` changes the target set:
+
+- `Active layer`: only the currently active candidate layer.
+- `Visible layers`: candidate / cluster layers that are visible in the QGIS layer tree.
+- `All candidates`: all loaded candidate / cluster layers.
+- `Selected features`: only features selected in QGIS.
+
+In practice, `Active layer` is useful when you want to inspect one class at a time, `Visible layers` is good for the current on-screen set, and `Selected features` is the escape hatch for temporarily narrowed queries or manual selections.

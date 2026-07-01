@@ -1,12 +1,12 @@
 {
   "host": "127.0.0.1",
   "port": 8181,
-  "video_dir": "W:\\workshop\\nexco\\hokuriku",
-  "session_json_path": "W:\\workshop\\nexco\\hokuriku\\04_VID_20160212_022025_20250711112746_8K\\viewer_session.json",
+  "video_dir": "D:\\nexco\\isehara",
+  "session_json_path": "W:\\workshop\\nexco\\isehara\\VID_20231201_232629_20231212080701_11K\\viewer_session.json",
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
-  "viewer_cache_dir": "W:\\workshop\\nexco\\hokuriku\\04_VID_20160212_022025_20250711112746_8K\\viewer_cache",
+  "viewer_cache_dir": "W:\\workshop\\nexco\\isehara\\VID_20231201_232629_20231212080701_11K\\viewer_cache",
   "viewer_camera_height_m": 2.2,
   "viewer_hud_height_scale": 0.95,
   "viewer_debug_log_enabled": false

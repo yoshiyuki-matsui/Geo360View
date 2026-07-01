@@ -4,6 +4,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import os
+import re
 import sqlite3
 
 from qgis.PyQt import QtGui, QtWidgets
@@ -17,7 +18,8 @@ from qgis.PyQt.QtCore import (
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
     QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform,
-    QgsFeatureRequest, QgsExpression,
+    QgsFeatureRequest, QgsExpression, QgsCategorizedSymbolRenderer,
+    QgsSingleSymbolRenderer, QgsSymbol,
 )
 try:
     from qgis.core import QgsEditorWidgetSetup
@@ -456,6 +458,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode.addItem("Picked point", "picked")
         self.nav_mode.addItem("Detection check", "detect")
         self.nav_mode.addItem("KP matched CSV", "kp")
+        self.nav_mode.currentIndexChanged.connect(self.onNavigationModeChanged)
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 146)
         self.nav_scope_label = QLabel("Scope:")
@@ -1383,6 +1386,21 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             and has_candidate_identity
         )
 
+    def isAllClassesCandidateLayer(self, layer):
+        """全クラス集約のYOLO候補レイヤか確認する。"""
+        if not self.isCandidateLayer(layer):
+            return False
+        try:
+            name = str(layer.name())
+        except Exception:
+            name = ""
+        try:
+            source = str(layer.source())
+        except Exception:
+            source = ""
+        text = f"{name}\n{source}".lower()
+        return "all_classes" in text
+
     def layerFields(self, layer):
         """ベクタレイヤ以外ではNoneを返してfields()アクセスを安全化する。"""
         if layer is None or not hasattr(layer, "fields"):
@@ -1537,6 +1555,25 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layer.updateFields()
 
         features = []
+        inferred_class = ""
+        for field_name in ("semantic_class", "semanticClass"):
+            values = []
+            seen = set()
+            for source_feature in source_layer.getFeatures():
+                try:
+                    value = source_feature[field_name]
+                except Exception:
+                    value = None
+                text = str(value or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                values.append(text)
+                if len(values) >= 2:
+                    break
+            if len(values) == 1:
+                inferred_class = values[0]
+                break
         for source_feature in source_layer.getFeatures():
             feature = QgsFeature(layer.fields())
             try:
@@ -1553,6 +1590,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             pr.addFeatures(features)
         layer.updateExtents()
         self.createLayerSpatialIndex(layer)
+        if inferred_class:
+            try:
+                layer.setCustomProperty("tenkaku.semantic_class", inferred_class)
+                layer.setCustomProperty("tenkaku.semantic_class_key", self.semanticClassKey(inferred_class))
+            except Exception:
+                pass
         return layer
 
     def createLayerSpatialIndex(self, layer):
@@ -1841,15 +1884,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if not self.saveAndRemoveGeneratedLayersBeforeDatabaseLoad():
             return False
         job_metadata = self.readJobMetadataFromGpkg(gpkg_path)
-
         frame_source = self.gpkgLayer(gpkg_path, GPKG_FRAME_LAYER_NAME, "Video GPX Points")
-        if frame_source is None:
-            self.notifyWarning("database_load_failed", error=f"layer not found: {GPKG_FRAME_LAYER_NAME}")
-            return False
         target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, "360 Click Targets")
+
         candidate_sources = self.gpkgCandidateLayers(gpkg_path)
 
-        frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points")
+        frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points") if frame_source is not None else None
         target_layer = self.cloneLayerToMemory(target_source, "360 Click Targets") if target_source is not None else None
         candidate_layers = [
             self.cloneLayerToMemory(source_layer, source_layer.name())
@@ -1858,16 +1898,19 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         candidate_layer = self.firstLayer(candidate_layers)
 
         project = QgsProject.instance()
-        project.addMapLayer(frame_layer)
-        self.created_layer_ids = [frame_layer.id()]
+        self.created_layer_ids = []
         self.save_on_exit_layer_ids = set()
         self.loaded_layer_feature_counts = {}
-        self.registerLoadedLayerForChangeTracking(frame_layer)
-        self.frame_layer_id = frame_layer.id()
+        self.frame_layer_id = None
+        if frame_layer is not None:
+            self.addLayerToGroup(frame_layer, "Session", checked=True)
+            self.created_layer_ids.append(frame_layer.id())
+            self.registerLoadedLayerForChangeTracking(frame_layer)
+            self.frame_layer_id = frame_layer.id()
 
         if target_layer is not None:
             self.applyViewerTargetHiddenColumns(target_layer)
-            project.addMapLayer(target_layer)
+            self.addLayerToGroup(target_layer, "Session", checked=False)
             self.created_layer_ids.append(target_layer.id())
             self.registerLoadedLayerForChangeTracking(target_layer)
             self.target_layer_id = target_layer.id()
@@ -1877,12 +1920,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.candidate_layer_id = None
         for candidate_layer in candidate_layers:
             self.applyCandidateHiddenColumns(candidate_layer)
-            project.addMapLayer(candidate_layer)
+            self.addLayerToGroup(candidate_layer, "All_POIs", checked=False)
             self.created_layer_ids.append(candidate_layer.id())
             self.registerLoadedLayerForChangeTracking(candidate_layer)
             if self.candidate_layer_id is None:
                 self.candidate_layer_id = candidate_layer.id()
         candidate_layer = self.firstLayer(candidate_layers)
+        self.syncCandidateLayerStyles(candidate_layers)
 
         self.database_file = gpkg_path
         self.loaded_gpkg_path = gpkg_path
@@ -2254,10 +2298,88 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def currentDetectionScope(self):
         """Detection check Navで使う候補レイヤ範囲を返す。"""
         try:
+            mode = self.nav_mode.currentData()
+        except Exception:
+            mode = None
+        try:
             value = self.nav_scope.currentData()
         except Exception:
-            return "visible"
+            value = None
         return str(value or "visible")
+
+    def preferredNavigationLayerForMode(self, mode):
+        """指定Navモードに対応する既定レイヤを返す。"""
+        mode = str(mode or "")
+        if mode in ("frame", "layer", "kp"):
+            return self.activeFrameLayer()
+        if mode == "picked":
+            layer = self.viewerTargetLayer()
+            if layer is not None:
+                return layer
+            layers = self.viewerTargetReadLayers()
+            return layers[0] if layers else None
+        if mode == "detect":
+            for layer in self.projectCandidateLayers(visible_only=False):
+                if self.layerSelectedFeatureIds(layer):
+                    return layer
+            for layer in self.projectCandidateLayers(visible_only=False):
+                try:
+                    if str(layer.subsetString() or "").strip():
+                        return layer
+                except Exception:
+                    continue
+            active = self.activeCandidateLayer()
+            if active is not None:
+                return active
+            layers = self.projectCandidateLayers(visible_only=False)
+            for layer in layers:
+                if self.isAllClassesCandidateLayer(layer):
+                    return layer
+            return layers[0] if layers else None
+        return None
+
+    def activateNavigationLayer(self, layer):
+        """レイヤツリーとアクティブレイヤを揃える。"""
+        if layer is None:
+            return False
+        changed = False
+        try:
+            if hasattr(self.iface, "setActiveLayer"):
+                self.iface.setActiveLayer(layer)
+                changed = True
+        except Exception:
+            pass
+        try:
+            tree_view = self.iface.layerTreeView() if hasattr(self.iface, "layerTreeView") else None
+            if tree_view is not None and hasattr(tree_view, "setCurrentLayer"):
+                tree_view.setCurrentLayer(layer)
+                changed = True
+        except Exception:
+            pass
+        try:
+            canvas = self.iface.mapCanvas()
+            if canvas is not None and hasattr(canvas, "setCurrentLayer"):
+                canvas.setCurrentLayer(layer)
+                changed = True
+        except Exception:
+            pass
+        return changed
+
+    def syncNavigationLayerForMode(self, mode=None):
+        """Navモードに合わせて既定レイヤを前面へ出す。"""
+        if mode is None:
+            try:
+                mode = self.nav_mode.currentData()
+            except Exception:
+                mode = None
+        layer = self.preferredNavigationLayerForMode(mode)
+        if layer is None:
+            return False
+        return self.activateNavigationLayer(layer)
+
+    def onNavigationModeChanged(self, *_args):
+        """Navモード変更時にレイヤ選択を同期する。"""
+        self.syncNavigationLayerForMode()
 
     def activeCandidateLayer(self):
         """QGISで現在アクティブなYOLO候補レイヤを返す。"""
@@ -2269,6 +2391,508 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.applyCandidateHiddenColumns(layer)
             return layer
         return None
+
+    def ensureLayerTreeGroup(self, group_name):
+        """指定名のレイヤグループを取得または作成する。"""
+        root = QgsProject.instance().layerTreeRoot()
+        group = None
+        finder = getattr(root, "findGroup", None)
+        if callable(finder):
+            try:
+                group = finder(group_name)
+            except Exception:
+                group = None
+        if group is None:
+            group = root.addGroup(group_name)
+        if group is not None:
+            try:
+                group.setExpanded(False)
+            except Exception:
+                pass
+        return group
+
+    def addLayerToGroup(self, layer, group_name, checked=False):
+        """レイヤを指定グループへ入れて、初期表示状態を設定する。"""
+        if layer is None:
+            return None
+        project = QgsProject.instance()
+        group = self.ensureLayerTreeGroup(group_name)
+        try:
+            project.addMapLayer(layer, False)
+        except Exception:
+            project.addMapLayer(layer)
+        try:
+            node = group.addLayer(layer) if group is not None else None
+        except Exception:
+            node = None
+        if node is None:
+            try:
+                node = project.layerTreeRoot().findLayer(layer.id())
+            except Exception:
+                node = None
+        if node is not None:
+            try:
+                node.setItemVisibilityChecked(bool(checked))
+            except Exception:
+                pass
+        return node
+
+    def removeLayerTreeGroupIfEmpty(self, group_name):
+        """指定グループが空ならレイヤツリーから削除する。"""
+        try:
+            root = QgsProject.instance().layerTreeRoot()
+        except Exception:
+            return False
+        group = None
+        finder = getattr(root, "findGroup", None)
+        if callable(finder):
+            try:
+                group = finder(group_name)
+            except Exception:
+                group = None
+        if group is None:
+            return False
+        try:
+            children = list(group.children() or [])
+        except Exception:
+            children = []
+        if children:
+            return False
+        try:
+            parent = group.parent()
+        except Exception:
+            parent = None
+        if parent is None:
+            return False
+        try:
+            parent.removeChildNode(group)
+            return True
+        except Exception:
+            return False
+
+    def cleanupLayerTreeGroups(self):
+        """このプラグインの空グループを片付ける。"""
+        removed = False
+        for group_name in ("Session", "All_POIs"):
+            removed = self.removeLayerTreeGroupIfEmpty(group_name) or removed
+        return removed
+
+    def pluginRootDir(self):
+        """プラグインのインストール先ディレクトリを返す。"""
+        try:
+            return os.path.dirname(os.path.abspath(__file__))
+        except Exception:
+            return ""
+
+    def defaultCandidateStylePath(self):
+        """class styleの正本になるQMLの既定パスを返す。"""
+        path = os.path.join(self.pluginRootDir(), "styles", "default_style.qml")
+        return path if os.path.isfile(path) else ""
+
+    def loadNamedStyleIntoLayer(self, layer, style_path):
+        """QMLスタイルをレイヤへ読み込む。"""
+        if layer is None:
+            return False
+        path = str(style_path or "").strip()
+        if not path or not os.path.isfile(path):
+            return False
+        try:
+            result = layer.loadNamedStyle(path)
+        except Exception:
+            return False
+
+        ok = False
+        if isinstance(result, tuple):
+            ok = bool(result[0])
+        elif result is not None:
+            ok = bool(result)
+        if ok:
+            try:
+                layer.triggerRepaint()
+            except Exception:
+                pass
+        return ok
+
+    def layerFieldDistinctValues(self, layer, field_name, limit=3):
+        """レイヤ内の指定フィールドの異なる値を少数だけ返す。"""
+        values = []
+        if layer is None or not field_name:
+            return values
+        seen = set()
+        try:
+            for feature in layer.getFeatures():
+                value = self.targetFeatureValue(feature, field_name)
+                text = str(value or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                values.append(text)
+                if limit and len(values) >= int(limit):
+                    break
+        except Exception:
+            return values
+        return values
+
+    def semanticClassKey(self, value):
+        """semantic_class照合用の正規化キーを返す。"""
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        if ":" in text:
+            text = text.split(":", 1)[-1].strip()
+        text = re.sub(r"[^a-z0-9]+", "_", text)
+        text = re.sub(r"_+", "_", text).strip("_")
+        return text
+
+    def layerSemanticClassValues(self, layer, limit=3):
+        """レイヤ内のsemantic_class候補を返す。"""
+        return self.layerFieldDistinctValues(layer, "semantic_class", limit=limit)
+
+    def inferLayerSemanticClass(self, layer):
+        """単一クラスのレイヤならsemantic_classを推定して返す。"""
+        if layer is not None:
+            try:
+                hint = str(layer.customProperty("tenkaku.semantic_class", "") or "").strip()
+            except Exception:
+                hint = ""
+            if hint:
+                return hint
+        values = self.layerSemanticClassValues(layer, limit=2)
+        if len(values) == 1:
+            return values[0]
+        if layer is None:
+            return ""
+        for text in (getattr(layer, "name", lambda: "")(), getattr(layer, "source", lambda: "")()):
+            text = str(text or "").strip()
+            if not text:
+                continue
+            if "poi_clusters_" in text:
+                return text.split("poi_clusters_", 1)[1].strip()
+            if "poi_candidates_" in text:
+                return text.split("poi_candidates_", 1)[1].strip()
+            if ":" in text:
+                tail = text.rsplit(":", 1)[-1].strip()
+                if tail:
+                    return tail
+        return ""
+
+    def allClassesCandidateLayer(self, layers=None):
+        """All_Classes候補レイヤを返す。"""
+        for layer in layers or []:
+            if self.isAllClassesCandidateLayer(layer):
+                return layer
+        project = QgsProject.instance()
+        for layer in reversed(list(project.mapLayers().values())):
+            if self.isAllClassesCandidateLayer(layer):
+                return layer
+        return None
+
+    def classSymbolMapFromAllClassesLayer(self, all_classes_layer):
+        """All_Classesのcategorical rendererからsemantic_class->symbolを作る。"""
+        symbol_map = {}
+        if all_classes_layer is None:
+            return symbol_map
+        try:
+            renderer = all_classes_layer.renderer()
+        except Exception:
+            renderer = None
+        if not isinstance(renderer, QgsCategorizedSymbolRenderer):
+            return symbol_map
+        try:
+            categories = list(renderer.categories() or [])
+        except Exception:
+            categories = []
+        for category in categories:
+            try:
+                value = category.value()
+            except Exception:
+                value = None
+            text = str(value or "").strip()
+            if not text or text.lower() == "null":
+                continue
+            try:
+                symbol = category.symbol()
+            except Exception:
+                symbol = None
+            if symbol is None:
+                continue
+            try:
+                cloned = symbol.clone()
+            except Exception:
+                cloned = symbol
+            for key in {
+                text,
+                text.lower(),
+                self.semanticClassKey(text),
+                self.semanticClassKey(text.split(":", 1)[-1] if ":" in text else text),
+            }:
+                key_text = str(key or "").strip()
+                if key_text:
+                    symbol_map[key_text] = cloned.clone() if hasattr(cloned, "clone") else cloned
+        return symbol_map
+
+    def applySingleSymbolFromMap(self, layer, symbol_map):
+        """単一クラスレイヤへ対応するシンボルを単色化して当てる。"""
+        if layer is None:
+            return False
+        semantic_class = self.inferLayerSemanticClass(layer)
+        if not semantic_class:
+            return False
+        symbol = symbol_map.get(semantic_class)
+        if symbol is None:
+            symbol = symbol_map.get(semantic_class.lower())
+        if symbol is None:
+            symbol = symbol_map.get(self.semanticClassKey(semantic_class))
+        if symbol is None:
+            lower_class = semantic_class.lower()
+            normalized_class = self.semanticClassKey(semantic_class)
+            for key, candidate in symbol_map.items():
+                key_text = str(key or "").strip()
+                if not key_text:
+                    continue
+                key_lower = key_text.lower()
+                if (
+                    key_lower == lower_class
+                    or key_lower.endswith(lower_class)
+                    or key_lower == normalized_class
+                    or key_lower.endswith(normalized_class)
+                ):
+                    symbol = candidate
+                    break
+        if symbol is None:
+            return False
+        try:
+            layer.setRenderer(QgsSingleSymbolRenderer(symbol.clone() if hasattr(symbol, "clone") else symbol))
+            layer.triggerRepaint()
+            return True
+        except Exception:
+            return False
+
+    def syncCandidateLayerStyles(self, candidate_layers=None):
+        """All_Classesを正本にしてclass別レイヤへスタイルを同期する。"""
+        layers = list(candidate_layers or [])
+        if not layers:
+            project = QgsProject.instance()
+            layers = [
+                layer for layer in reversed(list(project.mapLayers().values()))
+                if self.isCandidateLayer(layer)
+            ]
+
+        all_classes_layer = self.allClassesCandidateLayer(layers)
+        if all_classes_layer is None:
+            return False
+
+        style_path = self.defaultCandidateStylePath()
+        if style_path:
+            self.loadNamedStyleIntoLayer(all_classes_layer, style_path)
+
+        symbol_map = self.classSymbolMapFromAllClassesLayer(all_classes_layer)
+        if not symbol_map:
+            return False
+
+        synced = False
+        for layer in layers:
+            if layer is None or layer.id() == all_classes_layer.id():
+                continue
+            if self.isAllClassesCandidateLayer(layer):
+                continue
+            synced = self.applySingleSymbolFromMap(layer, symbol_map) or synced
+        try:
+            all_classes_layer.triggerRepaint()
+        except Exception:
+            pass
+        return synced
+
+    def layerTreeViewObject(self):
+        """QGISのレイヤツリービューを安全に返す。"""
+        try:
+            return self.iface.layerTreeView() if hasattr(self.iface, "layerTreeView") else None
+        except Exception:
+            return None
+
+    def legendNodeText(self, node):
+        """legend nodeから表示テキストを安全に取り出す。"""
+        if node is None:
+            return ""
+        for attr_name in ("label", "name", "text", "title", "description"):
+            attr = getattr(node, attr_name, None)
+            if callable(attr):
+                try:
+                    value = attr()
+                    if value not in (None, ""):
+                        return str(value)
+                except Exception:
+                    pass
+        data = getattr(node, "data", None)
+        if callable(data):
+            for role in (Qt.DisplayRole, Qt.EditRole, Qt.UserRole):
+                try:
+                    value = data(role)
+                    if value not in (None, ""):
+                        return str(value)
+                except Exception:
+                    continue
+        return ""
+
+    def legendNodeLayer(self, node):
+        """legend nodeに関連付くレイヤを安全に返す。"""
+        if node is None:
+            return None
+        for attr_name in ("layer", "layerNode", "parentLayerNode"):
+            attr = getattr(node, attr_name, None)
+            if callable(attr):
+                try:
+                    candidate = attr()
+                except Exception:
+                    continue
+                if candidate is None:
+                    continue
+                layer_attr = getattr(candidate, "layer", None)
+                if callable(layer_attr):
+                    try:
+                        layer = layer_attr()
+                        if layer is not None:
+                            return layer
+                    except Exception:
+                        pass
+                if self.isCandidateLayer(candidate):
+                    return candidate
+        return None
+
+    def legendSelectedCandidateClasses(self, layer=None):
+        """アクティブ候補レイヤで選択中のsemantic_class集合を返す。"""
+        layer = layer or self.activeCandidateLayer()
+        if layer is None:
+            return set()
+
+        selected = set()
+        tree_view = self.layerTreeViewObject()
+        if tree_view is not None:
+            nodes = []
+            for method_name in ("selectedLegendNodes", "selectedNodes"):
+                method = getattr(tree_view, method_name, None)
+                if callable(method):
+                    try:
+                        nodes = list(method() or [])
+                    except Exception:
+                        nodes = []
+                    if nodes:
+                        break
+            for node in nodes:
+                node_layer = self.legendNodeLayer(node)
+                if node_layer is None or node_layer.id() != layer.id():
+                    continue
+                text = self.legendNodeText(node).strip()
+                if text and not self.isCandidateLayerName(text):
+                    selected.add(text)
+
+        if selected:
+            return selected
+
+        try:
+            subset = str(layer.subsetString() or "").strip()
+        except Exception:
+            subset = ""
+        if not subset:
+            return selected
+
+        patterns = (
+            r"""semantic_class\s*=\s*['"]([^'"]+)['"]""",
+            r"""semantic_class\s+LIKE\s*['"]([^'"]+)['"]""",
+            r"""semantic_class\s+IN\s*\(([^)]+)\)""",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, subset, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = match.group(1)
+            if "IN" in pattern.upper():
+                for item in re.findall(r"""['"]([^'"]+)['"]""", value):
+                    text = str(item or "").strip()
+                    if text:
+                        selected.add(text)
+            else:
+                text = str(value or "").strip()
+                if text:
+                    selected.add(text)
+            if selected:
+                break
+        return selected
+
+    def activeCandidateSemanticClasses(self, layer=None):
+        """アクティブ候補レイヤで現在有効なsemantic_class集合を返す。"""
+        layer = layer or self.activeCandidateLayer()
+        if layer is None:
+            return set()
+
+        active_classes = set()
+
+        try:
+            subset = str(layer.subsetString() or "").strip()
+        except Exception:
+            subset = ""
+        if subset:
+            active_classes.update(self.semanticClassesFromSubsetExpression(subset))
+
+        try:
+            renderer = layer.renderer()
+        except Exception:
+            renderer = None
+        if renderer is not None and hasattr(renderer, "categories"):
+            try:
+                categories = list(renderer.categories() or [])
+            except Exception:
+                categories = []
+            enabled = []
+            total = 0
+            for category in categories:
+                total += 1
+                try:
+                    render_state = bool(category.renderState())
+                except Exception:
+                    render_state = True
+                if not render_state:
+                    continue
+                try:
+                    value = category.value()
+                except Exception:
+                    value = None
+                text = str(value or "").strip()
+                if text and text.lower() != "all_classes":
+                    enabled.append(text)
+            if enabled and len(enabled) < total:
+                active_classes.update(enabled)
+
+        return active_classes
+
+    def semanticClassesFromSubsetExpression(self, subset):
+        """subset expressionからsemantic_class候補を抽出する。"""
+        text = str(subset or "").strip()
+        if not text:
+            return set()
+        classes = set()
+        patterns = (
+            r"""semantic_class\s*=\s*['"]([^'"]+)['"]""",
+            r"""semantic_class\s+LIKE\s*['"]([^'"]+)['"]""",
+            r"""semantic_class\s+IN\s*\(([^)]+)\)""",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = match.group(1)
+            if "IN" in pattern.upper():
+                for item in re.findall(r"""['"]([^'"]+)['"]""", value):
+                    token = str(item or "").strip()
+                    if token:
+                        classes.add(token)
+            else:
+                token = str(value or "").strip()
+                if token:
+                    classes.add(token)
+            if classes:
+                break
+        return classes
 
     def layerTreeVisible(self, layer):
         """QGISレイヤツリー上で表示対象になっているかを返す。"""
@@ -2382,6 +3006,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return (
             "360 detection candidates" in text
             or "360 poi clusters" in text
+            or "all_classes" in text
             or GPKG_CANDIDATE_LAYER_NAME.lower() in text
             or "poi_candidates" in text
             or "poi_clusters" in text
@@ -2832,7 +3457,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """指定dataを持つナビゲーションモードへUI選択を切り替える。"""
         for index in range(self.nav_mode.count()):
             if self.nav_mode.itemData(index) == mode:
-                self.nav_mode.setCurrentIndex(index)
+                if self.nav_mode.currentIndex() != index:
+                    self.nav_mode.setCurrentIndex(index)
+                else:
+                    self.syncNavigationLayerForMode(mode)
                 return True
         return False
 
@@ -2861,6 +3489,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         config = self.collectNavigationConfig()
         if config is None:
             return None, None
+
+        self.syncNavigationLayerForMode(config.mode)
 
         edge_name = "first" if direction < 0 else "last"
         mode = config.mode
@@ -2910,6 +3540,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         config = self.collectNavigationConfig()
         if config is None:
             return None, None
+
+        self.syncNavigationLayerForMode(config.mode)
 
         current_frame = self.currentFrameValue()
         step_count = config.fast_step if fast else config.step
@@ -3022,6 +3654,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.save_on_exit_layer_ids = set()
         self.loaded_layer_feature_counts = {}
         self.saved_viewer_target_keys = set()
+        self.cleanupLayerTreeGroups()
         return removed_count
 
     def markLayerSaveOnExit(self, layer):
@@ -3076,6 +3709,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def generatedLayerBackupPath(self):
         """Exit時に生成レイヤを退避保存するGeoPackageパスを返す。"""
+        if self.loaded_gpkg_path:
+            return self.loaded_gpkg_path
         return os.path.join(self.resolvedOutputDir(), "tmp.gpkg")
 
     def generatedLayers(self):

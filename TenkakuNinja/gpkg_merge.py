@@ -34,7 +34,7 @@ class GpkgMergeConfig:
     work_db: Path
     database: Path | None = None
     run_id: str | None = None
-    layer_name: str = DEFAULT_LAYER_NAME
+    layer_name: str | None = None
     source: str = "candidates"
     replace: bool = False
     limit: int | None = None
@@ -151,7 +151,7 @@ def source_display_label(source: str) -> str:
 def resolve_combined_layer_name(config: GpkgMergeConfig) -> str:
     """Return the combined layer table name for this export."""
 
-    if config.layer_name and config.layer_name != DEFAULT_LAYER_NAME:
+    if config.layer_name:
         return safe_layer_name(config.layer_name)
     if config.source == "clusters":
         return ALL_CLASSES_LAYER_NAME
@@ -775,7 +775,7 @@ def build_arg_parser():
     parser.add_argument("--run-id", help="Run id. Default: latest run in work DB.")
     parser.add_argument(
         "--layer-name",
-        default=None,
+        default="",
         help="Combined GeoPackage layer name. Default: All_Classes for clusters, poi_candidates_360 for candidates.",
     )
     parser.add_argument(
@@ -798,11 +798,12 @@ def config_from_args(args) -> GpkgMergeConfig:
     """Normalize argparse Namespace into GpkgMergeConfig."""
 
     database = Path(args.database).expanduser().resolve() if args.database else None
+    layer_name = str(args.layer_name or "").strip() or None
     return GpkgMergeConfig(
         work_db=Path(args.work_db).expanduser().resolve(),
         database=database,
         run_id=args.run_id,
-        layer_name=args.layer_name or DEFAULT_LAYER_NAME,
+        layer_name=layer_name,
         source=args.source,
         replace=bool(args.replace),
         limit=args.limit,

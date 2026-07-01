@@ -232,6 +232,10 @@ Navigation settings:
 
 If `KP matched CSV` is missing or empty, the plugin shows a warning and automatically changes the navigation mode back to `Frame step`. This prevents the operator from repeatedly hitting the same unavailable KP navigation error when no KP data is being used.
 
+`Navigation mode` and `Scope` are different controls.
+`Navigation mode` decides what the plugin moves through, while `Scope` decides which layer set is used when the mode is `Detection check`.
+In practice, use `Active layer` when you want to inspect one class at a time, `Visible layers` for the currently visible set on the map, and `Selected features` as the escape hatch for a narrowed query or a manual selection.
+
 `Video GPX Points` is treated as an internal reference layer for 360 image viewing. The plugin keeps the generated layer id and uses it for navigation and click-mode setup, so changing the user's feature-registration target layer does not change the viewer reference layer. The active layer is only used as a fallback before `Process`, when a pre-existing frame layer is being used manually.
 
 The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.

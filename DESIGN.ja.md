@@ -264,6 +264,11 @@ UIは、マニュアルレスで触り始められることと、パネルのコ
 - `All candidates`: 読み込まれている候補/クラスタレイヤ全体を辿る。
 - `Selected features`: QGIS上で選択中のfeatureだけを辿る。
 
+`Navigation mode` と `Scope` は役割が違います。
+`Navigation mode` は「何を順番に見るか」を決め、`Scope` は `Detection check` 時に「どのレイヤ集合を対象にするか」を決めます。
+実運用では、単一クラスだけ見たいときは `Active layer`、画面上で出しているものだけ追いたいときは `Visible layers`、
+一時的な絞り込みや手動選択をそのまま辿りたいときは `Selected features` を使います。
+
 QGISのsubset filterはNav対象にも反映されます。
 たとえば `semantic_class LIKE 'Speed Limit%'` のように式ビルダーで絞ると、
 その結果だけを360Viewerで順に確認できます。
