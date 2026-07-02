@@ -310,6 +310,7 @@
       radarHudVisible = !radarHudVisible;
       updateRadarHudVisibility();
       updateGroundRings(readKrpanoView() || state);
+      updateClickTargetMarker();
     });
   }
 
@@ -882,6 +883,10 @@
       return;
     }
     panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
+    if (!radarHudVisible) {
+      clickTargetMarker.hidden = true;
+      return;
+    }
     const targets = displayClickTargets();
     if (!targets.length) {
       clickTargetMarker.hidden = true;

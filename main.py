@@ -1820,15 +1820,48 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.follow_frame_checkbox.setChecked(self.parseViewerBool(metadata.get("follow_frame")))
         return True
 
-    def inferVideoPathFromDatabase(self, gpkg_path, target_layer=None):
-        """GPKGの位置や属性から同じフォルダのMP4候補を推定する。"""
-        video_name = self.firstLayerValue(target_layer, "video")
-        output_dir = os.path.dirname(os.path.abspath(gpkg_path))
-        parent_dir = os.path.dirname(output_dir)
-        if not video_name:
-            video_name = os.path.basename(output_dir) + ".mp4"
-        candidate = os.path.join(parent_dir, str(video_name))
-        return candidate if os.path.isfile(candidate) else ""
+    def inferVideoPathFromDatabase(self, gpkg_path, target_layer=None, metadata=None):
+        """GPKGの位置、metadata、属性から関連MP4候補を推定する。"""
+        gpkg_dir = os.path.dirname(os.path.abspath(gpkg_path))
+        parent_dir = os.path.dirname(gpkg_dir)
+        search_dirs = []
+        for directory in (gpkg_dir, parent_dir):
+            if directory and directory not in search_dirs:
+                search_dirs.append(directory)
+
+        video_names = []
+        for value in (
+            self.metadataText(metadata, "video_name"),
+            self.metadataText(metadata, "video_file"),
+            self.firstLayerValue(target_layer, "video"),
+            os.path.basename(gpkg_dir) + ".mp4",
+        ):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            name = os.path.basename(os.path.normpath(text))
+            if name and name not in video_names:
+                video_names.append(name)
+
+        for video_name in video_names:
+            for directory in search_dirs:
+                candidate = os.path.join(directory, video_name)
+                if os.path.isfile(candidate):
+                    return candidate
+
+        mp4_candidates = []
+        for directory in search_dirs:
+            try:
+                names = os.listdir(directory)
+            except OSError:
+                continue
+            for name in names:
+                if not name.lower().endswith(".mp4"):
+                    continue
+                candidate = os.path.join(directory, name)
+                if os.path.isfile(candidate) and candidate not in mp4_candidates:
+                    mp4_candidates.append(candidate)
+        return mp4_candidates[0] if len(mp4_candidates) == 1 else ""
 
     def inferGpxPathFromDatabase(self, gpkg_path):
         """GPKGの位置から同名GPX候補だけを控えめに推定する。"""
@@ -1936,9 +1969,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.setPathLabel(self.output_path, self.output_dir, self.uiText("ui.path.default_output"))
 
         # GPKG内のMP4絶対パスは別マシンでは信用しない。
-        # 読み込み前にローカル/NAS上のMP4を選んでいれば維持し、
-        # 未選択なら空にして復元モード内で選ばせる。
+        # 既にユーザが選んだMP4は明示指定として維持し、未選択なら
+        # metadataのvideo_nameやGPKG近傍から関連MP4を既定候補として復元する。
         restored_video = self.video_file if self.video_file and os.path.isfile(self.video_file) else ""
+        if not restored_video:
+            restored_video = self.inferVideoPathFromDatabase(gpkg_path, frame_layer, job_metadata)
         restored_gpx = self.metadataText(job_metadata, "gpx_file") or self.inferGpxPathFromDatabase(gpkg_path)
         restored_kp = self.metadataText(job_metadata, "kp_file")
         self.video_file = restored_video
@@ -2403,7 +2438,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             except Exception:
                 group = None
         if group is None:
-            group = root.addGroup(group_name)
+            try:
+                group = root.insertGroup(0, group_name)
+            except Exception:
+                group = root.addGroup(group_name)
+        elif group.parent() == root:
+            try:
+                children = list(root.children() or [])
+                if children.index(group) > 0:
+                    clone = group.clone()
+                    root.insertChildNode(0, clone)
+                    root.removeChildNode(group)
+                    group = clone
+            except Exception:
+                pass
         if group is not None:
             try:
                 group.setExpanded(False)

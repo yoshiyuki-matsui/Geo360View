@@ -188,21 +188,23 @@ button:disabled {
 }
 
 .click-target-marker-label {
-  background: rgba(0, 0, 0, 0.70);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 3px;
-  color: #fff8dc;
+  background: rgba(0, 0, 0, 0.74);
+  border: 1px solid rgba(255, 224, 0, 0.64);
+  border-radius: 4px;
+  color: #ffe600;
   display: block;
-  font-family: Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-family: Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
   left: 50%;
-  line-height: 1.25;
-  max-width: 240px;
+  line-height: 1.2;
+  max-width: min(420px, 80vw);
   overflow: hidden;
-  padding: 2px 4px;
+  padding: 4px 8px;
   position: absolute;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.92), 0 0 8px rgba(0, 0, 0, 0.86);
   text-overflow: ellipsis;
-  top: 21px;
+  top: 38px;
   transform: translateX(-50%);
   white-space: nowrap;
 }
