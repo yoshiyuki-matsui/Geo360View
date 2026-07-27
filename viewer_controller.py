@@ -457,6 +457,10 @@ class ViewerControllerMixin:
                 self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
         if targets_payload:
             payload["targets"] = targets_payload
+            if any(str(target.get("target_source") or "").lower() == "yolo_pinhole" for target in targets_payload):
+                payload["viewer_projection"] = "flat"
+                payload["yaw_to_camera_heading"] = 0.0
+                payload["pitch"] = 0.0
             heading_getter = getattr(self, "radarHeadingAndRadius", None)
             offset_getter = getattr(self, "viewerBearingOffsetFromTargets", None)
             if callable(heading_getter) and callable(offset_getter):

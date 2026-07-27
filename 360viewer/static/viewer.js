@@ -7,6 +7,9 @@
     pitch: 0,
     zoom: 1,
     viewer_camera_height_m: bootstrap.viewer_camera_height_m,
+    viewer_projection: bootstrap.viewer_projection || "sphere",
+    viewer_flat_hfov_deg: bootstrap.viewer_flat_hfov_deg || 70,
+    viewer_flat_vfov_deg: bootstrap.viewer_flat_vfov_deg || 43,
     target: null,
     targets: []
   }, bootstrap.state || {});
@@ -120,6 +123,34 @@
     return clamp(numeric, 0.1, 5.0);
   }
 
+  function normalizeViewerProjection(value) {
+    const text = String(value || "sphere").toLowerCase();
+    if (["flat", "pinhole", "front"].includes(text)) {
+      return "flat";
+    }
+    return "sphere";
+  }
+
+  function normalizeFovDeg(value, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return fallback;
+    }
+    return clamp(numeric, 1, 179);
+  }
+
+  function isFlatProjection() {
+    return normalizeViewerProjection(state.viewer_projection) === "flat";
+  }
+
+  function updateProjectionLayout(viewState) {
+    if (!panoStage) {
+      return;
+    }
+    const projection = normalizeViewerProjection((viewState && viewState.viewer_projection) || state.viewer_projection);
+    panoStage.classList.toggle("pano-stage-flat", projection === "flat");
+  }
+
   function updateCameraHeight(value) {
     viewerCameraHeightM = normalizeCameraHeight(value);
     state.viewer_camera_height_m = viewerCameraHeightM;
@@ -135,11 +166,16 @@
   }
 
   function normalizedView(source) {
-    return {
-      yaw_to_camera_heading: normalizeYaw(source && source.yaw_to_camera_heading),
-      pitch: normalizePitch(source && source.pitch),
-      zoom: normalizeZoom(source && source.zoom)
+    const projection = normalizeViewerProjection(source && source.viewer_projection);
+    const view = {
+      yaw_to_camera_heading: projection === "flat" ? 0 : normalizeYaw(source && source.yaw_to_camera_heading),
+      pitch: projection === "flat" ? 0 : normalizePitch(source && source.pitch),
+      zoom: normalizeZoom(source && source.zoom),
+      viewer_projection: projection,
+      viewer_flat_hfov_deg: normalizeFovDeg(source && source.viewer_flat_hfov_deg, 70),
+      viewer_flat_vfov_deg: normalizeFovDeg(source && source.viewer_flat_vfov_deg, 43)
     };
+    return view;
   }
 
   function readKrpanoView() {
@@ -147,10 +183,11 @@
       return null;
     }
 
-    const yaw = normalizeYaw(krpano.get("view.hlookat"));
-    const pitch = Number(krpano.get("view.vlookat")) || 0;
-    const fov = Number(krpano.get("view.fov")) || 90;
-    const zoom = 90 / Math.max(fov, 1);
+    const projection = normalizeViewerProjection(state.viewer_projection);
+    const yaw = projection === "flat" ? 0 : normalizeYaw(krpano.get("view.hlookat"));
+    const pitch = projection === "flat" ? 0 : Number(krpano.get("view.vlookat")) || 0;
+    const fov = Number(krpano.get("view.fov")) || (projection === "flat" ? normalizeFovDeg(state.viewer_flat_hfov_deg, 70) : 90);
+    const zoom = projection === "flat" ? 90 / normalizeFovDeg(state.viewer_flat_hfov_deg, 70) : 90 / Math.max(fov, 1);
     const viewerFrontOffset = Number(state.viewer_front_offset_deg);
 
     const view = {
@@ -160,7 +197,10 @@
       pitch: normalizePitch(pitch),
       zoom: normalizeZoom(zoom),
       viewer_camera_height_m: viewerCameraHeightM,
-      viewer_hud_height_scale: viewerHudHeightScale
+      viewer_hud_height_scale: viewerHudHeightScale,
+      viewer_projection: projection,
+      viewer_flat_hfov_deg: normalizeFovDeg(state.viewer_flat_hfov_deg, 70),
+      viewer_flat_vfov_deg: normalizeFovDeg(state.viewer_flat_vfov_deg, 43)
     };
     if (Number.isFinite(viewerFrontOffset)) {
       view.viewer_front_offset_deg = normalizeSignedYaw(viewerFrontOffset);
@@ -178,7 +218,9 @@
       : "";
     videoLabel.textContent = `video: ${active.video}`;
     frameLabel.textContent = `frame_index: ${active.frame_index}`;
-    viewLabel.textContent = `yaw: ${Number(active.yaw_to_camera_heading).toFixed(2)}, pitch: ${Number(active.pitch).toFixed(2)}, fov: ${fov.toFixed(1)}, zoom: ${Number(active.zoom).toFixed(2)}${target}`;
+    const projection = normalizeViewerProjection(active.viewer_projection || state.viewer_projection);
+    viewLabel.textContent = `projection: ${projection}, yaw: ${Number(active.yaw_to_camera_heading).toFixed(2)}, pitch: ${Number(active.pitch).toFixed(2)}, fov: ${fov.toFixed(1)}, zoom: ${Number(active.zoom).toFixed(2)}${target}`;
+    updateProjectionLayout(active);
     updateRadarHud(active);
     updateClickTargetMarker();
   }
@@ -866,6 +908,21 @@
     };
   }
 
+  function projectClickTargetMarkerImageXY(target, stageRect) {
+    if (!isFlatProjection()) {
+      return null;
+    }
+    const xRatio = Number(target && target.x_ratio);
+    const yRatio = Number(target && target.y_ratio);
+    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) {
+      return null;
+    }
+    return {
+      x: clamp(xRatio, 0, 1) * stageRect.width,
+      y: clamp(yRatio, 0, 1) * stageRect.height
+    };
+  }
+
   function projectClickTargetMarker(target) {
     if (!panoStage) {
       return null;
@@ -874,7 +931,8 @@
     if (!stageRect.width || !stageRect.height) {
       return null;
     }
-    return projectClickTargetMarkerWithKrpano(target, stageRect)
+    return projectClickTargetMarkerImageXY(target, stageRect)
+      || projectClickTargetMarkerWithKrpano(target, stageRect)
       || projectClickTargetMarkerFallback(target, readKrpanoView() || state, stageRect);
   }
 
@@ -907,6 +965,9 @@
     current.viewer_camera_height_m = viewerCameraHeightM;
     current.viewer_hud_height_scale = viewerHudHeightScale;
     const viewerFrontOffset = Number(state.viewer_front_offset_deg);
+    current.viewer_projection = normalizeViewerProjection(state.viewer_projection);
+    current.viewer_flat_hfov_deg = normalizeFovDeg(state.viewer_flat_hfov_deg, 70);
+    current.viewer_flat_vfov_deg = normalizeFovDeg(state.viewer_flat_vfov_deg, 43);
     if (Number.isFinite(viewerFrontOffset)) {
       current.viewer_front_offset_deg = normalizeSignedYaw(viewerFrontOffset);
     }
@@ -1118,6 +1179,7 @@
     }
     return a.video === b.video
       && Number(a.frame_index) === Number(b.frame_index)
+      && normalizeViewerProjection(a.viewer_projection) === normalizeViewerProjection(b.viewer_projection)
       && Math.abs(Number(a.yaw_to_camera_heading) - Number(b.yaw_to_camera_heading)) < 0.01
       && Math.abs(Number(a.pitch) - Number(b.pitch)) < 0.01
       && Math.abs(Number(a.zoom) - Number(b.zoom)) < 0.001;
@@ -1134,12 +1196,13 @@
     const params = new URLSearchParams();
     params.set("video", video);
     params.set("frame_index", String(frameIndex));
-    if (viewState) {
-      const view = normalizedView(viewState);
-      params.set("yaw_to_camera_heading", String(view.yaw_to_camera_heading));
-      params.set("pitch", String(view.pitch));
-      params.set("zoom", String(view.zoom));
-    }
+    const view = normalizedView(viewState || state);
+    params.set("yaw_to_camera_heading", String(view.yaw_to_camera_heading));
+    params.set("pitch", String(view.pitch));
+    params.set("zoom", String(view.zoom));
+    params.set("viewer_projection", view.viewer_projection);
+    params.set("viewer_flat_hfov_deg", String(view.viewer_flat_hfov_deg));
+    params.set("viewer_flat_vfov_deg", String(view.viewer_flat_vfov_deg));
     return `/viewer?${params.toString()}`;
   }
 
@@ -1163,6 +1226,9 @@
       params.set("yaw_to_camera_heading", String(view.yaw_to_camera_heading));
       params.set("pitch", String(view.pitch));
       params.set("zoom", String(view.zoom));
+      params.set("viewer_projection", view.viewer_projection);
+      params.set("viewer_flat_hfov_deg", String(view.viewer_flat_hfov_deg));
+      params.set("viewer_flat_vfov_deg", String(view.viewer_flat_vfov_deg));
     }
     return `${window.location.origin}/krpano-scene.xml?${params.toString()}`;
   }
@@ -1187,6 +1253,9 @@
     const nextTarget = nextState.target && typeof nextState.target === "object" ? nextState.target : null;
     updateCameraHeight(nextState.viewer_camera_height_m === undefined ? viewerCameraHeightM : nextState.viewer_camera_height_m);
     updateHudHeightScale(nextState.viewer_hud_height_scale === undefined ? viewerHudHeightScale : nextState.viewer_hud_height_scale);
+    state.viewer_projection = normalizeViewerProjection(nextState.viewer_projection || state.viewer_projection);
+    state.viewer_flat_hfov_deg = normalizeFovDeg(nextState.viewer_flat_hfov_deg || state.viewer_flat_hfov_deg, 70);
+    state.viewer_flat_vfov_deg = normalizeFovDeg(nextState.viewer_flat_vfov_deg || state.viewer_flat_vfov_deg, 43);
 
     Object.assign(state, nextState, requestedView, {
       video: nextVideo,
@@ -1303,6 +1372,9 @@
 
     updateRadarState(session.radar);
     updateCameraHeight(session.viewer_camera_height_m);
+    state.viewer_projection = normalizeViewerProjection(session.viewer_projection || state.viewer_projection);
+    state.viewer_flat_hfov_deg = normalizeFovDeg(session.viewer_flat_hfov_deg || state.viewer_flat_hfov_deg, 70);
+    state.viewer_flat_vfov_deg = normalizeFovDeg(session.viewer_flat_vfov_deg || state.viewer_flat_vfov_deg, 43);
     if (Number.isFinite(Number(session.viewer_front_offset_deg))) {
       state.viewer_front_offset_deg = normalizeSignedYaw(Number(session.viewer_front_offset_deg));
     }

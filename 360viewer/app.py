@@ -33,6 +33,12 @@ DEFAULT_HUD_HEIGHT_SCALE = 1.0
 MIN_HUD_HEIGHT_SCALE = 0.1
 MAX_HUD_HEIGHT_SCALE = 5.0
 MAX_VIEWER_TARGETS = 100
+VIEWER_PROJECTION_SPHERE = "sphere"
+VIEWER_PROJECTION_FLAT = "flat"
+VIEWER_PROJECTIONS = {VIEWER_PROJECTION_SPHERE, VIEWER_PROJECTION_FLAT}
+DEFAULT_FLAT_HFOV_DEG = 70.0
+DEFAULT_FLAT_VFOV_DEG = 43.0
+
 
 
 class ConfigError(RuntimeError):
@@ -72,6 +78,31 @@ def normalize_hud_height_scale(value: Any, default: float = DEFAULT_HUD_HEIGHT_S
     return max(MIN_HUD_HEIGHT_SCALE, min(MAX_HUD_HEIGHT_SCALE, numeric))
 
 
+def normalize_viewer_projection(value: Any, default: str = VIEWER_PROJECTION_SPHERE) -> str:
+    """ビューア画像投影を sphere/flat の安全な値へ正規化する。"""
+    text = str(value or default).strip().lower()
+    aliases = {
+        "360": VIEWER_PROJECTION_SPHERE,
+        "equirectangular": VIEWER_PROJECTION_SPHERE,
+        "pano": VIEWER_PROJECTION_SPHERE,
+        "pinhole": VIEWER_PROJECTION_FLAT,
+        "front": VIEWER_PROJECTION_FLAT,
+    }
+    text = aliases.get(text, text)
+    return text if text in VIEWER_PROJECTIONS else default
+
+
+def normalize_fov_deg(value: Any, default: float) -> float:
+    """flat表示用FOVをkrpanoが扱える範囲へ正規化する。"""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = float(default)
+    if not math.isfinite(numeric):
+        numeric = float(default)
+    return max(1.0, min(179.0, numeric))
+
+
 def load_config() -> dict[str, Any]:
     """viewer_config JSONを読み、パスと画質設定を正規化して返す。"""
     if not CONFIG_PATH.is_file():
@@ -95,6 +126,9 @@ def load_config() -> dict[str, Any]:
         "viewer_camera_height_m": normalize_camera_height(raw.get("viewer_camera_height_m")),
         "viewer_hud_height_scale": normalize_hud_height_scale(raw.get("viewer_hud_height_scale")),
         "viewer_debug_log_enabled": parse_bool(raw.get("viewer_debug_log_enabled", False)),
+        "viewer_projection": normalize_viewer_projection(raw.get("viewer_projection")),
+        "viewer_flat_hfov_deg": normalize_fov_deg(raw.get("viewer_flat_hfov_deg"), DEFAULT_FLAT_HFOV_DEG),
+        "viewer_flat_vfov_deg": normalize_fov_deg(raw.get("viewer_flat_vfov_deg"), DEFAULT_FLAT_VFOV_DEG),
     }
 
 
@@ -191,12 +225,24 @@ def view_state_from_query(query: dict[str, list[str]], session: dict[str, Any] |
             value = session.get(name, DEFAULT_VIEW[name])
         return value
 
+    cfg = load_config()
     return {
         "yaw_to_camera_heading": normalize_yaw(
             parse_float(value_for("yaw_to_camera_heading"), "yaw_to_camera_heading", DEFAULT_VIEW["yaw_to_camera_heading"])
         ),
         "pitch": parse_float(value_for("pitch"), "pitch", DEFAULT_VIEW["pitch"]),
         "zoom": parse_float(value_for("zoom"), "zoom", DEFAULT_VIEW["zoom"]),
+        "viewer_projection": normalize_viewer_projection(
+            query_value(query, "viewer_projection", session.get("viewer_projection", cfg["viewer_projection"]))
+        ),
+        "viewer_flat_hfov_deg": normalize_fov_deg(
+            query_value(query, "viewer_flat_hfov_deg", session.get("viewer_flat_hfov_deg", cfg["viewer_flat_hfov_deg"])),
+            cfg["viewer_flat_hfov_deg"],
+        ),
+        "viewer_flat_vfov_deg": normalize_fov_deg(
+            query_value(query, "viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg", cfg["viewer_flat_vfov_deg"])),
+            cfg["viewer_flat_vfov_deg"],
+        ),
     }
 
 
@@ -339,6 +385,17 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
         "zoom": view["zoom"],
         "viewer_camera_height_m": camera_height,
         "viewer_hud_height_scale": hud_height_scale,
+        "viewer_projection": normalize_viewer_projection(
+            query_value(query, "viewer_projection", session.get("viewer_projection", cfg["viewer_projection"]))
+        ),
+        "viewer_flat_hfov_deg": normalize_fov_deg(
+            query_value(query, "viewer_flat_hfov_deg", session.get("viewer_flat_hfov_deg", cfg["viewer_flat_hfov_deg"])),
+            cfg["viewer_flat_hfov_deg"],
+        ),
+        "viewer_flat_vfov_deg": normalize_fov_deg(
+            query_value(query, "viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg", cfg["viewer_flat_vfov_deg"])),
+            cfg["viewer_flat_vfov_deg"],
+        ),
     }
 
 
@@ -360,6 +417,9 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("viewer_hud_height_scale"),
             load_config()["viewer_hud_height_scale"],
         ),
+        "viewer_projection": normalize_viewer_projection(payload.get("viewer_projection", load_config()["viewer_projection"])),
+        "viewer_flat_hfov_deg": normalize_fov_deg(payload.get("viewer_flat_hfov_deg"), load_config()["viewer_flat_hfov_deg"]),
+        "viewer_flat_vfov_deg": normalize_fov_deg(payload.get("viewer_flat_vfov_deg"), load_config()["viewer_flat_vfov_deg"]),
     }
     if payload.get("viewer_front_offset_deg") is not None:
         try:
@@ -557,6 +617,9 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("viewer_hud_height_scale", session.get("viewer_hud_height_scale")),
             load_config()["viewer_hud_height_scale"],
         ),
+        "viewer_projection": normalize_viewer_projection(payload.get("viewer_projection", session.get("viewer_projection", load_config()["viewer_projection"]))),
+        "viewer_flat_hfov_deg": normalize_fov_deg(payload.get("viewer_flat_hfov_deg", session.get("viewer_flat_hfov_deg")), load_config()["viewer_flat_hfov_deg"]),
+        "viewer_flat_vfov_deg": normalize_fov_deg(payload.get("viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg")), load_config()["viewer_flat_vfov_deg"]),
     }
     viewer_front_offset = payload.get("viewer_front_offset_deg")
     if viewer_front_offset is None and session.get("video") == video:
@@ -691,7 +754,22 @@ def build_krpano_xml(
     pitch = parse_float(view.get("pitch"), "pitch", DEFAULT_VIEW["pitch"])
     zoom = parse_float(view.get("zoom"), "zoom", DEFAULT_VIEW["zoom"])
     fov = max(1.0, min(179.0, 90.0 / max(zoom, 0.01)))
+    projection = normalize_viewer_projection(view.get("viewer_projection"))
+    flat_hfov = normalize_fov_deg(view.get("viewer_flat_hfov_deg"), DEFAULT_FLAT_HFOV_DEG)
+    flat_vfov = normalize_fov_deg(view.get("viewer_flat_vfov_deg"), DEFAULT_FLAT_VFOV_DEG)
     image_url = xml_escape(absolute_url(handler, frame_image_url(video, frame_index)))
+
+    if projection == VIEWER_PROJECTION_FLAT:
+        # 通常画角フレームはrectilinear画像として固定視点で表示する。
+        return f"""<krpano>
+  <events onloadcomplete="js(viewerKrpanoLoadComplete());" onloaderror="js(viewerKrpanoLoadError());" />
+  <preview type="grid(cube,16,16,512,0x222222,0x444444,0x222222)" />
+  <view hlookat="0.000000" vlookat="0.000000" fovtype="HFOV" fov="{flat_hfov:.6f}" limitview="fullrange" />
+  <image hfov="{flat_hfov:.6f}" vfov="{flat_vfov:.6f}">
+    <flat url="{image_url}" />
+  </image>
+</krpano>
+"""
 
     # krpanoにはequirectangular JPEGをsphere画像として渡す。
     return f"""<krpano>
@@ -941,6 +1019,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
             f"&yaw_to_camera_heading={state['yaw_to_camera_heading']}"
             f"&pitch={state['pitch']}"
             f"&zoom={state['zoom']}"
+            f"&viewer_projection={quote(state['viewer_projection'])}"
+            f"&viewer_flat_hfov_deg={state['viewer_flat_hfov_deg']}"
+            f"&viewer_flat_vfov_deg={state['viewer_flat_vfov_deg']}"
         )
         scene_query = f"/krpano-scene.xml?{scene_query_params}"
         scene_url = absolute_url(self, scene_query)
@@ -958,6 +1039,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "krpano_js_url": "/static/vendor/krpano/krpano.js",
             "viewer_camera_height_m": state["viewer_camera_height_m"],
             "viewer_hud_height_scale": state["viewer_hud_height_scale"],
+            "viewer_projection": state["viewer_projection"],
+            "viewer_flat_hfov_deg": state["viewer_flat_hfov_deg"],
+            "viewer_flat_vfov_deg": state["viewer_flat_vfov_deg"],
         }
 
         self.send_bytes(

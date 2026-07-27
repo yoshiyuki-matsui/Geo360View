@@ -3148,9 +3148,57 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         review_status = self.targetFeatureValue(feature, "review_status")
         quality = self.targetFeatureValue(feature, "quality")
 
+        target_source = self.targetFeatureValue(feature, "target_source") or "yolo_candidate"
+        x_ratio = 0.5
+        y_ratio = 0.5
+        if str(target_source).lower() == "yolo_pinhole":
+            normalized_x = self.targetFeatureFloat(feature, "cubemap_u")
+            normalized_y = self.targetFeatureFloat(feature, "cubemap_v")
+            if normalized_x is not None and normalized_y is not None:
+                x_ratio = max(0.0, min(1.0, (float(normalized_x) + 1.0) / 2.0))
+                y_ratio = max(0.0, min(1.0, (float(normalized_y) + 1.0) / 2.0))
+            else:
+                anchor_x = self.targetFeatureFloat(feature, "anchor_x_px")
+                anchor_y = self.targetFeatureFloat(feature, "anchor_y_px")
+                bbox_json = self.targetFeatureValue(feature, "evidence_bbox_json")
+                image_width = None
+                image_height = None
+                if bbox_json not in (None, ""):
+                    try:
+                        bbox = json.loads(str(bbox_json))
+                    except Exception:
+                        bbox = None
+                    if isinstance(bbox, dict):
+                        x1 = _parse_float(bbox.get("x1"))
+                        y1 = _parse_float(bbox.get("y1"))
+                        x2 = _parse_float(bbox.get("x2"))
+                        y2 = _parse_float(bbox.get("y2"))
+                        if (anchor_x is None or anchor_y is None):
+                            if x1 is not None and x2 is not None:
+                                anchor_x = (float(x1) + float(x2)) / 2.0
+                            if y1 is not None and y2 is not None:
+                                anchor_y = (float(y1) + float(y2)) / 2.0
+                        image_width = _parse_float(bbox.get("image_width")) or _parse_float(bbox.get("width"))
+                        image_height = _parse_float(bbox.get("image_height")) or _parse_float(bbox.get("height"))
+                    elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4 and (anchor_x is None or anchor_y is None):
+                        x1 = _parse_float(bbox[0])
+                        y1 = _parse_float(bbox[1])
+                        x2 = _parse_float(bbox[2])
+                        y2 = _parse_float(bbox[3])
+                        if x1 is not None and x2 is not None:
+                            anchor_x = (float(x1) + float(x2)) / 2.0
+                        if y1 is not None and y2 is not None:
+                            anchor_y = (float(y1) + float(y2)) / 2.0
+                if image_width is None:
+                    image_width = self.targetFeatureFloat(feature, "image_width") or self.targetFeatureFloat(feature, "width_px")
+                if image_height is None:
+                    image_height = self.targetFeatureFloat(feature, "image_height") or self.targetFeatureFloat(feature, "height_px")
+                if anchor_x is not None and anchor_y is not None and image_width and image_height:
+                    x_ratio = max(0.0, min(1.0, float(anchor_x) / float(image_width)))
+                    y_ratio = max(0.0, min(1.0, float(anchor_y) / float(image_height)))
         target = {
-            "x_ratio": 0.5,
-            "y_ratio": 0.5,
+            "x_ratio": x_ratio,
+            "y_ratio": y_ratio,
             "yaw_delta_deg": 0.0,
             "pitch_delta_deg": 0.0,
             "target_yaw_to_camera_heading": float(target_yaw) % 360.0,
@@ -3159,7 +3207,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "view_pitch": max(-90.0, min(90.0, float(target_pitch))),
             "view_zoom": 1.35,
             "projection": str(projection),
-            "target_source": "yolo_candidate",
+            "target_source": str(target_source),
             "viewer_marker": self.targetFeatureValue(feature, "viewer_marker") or "target_point",
         }
         if map_target_yaw is not None:
