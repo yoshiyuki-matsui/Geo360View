@@ -64,6 +64,11 @@ GPKG_FRAME_LAYER_NAME = "video_gpx_points"
 GPKG_TARGET_LAYER_NAME = "click_targets_360"
 GPKG_CANDIDATE_LAYER_NAME = "poi_candidates_360"
 GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
+VIEWER_PROJECTION_SPHERE = "sphere"
+VIEWER_PROJECTION_FLAT = "flat"
+VIEWER_PROJECTION_VALUES = (VIEWER_PROJECTION_SPHERE, VIEWER_PROJECTION_FLAT)
+DEFAULT_VIEWER_FLAT_HFOV_DEG = 70.0
+DEFAULT_VIEWER_FLAT_VFOV_DEG = 43.0
 
 VIEWER_TARGET_HIDDEN_COLUMNS = (
     "target_id",
@@ -131,6 +136,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_click_tool = None
         self.action = None
         self.viewer_action = None
+        self.new_job_action = None
         self.exit_action = None
         self.viewer_process = None
         self.viewer_browser_opened = False
@@ -144,6 +150,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_hud_height_scale_value = 1.0
         self.viewer_hud_height_scale_dirty = False
         self.video_front_offset_deg = 0.0
+        self.viewer_projection = VIEWER_PROJECTION_SPHERE
+        self.viewer_projection_dirty = False
+        self.viewer_projection_reason = ""
+        self.viewer_flat_hfov_deg = DEFAULT_VIEWER_FLAT_HFOV_DEG
+        self.viewer_flat_vfov_deg = DEFAULT_VIEWER_FLAT_VFOV_DEG
         self.created_layer_ids = []
         self.save_on_exit_layer_ids = set()
         self.loaded_layer_feature_counts = {}
@@ -350,6 +361,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layout = QVBoxLayout()
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
 
         def compact_row(target_layout, *items):
             """関連するUI部品を1行にまとめて、パネルの縦方向を節約する。"""
@@ -377,12 +391,26 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.gpx", self.gpx_label, self.gpx_button)
         set_fixed_width(self.gpx_button, 72)
 
+        self.new_job_button = QPushButton("New Job")
+        self.new_job_button.clicked.connect(self.newJobSession)
+        self.new_job_button.setToolTip("Clear current GPX/MP4/KP/Output selections and start a fresh job.")
+        set_fixed_width(self.new_job_button, 82)
+
         self.video_label = QLabel("Video:")
         self.video_path = self.makePathLabel(self.uiText("ui.path.no_video"))
         self.video_button = QPushButton(self.uiText("ui.button.browse"))
         self.video_button.clicked.connect(self.selectVideo)
         self.applyHelp("ui.help.video", self.video_label, self.video_button)
         set_fixed_width(self.video_button, 72)
+
+        self.viewer_projection_label = QLabel("Projection:")
+        self.viewer_projection_combo = QComboBox()
+        self.viewer_projection_combo.addItem("360 / Equirectangular", VIEWER_PROJECTION_SPHERE)
+        self.viewer_projection_combo.addItem("Flat / Normal FOV", VIEWER_PROJECTION_FLAT)
+        self.viewer_projection_combo.currentIndexChanged.connect(self.onViewerProjectionChanged)
+        set_fixed_width(self.viewer_projection_combo, 168)
+        self.viewer_projection_reason_label = QLabel("")
+        self.viewer_projection_reason_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         self.database_label = QLabel("GPKG:")
         self.database_path = self.makePathLabel(self.uiText("ui.path.no_database"))
@@ -398,7 +426,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.kp", self.kp_label, self.kp_button)
         set_fixed_width(self.kp_button, 72)
 
-        for label in (self.gpx_label, self.video_label, self.database_label, self.kp_label):
+        for label in (self.gpx_label, self.video_label, self.viewer_projection_label, self.database_label, self.kp_label):
             label.setMinimumWidth(52)
 
         self.kp_tolerance_label = QLabel("KP tol:")
@@ -641,6 +669,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         compact_row(load_layout, self.database_label, self.database_path, self.database_button)
         compact_row(load_layout, self.gpx_label, self.gpx_path, self.gpx_button)
         compact_row(load_layout, self.video_label, self.video_path, self.video_button)
+        compact_row(
+            load_layout,
+            self.viewer_projection_label,
+            self.viewer_projection_combo,
+            self.viewer_projection_reason_label,
+            "stretch",
+        )
         compact_row(load_layout, self.kp_label, self.kp_path, self.kp_button)
         compact_row(load_layout, self.output_label, self.output_path, self.output_button)
         compact_row(
@@ -714,6 +749,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         tabs.addTab(load_tab, self.uiText("ui.tab.load"))
         tabs.addTab(control_tab, self.uiText("ui.tab.control"))
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.new_job_button)
+        layout.addLayout(header_layout)
         layout.addWidget(tabs)
 
         self.setLayout(layout)
@@ -725,18 +763,23 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_action = QAction(self.uiText("ui.action.open_viewer"), self)
         self.viewer_action.setStatusTip(self.uiText("ui.help.video"))
         self.viewer_action.triggered.connect(self.openViewer)
+        self.new_job_action = QAction("New Job", self)
+        self.new_job_action.setStatusTip("Clear current selections and start a fresh job.")
+        self.new_job_action.triggered.connect(self.newJobSession)
         self.exit_action = QAction(self.uiText("ui.action.exit"), self)
         self.exit_action.triggered.connect(self.exitSession)
 
         # メニューにアクションを追加
         self.iface.addPluginToMenu(PLUGIN_TITLE, self.viewer_action)
         self.iface.addPluginToMenu(PLUGIN_TITLE, self.action)
+        self.iface.addPluginToMenu(PLUGIN_TITLE, self.new_job_action)
         self.iface.addPluginToMenu(PLUGIN_TITLE, self.exit_action)
 
         # ツールバーにアクションを追加
         self.toolbar = self.iface.addToolBar(PLUGIN_TITLE)
         self.toolbar.addAction(self.viewer_action)
         self.toolbar.addAction(self.action)
+        self.toolbar.addAction(self.new_job_action)
         self.toolbar.addAction(self.exit_action)
         self._gui_initialized = True
 
@@ -862,6 +905,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.process_button,
         ):
             widget.setEnabled(bool(enabled))
+        if getattr(self, "new_job_button", None) is not None:
+            self.new_job_button.setEnabled(True)
 
     def setDatabaseRestoreMode(self, enabled):
         """GPKG復元後は段取り替え系操作を禁止する。"""
@@ -913,6 +958,27 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         settings.setValue(self.dialogSettingsKey(name), directory)
         settings.setValue(self.dialogSettingsKey("last"), directory)
 
+    def clearJobInputs(self):
+        """次ジョブへ前回入力を持ち越さないよう、選択済みパスとジョブ条件を初期化する。"""
+        self.gpx_file = ""
+        self.video_file = ""
+        self.kp_file = ""
+        self.database_file = ""
+        self.loaded_gpkg_path = ""
+        self.output_dir = ""
+        self.output_dir_user_selected = False
+        self.last_process_config = None
+        self.viewer_browser_opened = False
+        self.viewer_projection_dirty = False
+        self.setViewerProjectionValue(VIEWER_PROJECTION_SPHERE, reason="", dirty=False)
+        self.setVideoFrontOffsetValue(0.0)
+        if getattr(self, "_gui_initialized", False):
+            self.setPathLabel(self.gpx_path, "", self.uiText("ui.path.no_gpx"))
+            self.setPathLabel(self.video_path, "", self.uiText("ui.path.no_video"))
+            self.setPathLabel(self.kp_path, "", self.uiText("ui.path.no_kp"))
+            self.setPathLabel(self.database_path, "", self.uiText("ui.path.no_database"))
+            self.setPathLabel(self.output_path, "", self.uiText("ui.path.default_output"))
+
     def selectGPX(self):
         """GPXファイルを選択し、入力状態を更新する。"""
         if self.database_restore_mode:
@@ -933,6 +999,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.rememberDialogPath("video", file_path)
             self.video_file = file_path
             self.setPathLabel(self.video_path, file_path, self.uiText("ui.path.no_video"))
+            self.applyViewerProjectionAutoSuggestion(file_path, force=not restore_mode)
             self.viewer_browser_opened = False
             if not restore_mode:
                 self.setCurrentFrame(None)
@@ -954,6 +1021,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     "zoom": 1.0,
                     "viewer_camera_height_m": self.viewerCameraHeightValue(),
                     "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+                    "viewer_projection": self.viewerProjectionValue(),
+                    "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
+                    "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
                     "viewer_front_offset_deg": self.videoFrontOffsetValue(),
                 })
 
@@ -1182,6 +1252,119 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 widget.blockSignals(previous_blocked)
         return True
 
+    def normalizeViewerProjectionValue(self, value):
+        """viewer projectionを現在対応する安全な値へ正規化する。"""
+        text = str(value or "").strip().lower()
+        aliases = {
+            "360": VIEWER_PROJECTION_SPHERE,
+            "equirectangular": VIEWER_PROJECTION_SPHERE,
+            "pano": VIEWER_PROJECTION_SPHERE,
+            "panorama": VIEWER_PROJECTION_SPHERE,
+            "normal": VIEWER_PROJECTION_FLAT,
+            "front": VIEWER_PROJECTION_FLAT,
+            "pinhole": VIEWER_PROJECTION_FLAT,
+        }
+        text = aliases.get(text, text)
+        return text if text in VIEWER_PROJECTION_VALUES else VIEWER_PROJECTION_SPHERE
+
+    def viewerProjectionValue(self):
+        """現在選択中のviewer projectionを返す。"""
+        combo = getattr(self, "viewer_projection_combo", None)
+        if combo is not None:
+            value = combo.currentData()
+            if value:
+                return self.normalizeViewerProjectionValue(value)
+        return self.normalizeViewerProjectionValue(getattr(self, "viewer_projection", VIEWER_PROJECTION_SPHERE))
+
+    def viewerFlatHfovValue(self):
+        """flat表示の水平FOVを返す。"""
+        return float(getattr(self, "viewer_flat_hfov_deg", DEFAULT_VIEWER_FLAT_HFOV_DEG))
+
+    def viewerFlatVfovValue(self):
+        """flat表示の垂直FOVを返す。"""
+        return float(getattr(self, "viewer_flat_vfov_deg", DEFAULT_VIEWER_FLAT_VFOV_DEG))
+
+    def setViewerProjectionValue(self, value, reason="", dirty=None):
+        """投影方式を内部状態とUIへ反映する。"""
+        projection = self.normalizeViewerProjectionValue(value)
+        self.viewer_projection = projection
+        if dirty is not None:
+            self.viewer_projection_dirty = bool(dirty)
+        if reason is not None:
+            self.viewer_projection_reason = str(reason or "")
+        combo = getattr(self, "viewer_projection_combo", None)
+        if combo is not None:
+            index = combo.findData(projection)
+            if index >= 0 and combo.currentIndex() != index:
+                previous_blocked = combo.blockSignals(True)
+                try:
+                    combo.setCurrentIndex(index)
+                finally:
+                    combo.blockSignals(previous_blocked)
+        label = getattr(self, "viewer_projection_reason_label", None)
+        if label is not None:
+            label.setText(self.viewer_projection_reason)
+        return True
+
+    def onViewerProjectionChanged(self, _index):
+        """ユーザが投影方式を明示変更した時の状態更新。"""
+        combo = getattr(self, "viewer_projection_combo", None)
+        if combo is None:
+            return
+        self.viewer_projection = self.normalizeViewerProjectionValue(combo.currentData())
+        self.viewer_projection_dirty = True
+        self.viewer_projection_reason = "manual override"
+        if getattr(self, "viewer_projection_reason_label", None) is not None:
+            self.viewer_projection_reason_label.setText(self.viewer_projection_reason)
+        self.writeViewerRuntimeConfig(show_error=False)
+        self.writeViewerCameraHeightSessionValue()
+
+    def videoDimensions(self, video_path):
+        """OpenCVで動画の幅/高さを読む。読めない場合はNoneを返す。"""
+        if not video_path:
+            return None
+        cap = None
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return None
+            width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0))
+            height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0))
+            if width <= 0 or height <= 0:
+                return None
+            return width, height
+        except Exception:
+            return None
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+
+    def inferViewerProjectionFromVideo(self, video_path):
+        """動画サイズから投影方式の初期候補を返す。最終判断はUI選択値を保存する。"""
+        dimensions = self.videoDimensions(video_path)
+        if not dimensions:
+            return VIEWER_PROJECTION_SPHERE, "auto: video size unavailable"
+        width, height = dimensions
+        ratio = float(width) / float(height)
+        projection = VIEWER_PROJECTION_SPHERE if abs(ratio - 2.0) <= 0.03 else VIEWER_PROJECTION_FLAT
+        label = "360" if projection == VIEWER_PROJECTION_SPHERE else "flat"
+        return projection, f"auto: {width}x{height}, aspect {ratio:.3f} -> {label}"
+
+    def applyViewerProjectionAutoSuggestion(self, video_path, force=False):
+        """動画サイズから投影方式を推定し、未手動変更ならUIへ反映する。"""
+        projection, reason = self.inferViewerProjectionFromVideo(video_path)
+        if force or not getattr(self, "viewer_projection_dirty", False):
+            self.setViewerProjectionValue(projection, reason=reason, dirty=False)
+        else:
+            label = getattr(self, "viewer_projection_reason_label", None)
+            if label is not None:
+                label.setText(f"{self.viewer_projection_reason}; suggestion: {reason}")
+        return projection, reason
+
     def normalizeVideoFrontOffset(self, value):
         """動画正面補正角を-180..180度へ正規化する。"""
         try:
@@ -1216,10 +1399,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return True
 
     def loadViewerSessionCameraHeight(self, force=False):
-        """既存viewer_session.jsonがあれば、ジョブ固有のカメラ高さを復元する。"""
+        """既存viewer_session.jsonがあれば、ジョブ固有のviewer条件を復元する。"""
         camera_dirty = getattr(self, "viewer_camera_height_dirty", False)
         hud_dirty = getattr(self, "viewer_hud_height_scale_dirty", False)
-        if camera_dirty and hud_dirty and not force:
+        projection_dirty = getattr(self, "viewer_projection_dirty", False)
+        if camera_dirty and hud_dirty and projection_dirty and not force:
             return False
         path = self.viewerSessionPath()
         if not os.path.isfile(path):
@@ -1241,6 +1425,21 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             restored_camera = self.setViewerCameraHeightValue(state.get("viewer_camera_height_m"))
         if "viewer_hud_height_scale" in state and (force or not hud_dirty):
             restored_hud = self.setViewerHudHeightScaleValue(state.get("viewer_hud_height_scale"))
+        restored_projection = False
+        if "viewer_projection" in state and (force or not projection_dirty):
+            restored_projection = self.setViewerProjectionValue(
+                state.get("viewer_projection"),
+                reason="session",
+                dirty=False,
+            )
+        if "viewer_flat_hfov_deg" in state:
+            value = _parse_float(state.get("viewer_flat_hfov_deg"))
+            if value is not None:
+                self.viewer_flat_hfov_deg = max(1.0, min(179.0, float(value)))
+        if "viewer_flat_vfov_deg" in state:
+            value = _parse_float(state.get("viewer_flat_vfov_deg"))
+            if value is not None:
+                self.viewer_flat_vfov_deg = max(1.0, min(179.0, float(value)))
         restored_front = False
         if "viewer_front_offset_deg" in state:
             restored_front = self.setVideoFrontOffsetValue(state.get("viewer_front_offset_deg"))
@@ -1248,10 +1447,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.viewer_camera_height_dirty = False
         if restored_hud:
             self.viewer_hud_height_scale_dirty = False
-        return restored_camera or restored_hud or restored_front
+        if restored_projection:
+            self.viewer_projection_dirty = False
+        return restored_camera or restored_hud or restored_projection or restored_front
 
     def writeViewerCameraHeightSessionValue(self):
-        """動画選択済みならカメラ高さとHUD補正だけでもviewer_session.jsonへ残す。"""
+        """動画選択済みならviewer条件だけでもviewer_session.jsonへ残す。"""
         if not self.video_file:
             return False
         path = self.viewerSessionPath()
@@ -1272,6 +1473,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         state["video"] = current_video
         state["viewer_camera_height_m"] = self.viewerCameraHeightValue()
         state["viewer_hud_height_scale"] = self.viewerHudHeightScaleValue()
+        state["viewer_projection"] = self.viewerProjectionValue()
+        state["viewer_flat_hfov_deg"] = self.viewerFlatHfovValue()
+        state["viewer_flat_vfov_deg"] = self.viewerFlatVfovValue()
         state["viewer_front_offset_deg"] = self.videoFrontOffsetValue()
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -1719,6 +1923,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "radar_offset_deg": int(self.radar_offset.currentData() or 0),
             "viewer_camera_height_m": float(self.viewerCameraHeightValue()),
             "viewer_hud_height_scale": float(self.viewerHudHeightScaleValue()),
+            "viewer_projection": self.viewerProjectionValue(),
+            "viewer_projection_reason": str(getattr(self, "viewer_projection_reason", "") or ""),
+            "viewer_flat_hfov_deg": float(self.viewerFlatHfovValue()),
+            "viewer_flat_vfov_deg": float(self.viewerFlatVfovValue()),
             "video_front_offset_deg": float(self.videoFrontOffsetValue()),
             "viewer_front_offset_deg": float(self.videoFrontOffsetValue()),
             "nav_step": int(self.nav_step.value()),
@@ -1811,6 +2019,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.setViewerCameraHeightValue(metadata.get("viewer_camera_height_m"))
         if "viewer_hud_height_scale" in metadata:
             self.setViewerHudHeightScaleValue(metadata.get("viewer_hud_height_scale"))
+        if "viewer_projection" in metadata:
+            self.setViewerProjectionValue(
+                metadata.get("viewer_projection"),
+                reason=self.metadataText(metadata, "viewer_projection_reason") or "metadata",
+                dirty=False,
+            )
+        if "viewer_flat_hfov_deg" in metadata:
+            value = _parse_float(metadata.get("viewer_flat_hfov_deg"))
+            if value is not None:
+                self.viewer_flat_hfov_deg = max(1.0, min(179.0, float(value)))
+        if "viewer_flat_vfov_deg" in metadata:
+            value = _parse_float(metadata.get("viewer_flat_vfov_deg"))
+            if value is not None:
+                self.viewer_flat_vfov_deg = max(1.0, min(179.0, float(value)))
         if "video_front_offset_deg" in metadata:
             self.setVideoFrontOffsetValue(metadata.get("video_front_offset_deg"))
         elif "viewer_front_offset_deg" in metadata:
@@ -1983,6 +2205,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.setPathLabel(self.gpx_path, restored_gpx, self.uiText("ui.path.no_gpx"))
         self.setPathLabel(self.kp_path, restored_kp, self.uiText("ui.path.no_kp"))
         self.applyJobMetadata(job_metadata)
+        if restored_video and "viewer_projection" not in job_metadata:
+            self.applyViewerProjectionAutoSuggestion(restored_video, force=True)
 
         self.last_rows = []
         self.saved_viewer_target_keys = set()
@@ -2008,6 +2232,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "zoom": 1.0,
                 "viewer_camera_height_m": self.viewerCameraHeightValue(),
                 "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+                "viewer_projection": self.viewerProjectionValue(),
+                "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
+                "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
                 "viewer_front_offset_deg": self.videoFrontOffsetValue(),
             }
             initial_targets = []
@@ -3910,6 +4137,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def resetPanelState(self):
         """セッション終了後にパネル上の一時状態を初期化する。"""
+        self.clearJobInputs()
         self.last_rows = []
         self.frame_position_by_frame = {}
         self.frame_layer_id = None
@@ -3917,8 +4145,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.candidate_layer_id = None
         self.save_on_exit_layer_ids = set()
         self.loaded_layer_feature_counts = {}
-        self.database_file = ""
-        self.loaded_gpkg_path = ""
         self.setDatabaseRestoreMode(False)
         self.saved_viewer_target_keys = set()
         self.setCurrentFrame(None)
@@ -3968,6 +4194,44 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """Exitメニューから現在セッションを終了する。"""
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=True)
 
+    def newJobSession(self):
+        """プラグインをリロードせず、前回ジョブ状態を保存・除去して新規入力へ戻す。"""
+        self.cleanupSession(close_panel=False, remove_layers=True, show_message=True)
+
+    def existingProcessOutputPaths(self, config):
+        """Processで上書きされ得る既存成果物パスを返す。"""
+        output_dir = config.output_dir
+        base_name = _base_output_name(config.video_file, config.gpx_file)
+        candidates = [
+            os.path.join(output_dir, "tmp.gpkg"),
+            os.path.join(output_dir, base_name + FRAMES_CSV_SUFFIX),
+            os.path.join(output_dir, base_name + NAVIGATION_JSON_SUFFIX),
+            os.path.join(output_dir, base_name + MATCHED_FRAMES_CSV_SUFFIX),
+        ]
+        return [path for path in candidates if path and os.path.exists(path)]
+
+    def confirmProcessOutputOverwrite(self, config):
+        """既存成果物がある場合、Process開始前に上書き確認する。"""
+        existing = self.existingProcessOutputPaths(config)
+        if not existing:
+            return True
+        shown = "\n".join(os.path.basename(path) for path in existing[:8])
+        if len(existing) > 8:
+            shown += f"\n... and {len(existing) - 8} more"
+        message = (
+            "The selected output folder already contains files that may be overwritten:\n\n"
+            f"{shown}\n\n"
+            "Continue processing with this output folder?"
+        )
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Confirm Output Overwrite",
+            message,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        return answer == QtWidgets.QMessageBox.Yes
+
     def activateClickMode(self):
         """参照用Video GPX Pointsレイヤをクリック待ち受け状態にする。"""
         layer = self.activeFrameLayer()
@@ -4005,6 +4269,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         config = self.collectProcessConfig()
         if config is None:
             print("Error: Process input validation failed.")
+            return
+        if not self.confirmProcessOutputOverwrite(config):
             return
 
         self.session_closing = False
@@ -4288,6 +4554,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.iface.removePluginMenu(PLUGIN_TITLE, self.action)
         if self.viewer_action is not None:
             self.iface.removePluginMenu(PLUGIN_TITLE, self.viewer_action)
+        if self.new_job_action is not None:
+            self.iface.removePluginMenu(PLUGIN_TITLE, self.new_job_action)
         if self.exit_action is not None:
             self.iface.removePluginMenu(PLUGIN_TITLE, self.exit_action)
 
@@ -4296,6 +4564,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.toolbar.parent().removeToolBar(self.toolbar)
         self.action = None
         self.viewer_action = None
+        self.new_job_action = None
         self.exit_action = None
         self.toolbar = None
 

@@ -11,10 +11,12 @@ The current implementation focuses on:
 - Exporting frame-position CSV files and optional KP-matched navigation files.
 - Launching a local 360 viewer from QGIS without Flask.
 - Showing the selected frame in a browser-based krpano viewer when a map point is clicked.
+- Suggesting `360 / Equirectangular` or `Flat / Normal FOV` from MP4 aspect ratio, while allowing manual projection override per job.
 - Preserving browser viewer yaw/pitch/zoom when switching frames.
 - Drawing temporary QGIS and 360-viewer distance guides, including 1 m ground-grid helpers.
 - Saving and restoring a GPKG work session with camera points, 360 click targets, job metadata, calibration parameters, and picked-point view state.
 - Opening the 360 viewer in a dedicated Edge/Chrome app window when available.
+- Clearing previous GPX/MP4/KP/Output selections with `New Job` and warning before Process overwrites existing output artifacts.
 
 See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version. See [CHANGELOG.md](CHANGELOG.md) for version history.
 

@@ -9,5 +9,8 @@
   "viewer_cache_dir": "W:\\workshop\\nishitetsu\\viewer_cache",
   "viewer_camera_height_m": 1.5,
   "viewer_hud_height_scale": 1.0,
-  "viewer_debug_log_enabled": false
+  "viewer_debug_log_enabled": true,
+  "viewer_projection": "flat",
+  "viewer_flat_hfov_deg": 70.0,
+  "viewer_flat_vfov_deg": 43.0
 }

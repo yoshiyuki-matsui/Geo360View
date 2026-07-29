@@ -147,6 +147,7 @@ GPXVideoProcessor/360viewer/static/vendor/krpano/krpano.js
 
 - `360Viewer起動`
 - `操作パネル`
+- `New Job`
 - `終了`
 
 ### 360Viewer起動
@@ -159,6 +160,10 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 
 同期処理用のパネルを開きます。あわせて360Viewerが起動済みかどうかをQGISのmessageBarへ表示します。
 
+パネル右上とプラグインメニューの `New Job` は、プラグインをリロードせずに次のデータセットへ切り替えるための安全な入口です。現在の生成レイヤを通常の終了処理と同じく `tmp.gpkg` へ退避し、QGIS上の生成レイヤを削除したうえで、GPX/MP4/KP CSV/Output/GPKGの選択を初期化します。前回ジョブのKP CSVやOutputを次ジョブへ持ち越さないため、連続して異なるデータセットを処理する場合は `New Job` から始めます。
+
+Process開始時には、選択中Outputに既存の `tmp.gpkg`、frames CSV、navigation JSON、matched CSVがある場合、上書き確認を表示します。これは前回Output指定が残ったまま別データセットを処理する事故を防ぐための最終ガードです。
+
 ### 終了
 
 現在の作業セッションを終了します。
@@ -170,7 +175,7 @@ QGIS環境では `sys.executable` が `qgis.exe` や `qgis-bin.exe` を指す場
 - 終了時保存対象のメモリレイヤを `tmp.gpkg` に保存
 - 生成済みレイヤをQGISから削除
 - パネルを閉じる
-- プレビューや進捗などの状態をリセット
+- プレビュー、進捗、GPX/MP4/KP CSV/Output/GPKG選択などの状態をリセット
 
 GPKGから読み込んだ候補/クラスタレイヤは、閲覧だけなら終了時に再保存しません。
 QGIS上でfeature追加、削除、属性変更、ジオメトリ変更が入ったレイヤだけ保存対象に昇格します。
@@ -639,6 +644,24 @@ POST /api/session/navigate
 ```
 
 ブラウザ側は初回表示後、QGISクリックのたびにページ全体を再読み込みしません。セッション状態をポーリングし、krpanoの `loadpano()` でシーンだけ差し替えます。
+
+### 投影方式
+
+GPXVideoProcessorは、MP4選択時にOpenCVで動画の幅/高さを読み取り、縦横比からビューア投影方式の初期候補を提示します。
+
+- `width / height` が2.0付近: `360 / Equirectangular`、viewer内部では `viewer_projection = sphere`
+- それ以外: `Flat / Normal FOV`、viewer内部では `viewer_projection = flat`
+
+この判定は自動決定ではなく、Loadタブの `Projection` でユーザが確認・上書きできる初期提案です。通常画角でもcrop済み動画やズーム動画があり、360でもequirectangular以外の投影方式があり得るため、動画サイズだけを最終判断には使いません。
+
+選択された投影方式は、以下へ伝搬します。
+
+- `viewer_session.json`
+- 360Viewer runtime config
+- `/viewer` URLと `/api/session/navigate` payload
+- `tmp.gpkg` 内の `gpx_video_processor_job_metadata`
+
+GPKG再読込時はmetadataの `viewer_projection` を優先します。古いGPKGなどmetadataに投影方式が無い場合だけ、復元したMP4の縦横比から再推定します。`flat` ではkrpanoへ `<flat>` 画像として渡し、固定視点・16:9ステージで表示します。`sphere` では従来通りequirectangular画像を `<sphere>` として渡します。
 
 ## パフォーマンス調整
 

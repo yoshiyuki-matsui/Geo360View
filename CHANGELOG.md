@@ -2,6 +2,27 @@
 
 このファイルは、GPXVideoProcessor の主要な仕様変更、実装変更、運用上の意味を記録します。
 
+## 0.2.2 - 2026-07-29
+
+### Added
+
+- MP4選択時に動画の幅/高さを読み取り、縦横比から `360 / Equirectangular` または `Flat / Normal FOV` の初期候補を提示するようにした。
+- Loadタブに `Projection` 選択を追加し、自動推定結果をユーザが手動上書きできるようにした。
+- Loadタブに `New Job` を追加し、プラグインをリロードせずに前回のGPX/MP4/KP/Output/GPKG選択をクリアして新規ジョブを開始できるようにした。
+- 選択した `viewer_projection`、flat表示用FOV、推定理由を `viewer_session.json`、360Viewer runtime config、`tmp.gpkg` の `gpx_video_processor_job_metadata` に保存・復元するようにした。
+- 古いGPKGなど投影メタデータが無い場合は、復元したMP4の縦横比から再推定するようにした。
+
+### Changed
+
+- 通常の撮影点ナビゲーションでも、選択中の `viewer_projection` を360Viewer URL/API payloadへ渡すようにした。これにより、4K通常画角やcrop動画を初期位置合わせ段階からflat表示できる。
+- `target_source = yolo_pinhole` の検出候補を表示する場合は、従来通りflat表示を強制しつつ、flat FOVもpayloadへ渡すようにした。
+- `終了` 後のパネルリセットで、前回ジョブのKP CSVやOutput指定を次ジョブへ持ち越さないようにした。
+- Process開始時、Output内に既存の `tmp.gpkg`、frames CSV、navigation JSON、matched CSVがある場合は上書き確認を出すようにした。
+
+### Notes
+
+- 縦横比判定は最終決定ではなく初期提案です。`width / height` が2.0付近なら360/equirectangular、それ以外ならflatを提案しますが、crop動画、特殊な360投影、再エンコード済み動画ではユーザ確認と手動上書きを前提にします。
+
 ## 0.2.1 - 2026-07-01
 
 ### Added
@@ -63,7 +84,7 @@
 - 距離目安は地表面上の点を対象にする。標識や電柱は根元、人物は足元を基準にする。
 - カメラ高さ、pitch、レンズガード、スティッチ、FlowState、実写画角の影響は今後の実測確認が必要。
 - `tmp.gpkg` は作業状態の復元用中間DBであり、納品DBとして扱う場合は別途成果品チェックが必要。
-- 通常画角カメラ画像は現時点の対象外。必要な場合は360ビューアとは別モードまたは別ビューアとして設計する。
+- 通常画角カメラ画像はflat表示として扱えるが、距離精度はカメラ高、実効FOV、crop条件、軌跡方位に依存する。投影方式は自動推定だけに任せず、ジョブごとに確認する。
 
 ## 0.1 - 2026-06-07
 

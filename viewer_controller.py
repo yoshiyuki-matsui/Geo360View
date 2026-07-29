@@ -107,6 +107,9 @@ class ViewerControllerMixin:
             "viewer_camera_height_m": viewer_config.camera_height_m,
             "viewer_hud_height_scale": viewer_config.hud_height_scale,
             "viewer_debug_log_enabled": self.viewerDebugLogEnabled(),
+            "viewer_projection": self.viewerProjectionValue(),
+            "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
+            "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
         }
 
         try:
@@ -150,6 +153,9 @@ class ViewerControllerMixin:
             "frame_index": int(frame_num),
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
             "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+            "viewer_projection": self.viewerProjectionValue(),
+            "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
+            "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
         })
         return f"{base_url}/viewer?{query}"
 
@@ -436,6 +442,9 @@ class ViewerControllerMixin:
             "frame_index": int(frame_num),
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
             "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
+            "viewer_projection": self.viewerProjectionValue(),
+            "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
+            "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
         }
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:
@@ -459,6 +468,8 @@ class ViewerControllerMixin:
             payload["targets"] = targets_payload
             if any(str(target.get("target_source") or "").lower() == "yolo_pinhole" for target in targets_payload):
                 payload["viewer_projection"] = "flat"
+                payload["viewer_flat_hfov_deg"] = self.viewerFlatHfovValue()
+                payload["viewer_flat_vfov_deg"] = self.viewerFlatVfovValue()
                 payload["yaw_to_camera_heading"] = 0.0
                 payload["pitch"] = 0.0
             heading_getter = getattr(self, "radarHeadingAndRadius", None)

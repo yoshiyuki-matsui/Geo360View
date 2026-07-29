@@ -144,6 +144,7 @@ The plugin menu and toolbar currently expose:
 
 - `Open 360Viewer`
 - `Control Panel`
+- `New Job`
 - `Exit`
 
 ### Open 360Viewer
@@ -159,6 +160,10 @@ Important implementation detail:
 
 Opens the synchronization/processing panel and reports whether the viewer server is running.
 
+The panel top-right and plugin-menu `New Job` command is the safe entry point for switching to another dataset without reloading the plugin. It performs the same save/remove sequence as session exit for generated layers, then clears the GPX, MP4, KP CSV, Output, and GPKG selections. Use it before processing a different dataset so the previous KP master or output folder is not carried into the next job.
+
+Before Process starts, the plugin checks the selected Output folder for existing `tmp.gpkg`, frames CSV, navigation JSON, and matched CSV files. If any are found, it asks for overwrite confirmation. This is a final guard against accidentally reusing a previous output folder.
+
 ### Exit
 
 Ends the current plugin session:
@@ -167,7 +172,7 @@ Ends the current plugin session:
 - Stops the viewer process started by this plugin.
 - Saves generated QGIS memory layers to `tmp.gpkg`.
 - Removes generated layers from QGIS.
-- Closes the panel and resets plugin state.
+- Closes the panel and resets plugin state, including GPX/MP4/KP CSV/Output/GPKG selections.
 
 Only layers whose IDs were created by this plugin are removed. Other layers with the same name are not targeted.
 
@@ -539,6 +544,24 @@ The 1 m auxiliary grid is intended to make approximate ground-distance judgement
 When the operator clicks the image in the WEB viewer, the viewer stores the clicked point's absolute 360 yaw/pitch, relative yaw from the clicked-time view center, and clicked-time zoom in `viewer_session.json` as `target`. A double-click also appends the point to `targets` as an ordered memo point list. The WEB marker is reprojected from the stored absolute yaw/pitch into the current view, so it follows the same panorama location when the operator changes yaw, pitch, or zoom. QGIS projects the point as a temporary RubberBand by taking the calibrated forward distance for the clicked-time FOV, dividing it by `cos(yaw_delta)`, and projecting from the camera point toward `heading + Offset + target_yaw`. When `targets` exists, QGIS draws all points; otherwise it falls back to the legacy single `target`. Projected points are appended to the `360 Click Targets` memo layer with latitude/longitude attributes. This is an experimental map-plane projection aid and does not write to a final user feature layer.
 
 When switching to another frame image, the WEB viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` values into the new frame.
+
+### Viewer Projection
+
+When an MP4 is selected, GPXVideoProcessor reads the video width and height through OpenCV and proposes an initial viewer projection from the aspect ratio.
+
+- `width / height` near 2.0: `360 / Equirectangular`, stored internally as `viewer_projection = sphere`
+- Any other ratio: `Flat / Normal FOV`, stored internally as `viewer_projection = flat`
+
+This is only an initial suggestion. The Load tab exposes a `Projection` control so the operator can confirm or override it. This is intentional: flat videos can be cropped or zoomed, and 360 videos may use projections other than equirectangular, so frame size alone is not treated as authoritative.
+
+The confirmed projection is propagated to:
+
+- `viewer_session.json`
+- the 360Viewer runtime config
+- `/viewer` URLs and `/api/session/navigate` payloads
+- `gpx_video_processor_job_metadata` inside `tmp.gpkg`
+
+When a GPKG is reopened, metadata `viewer_projection` takes priority. For older GPKGs without projection metadata, the plugin falls back to the restored MP4 aspect-ratio suggestion. In `flat` mode, krpano receives the frame as a `<flat>` image with a fixed view and 16:9 stage. In `sphere` mode, the existing equirectangular `<sphere>` path is used.
 
 ### `images/0000/frame_0000000.jpg`
 
