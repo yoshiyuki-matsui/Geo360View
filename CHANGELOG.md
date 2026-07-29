@@ -18,6 +18,7 @@
 - `target_source = yolo_pinhole` の検出候補を表示する場合は、従来通りflat表示を強制しつつ、flat FOVもpayloadへ渡すようにした。
 - `終了` 後のパネルリセットで、前回ジョブのKP CSVやOutput指定を次ジョブへ持ち越さないようにした。
 - Process開始時、Output内に既存の `tmp.gpkg`、frames CSV、navigation JSON、matched CSVがある場合は上書き確認を出すようにした。
+- `all_poi.gpkg` などの候補/クラスタレイヤのスタイル同期を、`All_Classes` レイヤ名依存から `semantic_class` フィールド基準へ変更した。複数クラスレイヤは `semantic_class` で分類表示し、カテゴリ順はクラス名文字列昇順にする。
 
 ### Notes
 

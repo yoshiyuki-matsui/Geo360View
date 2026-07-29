@@ -19,7 +19,7 @@ from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
     QgsProject, QgsField, QgsVectorFileWriter, QgsCoordinateTransform,
     QgsFeatureRequest, QgsExpression, QgsCategorizedSymbolRenderer,
-    QgsSingleSymbolRenderer, QgsSymbol,
+    QgsRendererCategory, QgsSingleSymbolRenderer, QgsSymbol,
 )
 try:
     from qgis.core import QgsEditorWidgetSetup
@@ -2823,6 +2823,23 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """レイヤ内のsemantic_class候補を返す。"""
         return self.layerFieldDistinctValues(layer, "semantic_class", limit=limit)
 
+    def sortedLayerSemanticClasses(self, layer):
+        """レイヤ内のsemantic_classを文字列昇順で返す。"""
+        values = self.layerSemanticClassValues(layer, limit=0)
+        return sorted({str(value or "").strip() for value in values if str(value or "").strip()})
+
+    def layerSingleSemanticClass(self, layer):
+        """単一クラスレイヤならsemantic_classを返す。"""
+        if layer is not None:
+            try:
+                hint = str(layer.customProperty("tenkaku.semantic_class", "") or "").strip()
+            except Exception:
+                hint = ""
+            if hint:
+                return hint
+        values = self.sortedLayerSemanticClasses(layer)
+        return values[0] if len(values) == 1 else ""
+
     def inferLayerSemanticClass(self, layer):
         """単一クラスのレイヤならsemantic_classを推定して返す。"""
         if layer is not None:
@@ -2862,13 +2879,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return layer
         return None
 
-    def classSymbolMapFromAllClassesLayer(self, all_classes_layer):
-        """All_Classesのcategorical rendererからsemantic_class->symbolを作る。"""
+    def symbolMapFromCategorizedRenderer(self, layer):
+        """categorical rendererからsemantic_class->symbolを作る。"""
         symbol_map = {}
-        if all_classes_layer is None:
+        if layer is None:
             return symbol_map
         try:
-            renderer = all_classes_layer.renderer()
+            renderer = layer.renderer()
         except Exception:
             renderer = None
         if not isinstance(renderer, QgsCategorizedSymbolRenderer):
@@ -2906,34 +2923,76 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     symbol_map[key_text] = cloned.clone() if hasattr(cloned, "clone") else cloned
         return symbol_map
 
-    def applySingleSymbolFromMap(self, layer, symbol_map):
-        """単一クラスレイヤへ対応するシンボルを単色化して当てる。"""
+    def classSymbolMapFromAllClassesLayer(self, all_classes_layer):
+        """All_Classesのcategorical rendererからsemantic_class->symbolを作る。"""
+        return self.symbolMapFromCategorizedRenderer(all_classes_layer)
+
+    def candidateStyleSourceLayer(self, layers):
+        """default_style.qmlを読み込む代表候補レイヤを返す。"""
+        for layer in layers or []:
+            if layer is None:
+                continue
+            if self.sortedLayerSemanticClasses(layer):
+                return layer
+        return self.firstLayer(layers)
+
+    def candidateSymbolMapFromDefaultStyle(self, layers):
+        """default_style.qmlからsemantic_class->symbolを取り出す。"""
+        source_layer = self.candidateStyleSourceLayer(layers)
+        if source_layer is None:
+            return {}
+        style_path = self.defaultCandidateStylePath()
+        if style_path:
+            self.loadNamedStyleIntoLayer(source_layer, style_path)
+        return self.symbolMapFromCategorizedRenderer(source_layer)
+
+    def symbolForSemanticClass(self, symbol_map, semantic_class):
+        """semantic_classに対応するシンボルを返す。"""
+        text = str(semantic_class or "").strip()
+        if not text:
+            return None
+        symbol = symbol_map.get(text)
+        if symbol is None:
+            symbol = symbol_map.get(text.lower())
+        if symbol is None:
+            symbol = symbol_map.get(self.semanticClassKey(text))
+        if symbol is None and ":" in text:
+            tail = text.split(":", 1)[-1].strip()
+            symbol = symbol_map.get(tail) or symbol_map.get(tail.lower()) or symbol_map.get(self.semanticClassKey(tail))
+        return symbol
+
+    def fallbackSymbolForSemanticClass(self, layer, semantic_class, index=0):
+        """default_styleにないsemantic_class用のフォールバックシンボルを返す。"""
+        try:
+            symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        except Exception:
+            symbol = None
+        if symbol is None:
+            try:
+                renderer = layer.renderer()
+                base_symbol = renderer.symbol() if hasattr(renderer, "symbol") else None
+                symbol = base_symbol.clone() if hasattr(base_symbol, "clone") else base_symbol
+            except Exception:
+                symbol = None
+        if symbol is not None:
+            try:
+                key = str(semantic_class or "")
+                hue = (sum((pos + 1) * ord(char) for pos, char in enumerate(key)) + int(index) * 47) % 360
+                symbol.setColor(QtGui.QColor.fromHsv(hue, 180, 220))
+            except Exception:
+                pass
+        return symbol
+
+    def applySingleSymbolFromMap(self, layer, symbol_map, semantic_class=""):
+        """単一クラスレイヤへsemantic_class対応シンボルを当てる。"""
         if layer is None:
             return False
-        semantic_class = self.inferLayerSemanticClass(layer)
+        semantic_class = str(semantic_class or "").strip() or self.layerSingleSemanticClass(layer)
         if not semantic_class:
             return False
-        symbol = symbol_map.get(semantic_class)
+        symbol = self.symbolForSemanticClass(symbol_map, semantic_class)
         if symbol is None:
-            symbol = symbol_map.get(semantic_class.lower())
-        if symbol is None:
-            symbol = symbol_map.get(self.semanticClassKey(semantic_class))
-        if symbol is None:
-            lower_class = semantic_class.lower()
-            normalized_class = self.semanticClassKey(semantic_class)
-            for key, candidate in symbol_map.items():
-                key_text = str(key or "").strip()
-                if not key_text:
-                    continue
-                key_lower = key_text.lower()
-                if (
-                    key_lower == lower_class
-                    or key_lower.endswith(lower_class)
-                    or key_lower == normalized_class
-                    or key_lower.endswith(normalized_class)
-                ):
-                    symbol = candidate
-                    break
+            symbol = self.fallbackSymbolForSemanticClass(layer, semantic_class)
         if symbol is None:
             return False
         try:
@@ -2943,8 +3002,42 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except Exception:
             return False
 
+    def applyCategorizedSemanticClassStyle(self, layer, symbol_map):
+        """複数クラスレイヤをsemantic_classで分類表示する。"""
+        if layer is None:
+            return False
+        class_values = self.sortedLayerSemanticClasses(layer)
+        if not class_values:
+            return False
+        if len(class_values) == 1:
+            return self.applySingleSymbolFromMap(layer, symbol_map, class_values[0])
+
+        categories = []
+        for index, semantic_class in enumerate(class_values):
+            symbol = self.symbolForSemanticClass(symbol_map, semantic_class)
+            if symbol is None:
+                symbol = self.fallbackSymbolForSemanticClass(layer, semantic_class, index)
+            if symbol is None:
+                continue
+            try:
+                categories.append(QgsRendererCategory(
+                    semantic_class,
+                    symbol.clone() if hasattr(symbol, "clone") else symbol,
+                    semantic_class,
+                ))
+            except Exception:
+                continue
+        if not categories:
+            return False
+        try:
+            layer.setRenderer(QgsCategorizedSymbolRenderer("semantic_class", categories))
+            layer.triggerRepaint()
+            return True
+        except Exception:
+            return False
+
     def syncCandidateLayerStyles(self, candidate_layers=None):
-        """All_Classesを正本にしてclass別レイヤへスタイルを同期する。"""
+        """semantic_classを正本にして候補レイヤへスタイルを同期する。"""
         layers = list(candidate_layers or [])
         if not layers:
             project = QgsProject.instance()
@@ -2952,30 +3045,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 layer for layer in reversed(list(project.mapLayers().values()))
                 if self.isCandidateLayer(layer)
             ]
-
-        all_classes_layer = self.allClassesCandidateLayer(layers)
-        if all_classes_layer is None:
+        if not layers:
             return False
 
-        style_path = self.defaultCandidateStylePath()
-        if style_path:
-            self.loadNamedStyleIntoLayer(all_classes_layer, style_path)
-
-        symbol_map = self.classSymbolMapFromAllClassesLayer(all_classes_layer)
-        if not symbol_map:
-            return False
-
+        symbol_map = self.candidateSymbolMapFromDefaultStyle(layers)
         synced = False
         for layer in layers:
-            if layer is None or layer.id() == all_classes_layer.id():
+            if layer is None:
                 continue
-            if self.isAllClassesCandidateLayer(layer):
-                continue
-            synced = self.applySingleSymbolFromMap(layer, symbol_map) or synced
-        try:
-            all_classes_layer.triggerRepaint()
-        except Exception:
-            pass
+            synced = self.applyCategorizedSemanticClassStyle(layer, symbol_map) or synced
         return synced
 
     def layerTreeViewObject(self):

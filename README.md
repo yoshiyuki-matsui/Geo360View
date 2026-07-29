@@ -17,6 +17,7 @@ The current implementation focuses on:
 - Saving and restoring a GPKG work session with camera points, 360 click targets, job metadata, calibration parameters, and picked-point view state.
 - Opening the 360 viewer in a dedicated Edge/Chrome app window when available.
 - Clearing previous GPX/MP4/KP/Output selections with `New Job` and warning before Process overwrites existing output artifacts.
+- Styling POI candidate / cluster GPKG layers from `semantic_class`, using `styles/default_style.qml` as the default class-symbol source.
 
 See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version. See [CHANGELOG.md](CHANGELOG.md) for version history.
 

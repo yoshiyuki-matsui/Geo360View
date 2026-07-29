@@ -241,6 +241,11 @@ If `KP matched CSV` is missing or empty, the plugin shows a warning and automati
 `Navigation mode` decides what the plugin moves through, while `Scope` decides which layer set is used when the mode is `Detection check`.
 In practice, use `Active layer` when you want to inspect one class at a time, `Visible layers` for the currently visible set on the map, and `Selected features` as the escape hatch for a narrowed query or a manual selection.
 
+Candidate and cluster layer styling is keyed by the `semantic_class` field, not by the QGIS layer name.
+`styles/default_style.qml` is loaded as the default class-symbol source. Layers containing multiple classes are rendered with a categorized renderer on `semantic_class`; layers containing one class are rendered with the matching single symbol.
+Category order is the lexicographic order of `semantic_class`. Zero-padded prefixes such as `01_...` can therefore keep YOLO IDs, `classes.txt`, labelImg, and the QGIS legend in the same intended order.
+Layer names are grouping/filtering units for classes that the operator wants to view together; they are not style keys.
+
 `Video GPX Points` is treated as an internal reference layer for 360 image viewing. The plugin keeps the generated layer id and uses it for navigation and click-mode setup, so changing the user's feature-registration target layer does not change the viewer reference layer. The active layer is only used as a fallback before `Process`, when a pre-existing frame layer is being used manually.
 
 The default normal step is `1`; the default fast step is `30`, which corresponds to roughly one second for 30 fps video.
