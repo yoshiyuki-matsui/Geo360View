@@ -1665,18 +1665,27 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layers = self.gpkgCandidateLayers(gpkg_path)
         return layers[0] if layers else None
 
+    def normalizeCandidateLayerDisplayPrefix(self, display_name):
+        """古い候補レイヤ表示prefixを現在の短い表記へ寄せる。"""
+        text = str(display_name or "").strip()
+        old_prefix = "360 POI Clusters:"
+        if text.startswith(old_prefix):
+            suffix = text[len(old_prefix):].strip()
+            return f"POI: {suffix}" if suffix else "POI"
+        return text
+
     def gpkgCandidateLayerDisplayName(self, layer_name, identifier="", description=""):
         """GPKG候補レイヤ名からQGIS表示名を作る。"""
         text = str(identifier or "").strip()
         if text:
-            return text
+            return self.normalizeCandidateLayerDisplayPrefix(text)
         text = str(layer_name or "").strip()
         if not text or text == GPKG_CANDIDATE_LAYER_NAME:
             return "360 Detection Candidates"
         if text.lower() == "all_classes":
-            return "360 POI Clusters: All_Classes"
+            return "POI: All_Classes"
         if text.startswith("poi_clusters"):
-            return f"360 POI Clusters: {text}"
+            return f"POI: {text}"
         if text.startswith("poi_candidates"):
             return f"360 Detection Candidates: {text}"
         return f"360 Detection Candidates: {text}"
@@ -1798,6 +1807,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             try:
                 layer.setCustomProperty("tenkaku.semantic_class", inferred_class)
                 layer.setCustomProperty("tenkaku.semantic_class_key", self.semanticClassKey(inferred_class))
+                layer.setName(self.candidateLayerDisplayNameWithAlias(layer.name(), inferred_class))
             except Exception:
                 pass
         return layer
@@ -2764,6 +2774,154 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         path = os.path.join(self.pluginRootDir(), "styles", "default_style.qml")
         return path if os.path.isfile(path) else ""
 
+    def candidateModelNames(self, layers):
+        """候補レイヤ群からmodel_nameを収集する。"""
+        names = set()
+        for layer in layers or []:
+            for value in self.layerFieldDistinctValues(layer, "model_name", limit=2):
+                text = str(value or "").strip()
+                if text:
+                    names.add(text)
+                if len(names) >= 2:
+                    return names
+        return names
+
+    def candidateModelStylePaths(self, model_name):
+        """model_nameから探索するQML候補パスを返す。"""
+        text = str(model_name or "").strip()
+        if not text:
+            return []
+        styles_dir = os.path.join(self.pluginRootDir(), "styles")
+        base = os.path.splitext(os.path.basename(text))[0]
+        stems = []
+        for stem in (base, base.lower(), self.semanticClassKey(base), _safe_gpkg_layer_name(base)):
+            stem_text = str(stem or "").strip()
+            if stem_text and stem_text not in stems:
+                stems.append(stem_text)
+        return [os.path.join(styles_dir, f"{stem}.qml") for stem in stems]
+
+    def candidateStylePathForLayers(self, layers):
+        """候補レイヤ群に対応するQMLスタイルを返す。"""
+        model_names = self.candidateModelNames(layers)
+        if len(model_names) == 1:
+            model_name = next(iter(model_names))
+            for path in self.candidateModelStylePaths(model_name):
+                if os.path.isfile(path):
+                    return path
+        return self.defaultCandidateStylePath()
+
+    def classAliasMapFromCategorizedRenderer(self, layer):
+        """categorical rendererからsemantic_class->表示ラベルを作る。"""
+        aliases = {}
+        if layer is None:
+            return aliases
+        try:
+            renderer = layer.renderer()
+        except Exception:
+            renderer = None
+        if not isinstance(renderer, QgsCategorizedSymbolRenderer):
+            return aliases
+        try:
+            categories = list(renderer.categories() or [])
+        except Exception:
+            categories = []
+        for category in categories:
+            try:
+                value = category.value()
+            except Exception:
+                value = None
+            class_name = str(value or "").strip()
+            if not class_name or class_name.lower() == "null":
+                continue
+            try:
+                label = str(category.label() or "").strip()
+            except Exception:
+                label = ""
+            if not label or label == class_name:
+                continue
+            for key in {
+                class_name,
+                class_name.lower(),
+                self.semanticClassKey(class_name),
+                self.semanticClassKey(class_name.split(":", 1)[-1] if ":" in class_name else class_name),
+            }:
+                key_text = str(key or "").strip()
+                if key_text:
+                    aliases[key_text] = label
+        return aliases
+
+    def classLabelToValueMapFromCategorizedRenderer(self, layer):
+        """categorical rendererから表示ラベル->semantic_classを作る。"""
+        label_to_value = {}
+        if layer is None:
+            return label_to_value
+        try:
+            renderer = layer.renderer()
+        except Exception:
+            renderer = None
+        if not isinstance(renderer, QgsCategorizedSymbolRenderer):
+            return label_to_value
+        try:
+            categories = list(renderer.categories() or [])
+        except Exception:
+            categories = []
+        for category in categories:
+            try:
+                value = str(category.value() or "").strip()
+            except Exception:
+                value = ""
+            try:
+                label = str(category.label() or "").strip()
+            except Exception:
+                label = ""
+            if value and label:
+                label_to_value[label] = value
+        return label_to_value
+
+    def semanticClassDisplayName(self, semantic_class):
+        """semantic_classのQGIS表示名を返す。"""
+        text = str(semantic_class or "").strip()
+        if not text:
+            return ""
+        aliases = dict(getattr(self, "_candidate_style_aliases", {}) or {})
+        alias = aliases.get(text)
+        if alias is None:
+            alias = aliases.get(text.lower())
+        if alias is None:
+            alias = aliases.get(self.semanticClassKey(text))
+        if alias is None and ":" in text:
+            tail = text.split(":", 1)[-1].strip()
+            alias = aliases.get(tail) or aliases.get(tail.lower()) or aliases.get(self.semanticClassKey(tail))
+        return str(alias or text).strip()
+
+    def semanticClassFromDisplayName(self, label):
+        """凡例表示名からsemantic_classへ戻す。"""
+        text = str(label or "").strip()
+        if not text:
+            return ""
+        label_to_value = dict(getattr(self, "_candidate_style_label_to_value", {}) or {})
+        semantic_class = label_to_value.get(text)
+        if semantic_class:
+            return semantic_class
+        aliases = dict(getattr(self, "_candidate_style_aliases", {}) or {})
+        if text in aliases:
+            return text
+        return text
+
+    def candidateLayerDisplayNameWithAlias(self, display_name, semantic_class):
+        """単一クラスレイヤの表示名にエイリアスを反映する。"""
+        base = str(display_name or "").strip()
+        class_name = str(semantic_class or "").strip()
+        alias = self.semanticClassDisplayName(class_name)
+        if not base or not class_name or not alias or alias == class_name:
+            return self.normalizeCandidateLayerDisplayPrefix(base)
+        normalized_base = self.normalizeCandidateLayerDisplayPrefix(base)
+        if normalized_base.startswith("POI:"):
+            return f"POI: {alias}"
+        if normalized_base.startswith("360 Detection Candidates:"):
+            return f"360 Detection Candidates: {alias}"
+        return alias
+
     def loadNamedStyleIntoLayer(self, layer, style_path):
         """QMLスタイルをレイヤへ読み込む。"""
         if layer is None:
@@ -2937,13 +3095,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return self.firstLayer(layers)
 
     def candidateSymbolMapFromDefaultStyle(self, layers):
-        """default_style.qmlからsemantic_class->symbolを取り出す。"""
+        """対応QMLスタイルからsemantic_class->symbolを取り出す。"""
         source_layer = self.candidateStyleSourceLayer(layers)
         if source_layer is None:
             return {}
-        style_path = self.defaultCandidateStylePath()
+        style_path = self.candidateStylePathForLayers(layers)
         if style_path:
             self.loadNamedStyleIntoLayer(source_layer, style_path)
+        self._candidate_style_path = style_path
+        self._candidate_style_aliases = self.classAliasMapFromCategorizedRenderer(source_layer)
+        self._candidate_style_label_to_value = self.classLabelToValueMapFromCategorizedRenderer(source_layer)
         return self.symbolMapFromCategorizedRenderer(source_layer)
 
     def symbolForSemanticClass(self, symbol_map, semantic_class):
@@ -3010,6 +3171,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if not class_values:
             return False
         if len(class_values) == 1:
+            try:
+                layer.setName(self.candidateLayerDisplayNameWithAlias(layer.name(), class_values[0]))
+            except Exception:
+                pass
             return self.applySingleSymbolFromMap(layer, symbol_map, class_values[0])
 
         categories = []
@@ -3023,7 +3188,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 categories.append(QgsRendererCategory(
                     semantic_class,
                     symbol.clone() if hasattr(symbol, "clone") else symbol,
-                    semantic_class,
+                    self.semanticClassDisplayName(semantic_class),
                 ))
             except Exception:
                 continue
@@ -3137,7 +3302,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     continue
                 text = self.legendNodeText(node).strip()
                 if text and not self.isCandidateLayerName(text):
-                    selected.add(text)
+                    selected.add(self.semanticClassFromDisplayName(text))
 
         if selected:
             return selected
@@ -3332,8 +3497,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         add_layer(self.candidateLayer())
 
         for layer in reversed(list(project.mapLayers().values())):
-            if self.isCurrentGpkgCandidateLayer(layer):
-                add_layer(layer)
+            add_layer(layer)
 
         for layer in reversed(list(project.mapLayers().values())):
             if self.isNamedCandidateLayer(layer):
@@ -3401,12 +3565,24 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         scope = str(scope or self.currentDetectionScope() or "active")
 
         def layer_matches(layer, selected_only=False):
-            return self.layerHasVideoFrameCandidate(
+            if not self.layerHasVideoFrameCandidate(
                 layer,
                 current_video,
                 frame_num,
                 selected_only=selected_only,
-            )
+            ):
+                return False
+            for feature in self.candidateFeatures(layer, selected_only=selected_only):
+                feature_video = self.targetFeatureValue(feature, "video")
+                if current_video and feature_video and str(feature_video) != current_video:
+                    continue
+                if frame_num is not None:
+                    frame_value = self.targetFeatureFloat(feature, "frame")
+                    if frame_value is None or int(frame_value) != int(frame_num):
+                        continue
+                if self.candidateFeatureMatchesViewerProjection(feature):
+                    return True
+            return False
 
         if scope == "active":
             layer = self.activeCandidateLayer()
@@ -3456,51 +3632,70 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         target_source = self.targetFeatureValue(feature, "target_source") or "yolo_candidate"
         x_ratio = 0.5
         y_ratio = 0.5
-        if str(target_source).lower() == "yolo_pinhole":
-            normalized_x = self.targetFeatureFloat(feature, "cubemap_u")
-            normalized_y = self.targetFeatureFloat(feature, "cubemap_v")
-            if normalized_x is not None and normalized_y is not None:
-                x_ratio = max(0.0, min(1.0, (float(normalized_x) + 1.0) / 2.0))
-                y_ratio = max(0.0, min(1.0, (float(normalized_y) + 1.0) / 2.0))
-            else:
-                anchor_x = self.targetFeatureFloat(feature, "anchor_x_px")
-                anchor_y = self.targetFeatureFloat(feature, "anchor_y_px")
-                bbox_json = self.targetFeatureValue(feature, "evidence_bbox_json")
-                image_width = None
-                image_height = None
-                if bbox_json not in (None, ""):
-                    try:
-                        bbox = json.loads(str(bbox_json))
-                    except Exception:
-                        bbox = None
-                    if isinstance(bbox, dict):
-                        x1 = _parse_float(bbox.get("x1"))
-                        y1 = _parse_float(bbox.get("y1"))
-                        x2 = _parse_float(bbox.get("x2"))
-                        y2 = _parse_float(bbox.get("y2"))
-                        if (anchor_x is None or anchor_y is None):
-                            if x1 is not None and x2 is not None:
-                                anchor_x = (float(x1) + float(x2)) / 2.0
-                            if y1 is not None and y2 is not None:
-                                anchor_y = (float(y1) + float(y2)) / 2.0
-                        image_width = _parse_float(bbox.get("image_width")) or _parse_float(bbox.get("width"))
-                        image_height = _parse_float(bbox.get("image_height")) or _parse_float(bbox.get("height"))
-                    elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4 and (anchor_x is None or anchor_y is None):
-                        x1 = _parse_float(bbox[0])
-                        y1 = _parse_float(bbox[1])
-                        x2 = _parse_float(bbox[2])
-                        y2 = _parse_float(bbox[3])
-                        if x1 is not None and x2 is not None:
-                            anchor_x = (float(x1) + float(x2)) / 2.0
-                        if y1 is not None and y2 is not None:
-                            anchor_y = (float(y1) + float(y2)) / 2.0
-                if image_width is None:
-                    image_width = self.targetFeatureFloat(feature, "image_width") or self.targetFeatureFloat(feature, "width_px")
-                if image_height is None:
-                    image_height = self.targetFeatureFloat(feature, "image_height") or self.targetFeatureFloat(feature, "height_px")
-                if anchor_x is not None and anchor_y is not None and image_width and image_height:
-                    x_ratio = max(0.0, min(1.0, float(anchor_x) / float(image_width)))
-                    y_ratio = max(0.0, min(1.0, float(anchor_y) / float(image_height)))
+        bbox_x_ratio = None
+        bbox_y_ratio = None
+        flat_auto = False
+        if self.video_file:
+            try:
+                flat_auto = self.inferViewerProjectionFromVideo(self.video_file)[0] == VIEWER_PROJECTION_FLAT
+            except Exception:
+                flat_auto = False
+        flat_context = self.viewerProjectionValue() == VIEWER_PROJECTION_FLAT or flat_auto
+
+        anchor_x = self.targetFeatureFloat(feature, "anchor_x_px")
+        anchor_y = self.targetFeatureFloat(feature, "anchor_y_px")
+        bbox_json = self.targetFeatureValue(feature, "evidence_bbox_json")
+        image_width = None
+        image_height = None
+        if bbox_json not in (None, ""):
+            try:
+                bbox = json.loads(str(bbox_json))
+            except Exception:
+                bbox = None
+            if isinstance(bbox, dict):
+                x1 = _parse_float(bbox.get("x1"))
+                y1 = _parse_float(bbox.get("y1"))
+                x2 = _parse_float(bbox.get("x2"))
+                y2 = _parse_float(bbox.get("y2"))
+                if (anchor_x is None or anchor_y is None):
+                    if x1 is not None and x2 is not None:
+                        anchor_x = (float(x1) + float(x2)) / 2.0
+                    if y1 is not None and y2 is not None:
+                        anchor_y = (float(y1) + float(y2)) / 2.0
+                image_width = _parse_float(bbox.get("image_width")) or _parse_float(bbox.get("width"))
+                image_height = _parse_float(bbox.get("image_height")) or _parse_float(bbox.get("height"))
+            elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4 and (anchor_x is None or anchor_y is None):
+                x1 = _parse_float(bbox[0])
+                y1 = _parse_float(bbox[1])
+                x2 = _parse_float(bbox[2])
+                y2 = _parse_float(bbox[3])
+                if x1 is not None and x2 is not None:
+                    anchor_x = (float(x1) + float(x2)) / 2.0
+                if y1 is not None and y2 is not None:
+                    anchor_y = (float(y1) + float(y2)) / 2.0
+        if image_width is None:
+            image_width = self.targetFeatureFloat(feature, "image_width") or self.targetFeatureFloat(feature, "width_px")
+        if image_height is None:
+            image_height = self.targetFeatureFloat(feature, "image_height") or self.targetFeatureFloat(feature, "height_px")
+        if (image_width is None or image_height is None) and flat_context and self.video_file:
+            dimensions = self.videoDimensions(self.video_file)
+            if dimensions:
+                image_width, image_height = dimensions
+        if anchor_x is not None and anchor_y is not None and image_width and image_height:
+            bbox_x_ratio = max(0.0, min(1.0, float(anchor_x) / float(image_width)))
+            bbox_y_ratio = max(0.0, min(1.0, float(anchor_y) / float(image_height)))
+
+        normalized_x = self.targetFeatureFloat(feature, "cubemap_u")
+        normalized_y = self.targetFeatureFloat(feature, "cubemap_v")
+        if flat_context and bbox_x_ratio is not None and bbox_y_ratio is not None:
+            x_ratio = bbox_x_ratio
+            y_ratio = bbox_y_ratio
+        elif normalized_x is not None and normalized_y is not None:
+            x_ratio = max(0.0, min(1.0, (float(normalized_x) + 1.0) / 2.0))
+            y_ratio = max(0.0, min(1.0, (float(normalized_y) + 1.0) / 2.0))
+        elif bbox_x_ratio is not None and bbox_y_ratio is not None:
+            x_ratio = bbox_x_ratio
+            y_ratio = bbox_y_ratio
         target = {
             "x_ratio": x_ratio,
             "y_ratio": y_ratio,
@@ -3533,6 +3728,28 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             target["review_status"] = str(review_status)
         return target
 
+    def candidateFeatureMatchesViewerProjection(self, feature):
+        """現在のviewer投影と候補点の画像根拠が一致するかを返す。"""
+        flat_auto = False
+        if self.video_file:
+            try:
+                flat_auto = self.inferViewerProjectionFromVideo(self.video_file)[0] == VIEWER_PROJECTION_FLAT
+            except Exception:
+                flat_auto = False
+        if self.viewerProjectionValue() != VIEWER_PROJECTION_FLAT and not flat_auto:
+            return True
+
+        target_source = str(self.targetFeatureValue(feature, "target_source") or "").strip().lower()
+        if target_source == "yolo_pinhole":
+            return True
+
+        evidence_path = str(self.targetFeatureValue(feature, "evidence_image_path") or "").replace("\\", "/").lower()
+        evidence_face = str(self.targetFeatureValue(feature, "evidence_face") or "").strip().lower()
+        cubemap_faces = {"front", "back", "left", "right", "up", "down"}
+        if "/cubemap/" in evidence_path or evidence_path.startswith("cubemap/") or evidence_face in cubemap_faces:
+            return False
+        return True
+
     def viewerDetectionTargetsForFrame(self, frame_num):
         """指定フレームのYOLO候補点をビューア確認用payloadとして返す。"""
         target_frame = int(frame_num)
@@ -3554,6 +3771,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
                 feature_video = self.targetFeatureValue(feature, "video")
                 if current_video and feature_video and str(feature_video) != current_video:
+                    continue
+
+                if not self.candidateFeatureMatchesViewerProjection(feature):
                     continue
 
                 target = self.restoredCandidateTargetPayload(feature)
@@ -3805,6 +4025,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 video_name = os.path.basename(self.video_file or "")
                 feature_video = self.targetFeatureValue(feature, "video")
                 if video_name and feature_video and str(feature_video) != video_name:
+                    continue
+                if not self.candidateFeatureMatchesViewerProjection(feature):
                     continue
                 frames.append(int(frame_value))
         return sorted(set(frames))
@@ -4130,8 +4352,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if fields is None:
             return _safe_gpkg_layer_name(f"{base_layer_name}_{index:02d}")
         if self.isCandidateLayer(layer):
+            semantic_class = self.layerSingleSemanticClass(layer)
+            if semantic_class:
+                return _safe_gpkg_layer_name(f"poi_clusters_{semantic_class}")
             display_name = str(getattr(layer, "name", lambda: "")() or "")
-            for prefix in ("360 Detection Candidates: ", "360 POI Clusters: "):
+            for prefix in ("360 Detection Candidates: ", "360 POI Clusters: ", "POI: "):
                 if display_name.startswith(prefix):
                     return _safe_gpkg_layer_name(display_name[len(prefix):])
             if display_name.startswith(("poi_candidates", "poi_clusters")):

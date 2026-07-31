@@ -18,6 +18,8 @@ The current implementation focuses on:
 - Opening the 360 viewer in a dedicated Edge/Chrome app window when available.
 - Clearing previous GPX/MP4/KP/Output selections with `New Job` and warning before Process overwrites existing output artifacts.
 - Styling POI candidate / cluster GPKG layers from `semantic_class`, using `styles/default_style.qml` as the default class-symbol source.
+- Displaying QGIS class labels from `styles/default_style.qml` category labels while keeping `semantic_class` as the stable internal key.
+- Preferring `styles/<model_name>.qml` when a loaded POI GPKG contains one model name, with fallback to `styles/default_style.qml`.
 
 See [DESIGN.ja.md](DESIGN.ja.md) for the current design, environment assumptions, operating flow, outputs, and known tuning points. [DESIGN.md](DESIGN.md) is the English version. See [CHANGELOG.md](CHANGELOG.md) for version history.
 

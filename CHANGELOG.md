@@ -11,6 +11,7 @@
 - Loadタブに `New Job` を追加し、プラグインをリロードせずに前回のGPX/MP4/KP/Output/GPKG選択をクリアして新規ジョブを開始できるようにした。
 - 選択した `viewer_projection`、flat表示用FOV、推定理由を `viewer_session.json`、360Viewer runtime config、`tmp.gpkg` の `gpx_video_processor_job_metadata` に保存・復元するようにした。
 - 古いGPKGなど投影メタデータが無い場合は、復元したMP4の縦横比から再推定するようにした。
+- `styles/default_style.qml` のカテゴリラベルを読み取り、内部の `semantic_class` は英語キーのまま、QGISレイヤ/凡例表示だけ日本語などの表示名へ置き換えられるようにした。
 
 ### Changed
 
@@ -19,6 +20,8 @@
 - `終了` 後のパネルリセットで、前回ジョブのKP CSVやOutput指定を次ジョブへ持ち越さないようにした。
 - Process開始時、Output内に既存の `tmp.gpkg`、frames CSV、navigation JSON、matched CSVがある場合は上書き確認を出すようにした。
 - `all_poi.gpkg` などの候補/クラスタレイヤのスタイル同期を、`All_Classes` レイヤ名依存から `semantic_class` フィールド基準へ変更した。複数クラスレイヤは `semantic_class` で分類表示し、カテゴリ順はクラス名文字列昇順にする。
+- POIクラスタレイヤのQGIS表示prefixを `360 POI Clusters:` から `POI:` に短縮した。単一クラスレイヤを日本語表示しても、保存時の内部レイヤ名は `semantic_class` を優先する。
+- GPKG内の候補レイヤ群の `model_name` が1種類に決まる場合は `styles/<model_name>.qml` を優先して読み込み、存在しない場合は `styles/default_style.qml` へフォールバックするようにした。
 
 ### Notes
 

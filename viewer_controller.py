@@ -466,7 +466,17 @@ class ViewerControllerMixin:
                 self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
         if targets_payload:
             payload["targets"] = targets_payload
-            if any(str(target.get("target_source") or "").lower() == "yolo_pinhole" for target in targets_payload):
+            flat_auto = False
+            if self.video_file and not getattr(self, "viewer_projection_dirty", False):
+                try:
+                    flat_auto = self.inferViewerProjectionFromVideo(self.video_file)[0] == "flat"
+                except Exception:
+                    flat_auto = False
+            if (
+                self.viewerProjectionValue() == "flat"
+                or flat_auto
+                or any(str(target.get("target_source") or "").lower() == "yolo_pinhole" for target in targets_payload)
+            ):
                 payload["viewer_projection"] = "flat"
                 payload["viewer_flat_hfov_deg"] = self.viewerFlatHfovValue()
                 payload["viewer_flat_vfov_deg"] = self.viewerFlatVfovValue()

@@ -245,6 +245,9 @@ Candidate and cluster layer styling is keyed by the `semantic_class` field, not 
 `styles/default_style.qml` is loaded as the default class-symbol source. Layers containing multiple classes are rendered with a categorized renderer on `semantic_class`; layers containing one class are rendered with the matching single symbol.
 Category order is the lexicographic order of `semantic_class`. Zero-padded prefixes such as `01_...` can therefore keep YOLO IDs, `classes.txt`, labelImg, and the QGIS legend in the same intended order.
 Layer names are grouping/filtering units for classes that the operator wants to view together; they are not style keys.
+When display aliases are needed, `styles/default_style.qml` category `value` stays as the stable `semantic_class` key and category `label` is used as the human-facing label. The plugin reads symbols and display labels from the same QML file, while subset filters, viewer payloads, and API-facing values keep the original `semantic_class`.
+When the loaded candidate layers contain exactly one `model_name`, the plugin first looks for `styles/<model_name>.qml`. If no matching QML exists, or multiple model names are present, it falls back to `styles/default_style.qml`.
+POI cluster layers are displayed with the short `POI:` prefix, such as `POI: Kilometer Marker`. Even when a single-class layer is displayed with an alias, saved internal layer names prefer the original `semantic_class`.
 
 `Video GPX Points` is treated as an internal reference layer for 360 image viewing. The plugin keeps the generated layer id and uses it for navigation and click-mode setup, so changing the user's feature-registration target layer does not change the viewer reference layer. The active layer is only used as a fallback before `Process`, when a pre-existing frame layer is being used manually.
 
