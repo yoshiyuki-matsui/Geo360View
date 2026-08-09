@@ -27,6 +27,7 @@
   let krpanoImageLoaded = false;
   let debugLogVisible = false;
   let radarHudVisible = true;
+  let viewHoldEnabled = false;
   let lastViewDebug = null;
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
@@ -36,6 +37,7 @@
 
   const prevButton = document.getElementById("prevButton");
   const nextButton = document.getElementById("nextButton");
+  const viewHoldButton = document.getElementById("viewHoldButton");
   const radarHudToggleButton = document.getElementById("radarHudToggleButton");
   const debugToggleButton = document.getElementById("debugToggleButton");
   const notice = document.getElementById("notice");
@@ -47,6 +49,10 @@
   const groundRingGrid = document.getElementById("groundRingGrid");
   const groundRingOuter = document.getElementById("groundRingOuter");
   const groundRingInner = document.getElementById("groundRingInner");
+  let lockGuideOverlay = document.getElementById("lockGuideOverlay");
+  let lockGuideBand = document.getElementById("lockGuideBand");
+  let lockGuideLine = document.getElementById("lockGuideLine");
+  let lockGuideEndpoint = document.getElementById("lockGuideEndpoint");
   const videoLabel = document.getElementById("videoLabel");
   const frameLabel = document.getElementById("frameLabel");
   const viewLabel = document.getElementById("viewLabel");
@@ -936,6 +942,175 @@
       || projectClickTargetMarkerFallback(target, readKrpanoView() || state, stageRect);
   }
 
+  function ensureLockGuideOverlay() {
+    if (lockGuideOverlay && lockGuideBand && lockGuideLine && lockGuideEndpoint) {
+      return true;
+    }
+    if (!panoStage || !document.createElementNS) {
+      return false;
+    }
+    // The server now emits this SVG, but older pages may still be open.
+    // Create it client-side as a fallback so Ctrl+F5 is enough during review work.
+    const svgNs = "http://www.w3.org/2000/svg";
+    lockGuideOverlay = document.createElementNS(svgNs, "svg");
+    lockGuideOverlay.id = "lockGuideOverlay";
+    lockGuideOverlay.classList.add("lock-guide-overlay");
+    lockGuideOverlay.setAttribute("viewBox", "0 0 100 100");
+    lockGuideOverlay.setAttribute("preserveAspectRatio", "none");
+    lockGuideOverlay.setAttribute("aria-hidden", "true");
+    lockGuideOverlay.hidden = true;
+
+    lockGuideBand = document.createElementNS(svgNs, "path");
+    lockGuideBand.id = "lockGuideBand";
+    lockGuideBand.classList.add("lock-guide-band");
+    lockGuideOverlay.appendChild(lockGuideBand);
+
+    lockGuideLine = document.createElementNS(svgNs, "path");
+    lockGuideLine.id = "lockGuideLine";
+    lockGuideLine.classList.add("lock-guide-line");
+    lockGuideOverlay.appendChild(lockGuideLine);
+
+    lockGuideEndpoint = document.createElementNS(svgNs, "circle");
+    lockGuideEndpoint.id = "lockGuideEndpoint";
+    lockGuideEndpoint.classList.add("lock-guide-endpoint");
+    lockGuideEndpoint.setAttribute("r", "5");
+    lockGuideOverlay.appendChild(lockGuideEndpoint);
+
+    panoStage.appendChild(lockGuideOverlay);
+    return true;
+  }
+
+  function clearLockGuide() {
+    ensureLockGuideOverlay();
+    if (lockGuideOverlay) {
+      lockGuideOverlay.hidden = true;
+    }
+    if (lockGuideBand) {
+      lockGuideBand.removeAttribute("d");
+    }
+    if (lockGuideLine) {
+      lockGuideLine.removeAttribute("d");
+    }
+    if (lockGuideEndpoint) {
+      lockGuideEndpoint.removeAttribute("cx");
+      lockGuideEndpoint.removeAttribute("cy");
+    }
+  }
+
+  function guideEndpointFromDirection(target, viewState, stageRect) {
+    // Accurate path when the target can be projected from spherical coordinates.
+    // This still returns an interior point; updateLockGuide extends it to the viewport edge.
+    const sphere = targetSphere(target);
+    if (!sphere || !viewState || !stageRect.width || !stageRect.height) {
+      return null;
+    }
+    const zoom = normalizeZoom(viewState.zoom);
+    const horizontalFovDeg = clamp(90 / zoom, 1, 179);
+    const horizontalHalfRadians = (horizontalFovDeg / 2) * Math.PI / 180;
+    const verticalHalfRadians = Math.atan(
+      Math.tan(horizontalHalfRadians) * (stageRect.height / stageRect.width)
+    );
+    const yawDeltaDeg = signedAngleDelta(viewState.yaw_to_camera_heading, sphere.h);
+    const pitchDeltaDeg = normalizePitch(sphere.v) - normalizePitch(viewState.pitch);
+    let xNdc = Math.tan(yawDeltaDeg * Math.PI / 180) / Math.tan(horizontalHalfRadians);
+    let yNdc = -Math.tan(pitchDeltaDeg * Math.PI / 180) / Math.tan(verticalHalfRadians);
+    if (!Number.isFinite(xNdc) || !Number.isFinite(yNdc)) {
+      return null;
+    }
+    if (Math.abs(xNdc) < 0.001 && Math.abs(yNdc) < 0.001) {
+      yNdc = -0.001;
+    }
+    const scale = Math.min(1, 0.92 / Math.max(Math.abs(xNdc), Math.abs(yNdc), 0.001));
+    xNdc *= scale;
+    yNdc *= scale;
+    return {
+      x: ((xNdc + 1) / 2) * stageRect.width,
+      y: ((yNdc + 1) / 2) * stageRect.height
+    };
+  }
+
+  function guidePointFromYawPitch(target, viewState, stageRect) {
+    // Last-resort direction cue. Even when exact screen projection is unavailable,
+    // yaw/pitch deltas still tell the user which way to look while Lock is enabled.
+    const sphere = targetSphere(target);
+    if (!sphere || !viewState || !stageRect.width || !stageRect.height) {
+      return null;
+    }
+    const yawDeltaDeg = signedAngleDelta(viewState.yaw_to_camera_heading, sphere.h);
+    const pitchDeltaDeg = normalizePitch(sphere.v) - normalizePitch(viewState.pitch);
+    let dx = Math.sin(yawDeltaDeg * Math.PI / 180);
+    let dy = -Math.sin(pitchDeltaDeg * Math.PI / 180);
+    if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+      dy = -1;
+    }
+    const length = Math.hypot(dx, dy);
+    return {
+      x: stageRect.width / 2 + (dx / length) * 100,
+      y: stageRect.height / 2 + (dy / length) * 100
+    };
+  }
+
+  function rayToStageEdge(fromX, fromY, towardX, towardY, stageRect) {
+    // Draw the guide all the way to the viewport edge. A short line to a near-center
+    // target was too easy to miss, especially when the marker and label were visible.
+    let dx = Number(towardX) - Number(fromX);
+    let dy = Number(towardY) - Number(fromY);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1) {
+      dy = -1;
+      dx = 0;
+    }
+    const candidates = [];
+    if (Math.abs(dx) > 0.001) {
+      candidates.push((0 - fromX) / dx);
+      candidates.push((stageRect.width - fromX) / dx);
+    }
+    if (Math.abs(dy) > 0.001) {
+      candidates.push((0 - fromY) / dy);
+      candidates.push((stageRect.height - fromY) / dy);
+    }
+    const positive = candidates.filter((value) => Number.isFinite(value) && value > 0);
+    const scale = positive.length ? Math.min(...positive) : 1;
+    return {
+      x: clamp(fromX + dx * scale, 0, stageRect.width),
+      y: clamp(fromY + dy * scale, 0, stageRect.height)
+    };
+  }
+
+  function updateLockGuide(target) {
+    // Lock guide is additive: point markers and labels stay unchanged.
+    // It only appears while the user has explicitly enabled Lock.
+    if (!viewHoldEnabled || !ensureLockGuideOverlay() || !panoStage) {
+      clearLockGuide();
+      return;
+    }
+    const stageRect = panoStage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height || !target) {
+      clearLockGuide();
+      return;
+    }
+    lockGuideOverlay.setAttribute("viewBox", `0 0 ${stageRect.width} ${stageRect.height}`);
+    const viewState = readKrpanoView() || state;
+    const projected = projectClickTargetMarker(target)
+      || guideEndpointFromDirection(target, viewState, stageRect)
+      || guidePointFromYawPitch(target, viewState, stageRect);
+    if (!projected) {
+      clearLockGuide();
+      return;
+    }
+    const centerX = stageRect.width / 2;
+    // The line starts at the bottom center, representing the viewer/camera position.
+    const centerY = stageRect.height;
+    const endpoint = rayToStageEdge(centerX, centerY, projected.x, projected.y, stageRect);
+    const endX = endpoint.x;
+    const endY = endpoint.y;
+    const path = `M ${centerX.toFixed(1)} ${centerY.toFixed(1)} L ${endX.toFixed(1)} ${endY.toFixed(1)}`;
+    lockGuideBand.setAttribute("d", path);
+    lockGuideLine.setAttribute("d", path);
+    lockGuideEndpoint.setAttribute("cx", String(endX.toFixed(1)));
+    lockGuideEndpoint.setAttribute("cy", String(endY.toFixed(1)));
+    lockGuideOverlay.hidden = false;
+  }
+
   function updateClickTargetMarker() {
     if (!clickTargetMarker || !panoStage) {
       return;
@@ -943,13 +1118,16 @@
     panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
     if (!radarHudVisible) {
       clickTargetMarker.hidden = true;
+      clearLockGuide();
       return;
     }
     const targets = displayClickTargets();
     if (!targets.length) {
       clickTargetMarker.hidden = true;
+      clearLockGuide();
       return;
     }
+    updateLockGuide(targets[0]);
     targets.slice(0, MAX_CLICK_TARGETS).forEach((target, index) => {
       const marker = index === 0 ? clickTargetMarker : document.createElement("div");
       if (index > 0) {
@@ -1137,6 +1315,7 @@
     schedulePost();
     updateReadout(activeView);
     updateGroundRings(activeView);
+    updateLockGuide(displayClickTargets()[0]);
     logViewDebug(activeView, "view changed");
     if (activeView && Number(activeView.pitch) >= 70) {
       logGroundRingSamples(activeView);
@@ -1312,6 +1491,23 @@
     }, 300);
   }
 
+  function currentViewHeldState(nextState) {
+    // Lock preserves the user's current view while QGIS changes frames/POIs.
+    // Do not alter target payloads or POI Lock math here; only carry yaw/pitch/zoom.
+    if (!viewHoldEnabled) {
+      return nextState;
+    }
+    const currentView = readKrpanoView();
+    if (!currentView) {
+      return nextState;
+    }
+    return Object.assign({}, nextState, {
+      yaw_to_camera_heading: currentView.yaw_to_camera_heading,
+      pitch: currentView.pitch,
+      zoom: currentView.zoom
+    });
+  }
+
   async function navigateToFrame(frameIndex) {
     if (frameIndex === null || frameIndex === undefined) {
       return;
@@ -1385,8 +1581,9 @@
     updateReadout(readKrpanoView() || state);
     updateGroundRings(readKrpanoView() || state);
     if (!sameFrame(session, state)) {
-      if (!loadFrameInPlace(session)) {
-        window.location.href = viewerUrl(session.video, session.frame_index, session);
+      const nextSession = currentViewHeldState(session);
+      if (!loadFrameInPlace(nextSession)) {
+        window.location.href = viewerUrl(session.video, session.frame_index, nextSession);
       }
     }
   }
@@ -1395,6 +1592,27 @@
     prevButton.addEventListener("click", () => navigateToFrame(navigationState.prev_frame));
     nextButton.addEventListener("click", () => navigateToFrame(navigationState.next_frame));
     updateNavigationButtons();
+  }
+
+  function updateViewHoldButton() {
+    if (!viewHoldButton) {
+      return;
+    }
+    viewHoldButton.classList.toggle("is-active", viewHoldEnabled);
+    viewHoldButton.setAttribute("aria-pressed", viewHoldEnabled ? "true" : "false");
+  }
+
+  function setupViewHoldButton() {
+    if (!viewHoldButton) {
+      return;
+    }
+    viewHoldButton.addEventListener("click", () => {
+      viewHoldEnabled = !viewHoldEnabled;
+      updateViewHoldButton();
+      updateClickTargetMarker();
+      postViewerState(true);
+    });
+    updateViewHoldButton();
   }
 
   function isEditableTarget(target) {
@@ -1525,6 +1743,7 @@
 
   setupFallbackFrameDiagnostics();
   setupNavigation();
+  setupViewHoldButton();
   setupKeyboardNavigation();
   setupDebugLogToggle();
   setupRadarHudToggle();

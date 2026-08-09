@@ -50,6 +50,15 @@ button:disabled {
   min-width: 52px;
 }
 
+.view-hold-toggle {
+  min-width: 58px;
+}
+
+.view-hold-toggle.is-active {
+  background: #ffd95a;
+  color: #111;
+}
+
 .hud-toggle {
   min-width: 52px;
 }
@@ -127,6 +136,50 @@ button:disabled {
 
 .ground-rings-overlay[hidden] {
   display: none;
+}
+
+/* Lock ON only: subtle "the target is in this direction" guide.
+   Hide this feature by setting .lock-guide-overlay { display: none; },
+   or make it less visible by lowering alpha on .lock-guide-band/line/endpoint. */
+.lock-guide-overlay {
+  height: 100%;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+  z-index: 7;
+}
+
+.lock-guide-overlay[hidden] {
+  display: none;
+}
+
+/* Wide translucent band. This is the main "rough direction" cue, not an exact hit marker. */
+.lock-guide-band {
+  fill: none;
+  stroke: rgba(255, 214, 74, 0.12);
+  stroke-linecap: round;
+  stroke-width: 5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Thin dashed center line. Lower alpha or stroke-width if it competes with POI labels. */
+.lock-guide-line {
+  fill: none;
+  stroke: rgba(255, 238, 128, 0.42);
+  stroke-dasharray: 7 10;
+  stroke-linecap: round;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Small end cap at the viewport edge. Set fill/stroke alpha to 0 to keep only the line. */
+.lock-guide-endpoint {
+  fill: rgba(255, 238, 128, 0.38);
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .ground-ring {

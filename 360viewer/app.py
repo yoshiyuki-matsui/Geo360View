@@ -694,6 +694,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
     <section class="toolbar" aria-label="Viewer controls">
       <button id="prevButton" type="button">Prev</button>
       <button id="nextButton" type="button">Next</button>
+      <button id="viewHoldButton" class="view-hold-toggle" type="button" aria-pressed="false">Lock</button>
       <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
@@ -713,6 +714,11 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
         <path id="groundRingGrid" class="ground-ring-grid" />
         <path id="groundRingOuter" class="ground-ring ground-ring-outer" />
         <path id="groundRingInner" class="ground-ring ground-ring-inner" />
+      </svg>
+      <svg id="lockGuideOverlay" class="lock-guide-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" hidden>
+        <path id="lockGuideBand" class="lock-guide-band" />
+        <path id="lockGuideLine" class="lock-guide-line" />
+        <circle id="lockGuideEndpoint" class="lock-guide-endpoint" r="5" />
       </svg>
       <div id="clickTargetMarker" class="click-target-marker" hidden></div>
       <div id="radarHud" class="radar-hud" aria-hidden="true">
