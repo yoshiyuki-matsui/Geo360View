@@ -1113,7 +1113,16 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     def send_json(self, value: Any, status: int = 200) -> None:
         """JSONレスポンスを送信する。"""
-        self.send_bytes(json_bytes(value), "application/json; charset=utf-8", status=status)
+        self.send_bytes(
+            json_bytes(value),
+            "application/json; charset=utf-8",
+            {
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+            status=status,
+        )
 
     def send_bytes(
         self,

@@ -1554,7 +1554,7 @@
   }
 
   async function pollExternalNavigation() {
-    const response = await fetch("/api/session/viewer-state", {
+    const response = await fetch(`/api/session/viewer-state?_=${Date.now()}`, {
       cache: "no-store"
     }).catch(() => null);
     if (!response || !response.ok) {
