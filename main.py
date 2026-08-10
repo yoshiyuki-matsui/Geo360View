@@ -3838,21 +3838,67 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "zoom": max(0.01, float(view_zoom)),
         }
 
+    def viewerSessionHasMeaningfulTarget(self, state):
+        """session内に表示対象として意味を持つtargetがあるかを返す。"""
+        if not isinstance(state, dict):
+            return False
+
+        def has_meaningful_payload(target):
+            """中央デフォルトだけの一時targetを、保存済み点/候補点と区別する。"""
+            if not isinstance(target, dict):
+                return False
+            for key in ("semantic_class", "candidate_id", "target_source", "viewer_marker", "review_status"):
+                if target.get(key) not in (None, ""):
+                    return True
+            for key in ("id", "order"):
+                try:
+                    if int(target.get(key)) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+            return False
+
+        targets = state.get("targets")
+        if isinstance(targets, list) and any(has_meaningful_payload(target) for target in targets):
+            return True
+        return has_meaningful_payload(state.get("target"))
+
     def restoreViewerTargetsForState(self, state):
-        """現在sessionに点が無ければ、保存済みクリック点を補完して返す。"""
+        """現在sessionに点が無ければ、Navモードに応じたtargetを補完して返す。"""
         if not isinstance(state, dict):
             return state
         current_video = os.path.basename(self.video_file or "")
         if not current_video or state.get("video") != current_video:
             return state
-        if isinstance(state.get("targets"), list) and state.get("targets"):
-            return state
-        if isinstance(state.get("target"), dict):
-            return state
 
         frame_index = self.sessionFrameIndex(state)
         if frame_index is None:
             return state
+
+        try:
+            nav_mode = str(self.nav_mode.currentData() or "")
+        except Exception:
+            nav_mode = ""
+
+        if nav_mode == "detect":
+            targets = self.viewerDetectionTargetsForFrame(frame_index)
+            if not targets:
+                if isinstance(state.get("target"), dict) or isinstance(state.get("targets"), list):
+                    restored_state = dict(state)
+                    restored_state.pop("target", None)
+                    restored_state.pop("targets", None)
+                    written_state = self.writeViewerSessionState(restored_state)
+                    return written_state if isinstance(written_state, dict) else restored_state
+                return state
+            restored_state = dict(state)
+            restored_state["targets"] = targets
+            restored_state["target"] = targets[0]
+            written_state = self.writeViewerSessionState(restored_state)
+            return written_state if isinstance(written_state, dict) else restored_state
+
+        if self.viewerSessionHasMeaningfulTarget(state):
+            return state
+
         targets = self.viewerTargetsForFrame(frame_index)
         if not targets:
             return state

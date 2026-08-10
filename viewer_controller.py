@@ -464,6 +464,11 @@ class ViewerControllerMixin:
                 targets_payload = target_payload_getter(frame_num)
             except Exception as e:
                 self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
+        if nav_mode in ("detect", "picked"):
+            # Explicitly clear stale targets when the active review mode has no
+            # target on this frame. Otherwise a previous click/POI can flash.
+            payload["targets"] = targets_payload
+            payload["target"] = targets_payload[0] if nav_mode == "detect" and targets_payload else None
         if targets_payload:
             payload["targets"] = targets_payload
             flat_auto = False

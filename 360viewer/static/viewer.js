@@ -18,10 +18,18 @@
   const GROUND_GRID_SAMPLE_COUNT = 64;
   const MAX_CLICK_TARGETS = 100;
   const SINGLE_CLICK_DELAY_MS = 320;
+  const VIEW_STATE_POST_INTERVAL_MS = 1000;
+  const EXTERNAL_SESSION_POLL_INTERVAL_MS = 300;
+  const TARGET_CLEAR_GRACE_MS = 900;
 
   let krpano = null;
   let lastPosted = null;
   let postTimer = null;
+  let suppressPostUntil = 0;
+  let lastExternalSignature = null;
+  let lastMarkerSignature = null;
+  let pendingEmptyTargetKey = null;
+  let pendingEmptyTargetSince = 0;
   let singleClickTimer = null;
   let krpanoReady = false;
   let krpanoImageLoaded = false;
@@ -776,6 +784,15 @@
     return state.target && typeof state.target === "object" ? [state.target] : [];
   }
 
+  function sessionTargets(session) {
+    const targets = Array.isArray(session && session.targets) ? session.targets : [];
+    const target = session && session.target && typeof session.target === "object" ? session.target : null;
+    if (targets.length) {
+      return targets;
+    }
+    return target ? [target] : [];
+  }
+
   function clickTargetLabelText(target) {
     const id = Number(target.id || target.order);
     const idText = Number.isFinite(id) && id > 0 ? `[${id}]` : "";
@@ -1115,18 +1132,32 @@
     if (!clickTargetMarker || !panoStage) {
       return;
     }
-    panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
     if (!radarHudVisible) {
+      lastMarkerSignature = null;
+      panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
       clickTargetMarker.hidden = true;
       clearLockGuide();
       return;
     }
     const targets = displayClickTargets();
     if (!targets.length) {
+      lastMarkerSignature = null;
+      panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
       clickTargetMarker.hidden = true;
       clearLockGuide();
       return;
     }
+    const markerSignature = [
+      state.video || "",
+      String(Number(state.frame_index)),
+      targets.slice(0, MAX_CLICK_TARGETS).map(targetSignature).join("~")
+    ].join("::");
+    if (markerSignature === lastMarkerSignature) {
+      updateLockGuide(targets[0]);
+      return;
+    }
+    lastMarkerSignature = markerSignature;
+    panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
     updateLockGuide(targets[0]);
     targets.slice(0, MAX_CLICK_TARGETS).forEach((target, index) => {
       const marker = index === 0 ? clickTargetMarker : document.createElement("div");
@@ -1149,11 +1180,11 @@
     if (Number.isFinite(viewerFrontOffset)) {
       current.viewer_front_offset_deg = normalizeSignedYaw(viewerFrontOffset);
     }
-    if (state.target) {
+    if (!current.target && state.target) {
       current.target = state.target;
     }
     const targets = normalizedClickTargets();
-    if (targets.length) {
+    if ((!Array.isArray(current.targets) || !current.targets.length) && targets.length) {
       current.targets = targets.slice(0, MAX_CLICK_TARGETS);
     }
     return current;
@@ -1371,6 +1402,51 @@
     return a.video === b.video && Number(a.frame_index) === Number(b.frame_index);
   }
 
+  function targetSignature(target) {
+    if (!target || typeof target !== "object") {
+      return "";
+    }
+    const numberKey = (value, digits) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(digits) : "";
+    };
+    return [
+      target.id || "",
+      target.order || "",
+      target.semantic_class || "",
+      numberKey(target.confidence, 4),
+      numberKey(target.target_yaw_to_camera_heading, 3),
+      numberKey(target.target_pitch_deg, 3),
+      numberKey(target.yaw_delta_deg, 3),
+      numberKey(target.pitch_delta_deg, 3),
+      numberKey(target.x_ratio, 5),
+      numberKey(target.y_ratio, 5)
+    ].join("|");
+  }
+
+  function sessionSignature(value) {
+    if (!value || typeof value !== "object") {
+      return "";
+    }
+    const targets = Array.isArray(value.targets) ? value.targets : [];
+    return [
+      value.video || "",
+      String(Number(value.frame_index)),
+      targetSignature(value.target),
+      targets.map(targetSignature).join("~")
+    ].join("::");
+  }
+
+  function noteExternalSession(session) {
+    const signature = sessionSignature(session);
+    if (signature && signature !== sessionSignature(state) && signature !== lastExternalSignature) {
+      // QGIS writes viewer_session.json independently. Without this guard, the
+      // browser's periodic view-state POST can race and restore the previous POI.
+      suppressPostUntil = Date.now() + 1200;
+    }
+    lastExternalSignature = signature;
+  }
+
   function viewerUrl(video, frameIndex, viewState) {
     const params = new URLSearchParams();
     params.set("video", video);
@@ -1464,8 +1540,19 @@
     return true;
   }
 
-  async function postViewerState(immediate, sourceState) {
+  async function postViewerState(immediate, sourceState, options) {
+    if (!immediate && Date.now() < suppressPostUntil) {
+      return;
+    }
+
     const current = currentSessionState(sourceState);
+    if (options && options.viewOnly) {
+      // Periodic browser updates are only for preserving the user's view.
+      // QGIS owns the active POI selection, so do not let view posts overwrite it.
+      current._viewer_view_update_only = true;
+      delete current.target;
+      delete current.targets;
+    }
     updateReadout(current);
 
     if (!immediate && sameState(current, lastPosted)) {
@@ -1487,7 +1574,7 @@
       window.clearTimeout(postTimer);
     }
     postTimer = window.setTimeout(() => {
-      postViewerState(false);
+      postViewerState(false, undefined, { viewOnly: true });
     }, 300);
   }
 
@@ -1566,6 +1653,18 @@
       return;
     }
 
+    noteExternalSession(session);
+    if (!sameFrame(session, state)) {
+      pendingEmptyTargetKey = null;
+      pendingEmptyTargetSince = 0;
+      const nextSession = currentViewHeldState(session);
+      if (!loadFrameInPlace(nextSession)) {
+        window.location.href = viewerUrl(session.video, session.frame_index, nextSession);
+      }
+      lastPosted = currentSessionState(state);
+      return;
+    }
+
     updateRadarState(session.radar);
     updateCameraHeight(session.viewer_camera_height_m);
     state.viewer_projection = normalizeViewerProjection(session.viewer_projection || state.viewer_projection);
@@ -1574,18 +1673,31 @@
     if (Number.isFinite(Number(session.viewer_front_offset_deg))) {
       state.viewer_front_offset_deg = normalizeSignedYaw(Number(session.viewer_front_offset_deg));
     }
+    const incomingTargets = sessionTargets(session);
+    if (!incomingTargets.length && displayClickTargets().length) {
+      const emptyTargetKey = `${session.video || ""}:${Number(session.frame_index)}`;
+      const now = Date.now();
+      if (pendingEmptyTargetKey !== emptyTargetKey) {
+        pendingEmptyTargetKey = emptyTargetKey;
+        pendingEmptyTargetSince = now;
+      }
+      if (now - pendingEmptyTargetSince < TARGET_CLEAR_GRACE_MS) {
+        updateReadout(readKrpanoView() || state);
+        updateGroundRings(readKrpanoView() || state);
+        lastPosted = currentSessionState(state);
+        return;
+      }
+    } else {
+      pendingEmptyTargetKey = null;
+      pendingEmptyTargetSince = 0;
+    }
     state.targets = Array.isArray(session.targets) ? session.targets : [];
     state.target = session.target && typeof session.target === "object"
       ? session.target
       : (state.targets.length ? state.targets[state.targets.length - 1] : null);
     updateReadout(readKrpanoView() || state);
     updateGroundRings(readKrpanoView() || state);
-    if (!sameFrame(session, state)) {
-      const nextSession = currentViewHeldState(session);
-      if (!loadFrameInPlace(nextSession)) {
-        window.location.href = viewerUrl(session.video, session.frame_index, nextSession);
-      }
-    }
+    lastPosted = currentSessionState(state);
   }
 
   function setupNavigation() {
@@ -1736,7 +1848,7 @@
           logGroundRingSamples(readKrpanoView() || state);
         }
         postViewerState(true);
-        window.setInterval(schedulePost, 300);
+        window.setInterval(schedulePost, VIEW_STATE_POST_INTERVAL_MS);
       }
     });
   }
@@ -1750,5 +1862,5 @@
   setupClickTargetProjection();
   updateReadout(state);
   setupKrpano();
-  window.setInterval(pollExternalNavigation, 750);
+  window.setInterval(pollExternalNavigation, EXTERNAL_SESSION_POLL_INTERVAL_MS);
 }());

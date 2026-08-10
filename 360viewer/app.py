@@ -634,10 +634,15 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
         state["radar"] = radar
-    targets = validate_targets_payload(payload.get("targets"))
-    if targets:
+    if "targets" in payload:
+        targets = validate_targets_payload(payload.get("targets"))
         state["targets"] = targets
-        state["target"] = targets[-1]
+        if targets:
+            state["target"] = targets[-1]
+    else:
+        target = validate_target_payload(payload.get("target"))
+        if target:
+            state["target"] = target
     return state
 
 
@@ -939,11 +944,28 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 payload = self.read_json_body()
                 previous = read_session()
                 state = validate_state_payload(payload)
+                preserve_targets = bool(payload.get("_viewer_view_update_only"))
                 if (
                     same_video_frame(previous, state["video"], state["frame_index"])
                     and isinstance(previous.get("radar"), dict)
                 ):
                     state["radar"] = previous["radar"]
+                if (
+                    preserve_targets
+                    and
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and "target" not in payload
+                    and isinstance(previous.get("target"), dict)
+                ):
+                    state["target"] = previous["target"]
+                if (
+                    preserve_targets
+                    and
+                    same_video_frame(previous, state["video"], state["frame_index"])
+                    and "targets" not in payload
+                    and isinstance(previous.get("targets"), list)
+                ):
+                    state["targets"] = previous["targets"]
                 if (
                     same_video_frame(previous, state["video"], state["frame_index"])
                     and "viewer_camera_height_m" not in payload

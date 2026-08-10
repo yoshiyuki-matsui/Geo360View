@@ -9,7 +9,6 @@
   "viewer_projection": "sphere",
   "viewer_flat_hfov_deg": 70.0,
   "viewer_flat_vfov_deg": 43.0,
-  "view_lock_mode": "user",
   "viewer_front_offset_deg": 103.5903977114749,
   "target": {
     "x_ratio": 0.7788539144471348,
@@ -23,5 +22,5 @@
     "view_zoom": 0.6448449464952445,
     "projection": "ground_plane"
   },
-  "updated_at": "2026-08-09T10:45:02+09:00"
+  "updated_at": "2026-08-10T19:33:29+09:00"
 }
