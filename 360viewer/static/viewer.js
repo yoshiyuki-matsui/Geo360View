@@ -1169,6 +1169,26 @@
     });
   }
 
+  function repositionClickTargetMarkers() {
+    // krpanoの画像ロード完了後に、既存DOMを作り直さず座標だけを再投影します。
+    // 8K 360静止画のロードが遅れた場合でも、pano本体を再描画せずにmarker/labelの消失を抑えます。
+    if (!clickTargetMarker || !panoStage || !radarHudVisible) {
+      return;
+    }
+    const targets = displayClickTargets();
+    if (!targets.length) {
+      return;
+    }
+    const extraMarkers = Array.from(panoStage.querySelectorAll(".click-target-marker-extra"));
+    targets.slice(0, MAX_CLICK_TARGETS).forEach((target, index) => {
+      const marker = index === 0 ? clickTargetMarker : extraMarkers[index - 1];
+      if (marker) {
+        setClickTargetMarker(marker, target);
+      }
+    });
+    updateLockGuide(targets[0]);
+  }
+
   function currentSessionState(sourceState) {
     const current = Object.assign({}, sourceState || readKrpanoView() || state);
     current.viewer_camera_height_m = viewerCameraHeightM;
@@ -1375,6 +1395,11 @@
     krpanoImageLoaded = true;
     logDebug("krpano image load complete");
     hideFallbackFrame();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        repositionClickTargetMarkers();
+      });
+    });
   };
 
   window.viewerKrpanoLoadError = function () {

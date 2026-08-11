@@ -1,9 +1,9 @@
 {
   "video": "241026_113301598.mp4",
   "frame_index": 4965,
-  "yaw_to_camera_heading": 14.678567999999984,
-  "pitch": 15.234696,
-  "zoom": 0.6448449464952445,
+  "yaw_to_camera_heading": 0.0,
+  "pitch": 0.0,
+  "zoom": 1.4026428147436287,
   "viewer_camera_height_m": 1.5,
   "viewer_hud_height_scale": 1.0,
   "viewer_projection": "sphere",
@@ -22,5 +22,5 @@
     "view_zoom": 0.6448449464952445,
     "projection": "ground_plane"
   },
-  "updated_at": "2026-08-10T19:33:29+09:00"
+  "updated_at": "2026-08-11T14:57:57+09:00"
 }
