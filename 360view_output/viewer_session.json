@@ -1,26 +1,14 @@
 {
-  "video": "241026_113301598.mp4",
-  "frame_index": 4965,
+  "video": "01_down.mp4",
+  "frame_index": 81977,
   "yaw_to_camera_heading": 0.0,
   "pitch": 0.0,
-  "zoom": 1.4026428147436287,
+  "zoom": 1.2857142857142858,
   "viewer_camera_height_m": 1.5,
   "viewer_hud_height_scale": 1.0,
-  "viewer_projection": "sphere",
+  "viewer_projection": "flat",
   "viewer_flat_hfov_deg": 70.0,
   "viewer_flat_vfov_deg": 43.0,
-  "viewer_front_offset_deg": 103.5903977114749,
-  "target": {
-    "x_ratio": 0.7788539144471348,
-    "y_ratio": 0.13071065989847716,
-    "yaw_delta_deg": 56.56417178555114,
-    "pitch_delta_deg": 51.90582396113244,
-    "target_yaw_to_camera_heading": 71.24273978555112,
-    "target_pitch_deg": 67.14051996113244,
-    "view_yaw_to_camera_heading": 14.678567999999984,
-    "view_pitch": 15.234696,
-    "view_zoom": 0.6448449464952445,
-    "projection": "ground_plane"
-  },
-  "updated_at": "2026-08-11T14:57:57+09:00"
+  "viewer_front_offset_deg": 0.3603944329328215,
+  "updated_at": "2026-08-21T16:59:30+09:00"
 }

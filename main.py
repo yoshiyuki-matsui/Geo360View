@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sqlite3
+import time
+import uuid
 
 from qgis.PyQt import QtGui, QtWidgets
 from qgis.PyQt.QtWidgets import (
@@ -83,6 +85,31 @@ VIEWER_TARGET_HIDDEN_COLUMNS = (
     "source_lat",
     "source_lon",
     "projection",
+)
+
+VIEWER_TARGET_FIELD_DEFS = (
+    ("video", QVariant.String),
+    ("frame", QVariant.Int),
+    ("target_id", QVariant.Int),
+    ("target_order", QVariant.Int),
+    ("x_ratio", QVariant.Double),
+    ("y_ratio", QVariant.Double),
+    ("latitude", QVariant.Double),
+    ("longitude", QVariant.Double),
+    ("distance_m", QVariant.Double),
+    ("forward_m", QVariant.Double),
+    ("bearing_deg", QVariant.Double),
+    ("yaw_delta", QVariant.Double),
+    ("target_yaw", QVariant.Double),
+    ("target_pitch", QVariant.Double),
+    ("view_yaw", QVariant.Double),
+    ("view_pitch", QVariant.Double),
+    ("view_zoom", QVariant.Double),
+    ("source_lat", QVariant.Double),
+    ("source_lon", QVariant.Double),
+    ("projection", QVariant.String),
+    ("quality", QVariant.String),
+    ("created_at", QVariant.String),
 )
 
 VIEWER_CANDIDATE_HIDDEN_COLUMNS = (
@@ -1013,7 +1040,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.loadViewerSessionCameraHeight()
             self.writeViewerRuntimeConfig(show_error=False)
             if restore_mode and self.current_frame is not None:
-                self.writeViewerSessionState({
+                self.writeViewerCommandState({
                     "video": os.path.basename(self.video_file),
                     "frame_index": int(self.current_frame),
                     "yaw_to_camera_heading": 0.0,
@@ -1119,17 +1146,25 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
 
         self.setCurrentFrame(frame_num)
+        try:
+            nav_mode = self.nav_mode.currentData()
+        except Exception:
+            nav_mode = None
+        selected_picked_target = False
+        if nav_mode == "picked":
+            selected_picked_target = self.selectViewerTargetFeature(frame_num)
         if feature is not None and self.frame_click_tool is not None:
             try:
                 self.frame_click_tool.highlightFeature(feature)
             except Exception:
                 pass
-        self.centerMapOnFeature(feature)
+        if not selected_picked_target:
+            self.centerMapOnFeature(feature)
         self.showFrameInViewer(frame_num)
         # ブラウザ表示を先に走らせ、重いJPEG抽出が体感レスポンスを邪魔しないようにする。
         QTimer.singleShot(150, lambda: self.extractFrame(frame_num, feature=feature))
 
-    def centerMapOnFeature(self, feature):
+    def centerMapOnFeature(self, feature, layer=None):
         """Follow有効時、表示フレーム地物を地図中心へ移動する。"""
         if feature is None:
             return
@@ -1141,7 +1176,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return
 
         try:
-            layer = self.activeFrameLayer()
+            layer = layer or self.activeFrameLayer()
             canvas = self.iface.mapCanvas()
             point = geom.asPoint()
             if layer is not None and layer.crs() != canvas.mapSettings().destinationCrs():
@@ -1317,7 +1352,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if getattr(self, "viewer_projection_reason_label", None) is not None:
             self.viewer_projection_reason_label.setText(self.viewer_projection_reason)
         self.writeViewerRuntimeConfig(show_error=False)
-        self.writeViewerCameraHeightSessionValue()
+        self.writeViewerCommandViewerSettings()
 
     def videoDimensions(self, video_path):
         """OpenCVで動画の幅/高さを読む。読めない場合はNoneを返す。"""
@@ -1451,11 +1486,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.viewer_projection_dirty = False
         return restored_camera or restored_hud or restored_projection or restored_front
 
-    def writeViewerCameraHeightSessionValue(self):
-        """動画選択済みならviewer条件だけでもviewer_session.jsonへ残す。"""
+    def writeViewerCommandViewerSettings(self):
+        """動画選択済みならviewer条件をviewer_command.jsonへ残す。"""
         if not self.video_file:
             return False
-        path = self.viewerSessionPath()
+        path = self.viewerCommandPath()
         current_video = os.path.basename(self.video_file)
         state = {}
         if os.path.isfile(path):
@@ -1477,33 +1512,48 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         state["viewer_flat_hfov_deg"] = self.viewerFlatHfovValue()
         state["viewer_flat_vfov_deg"] = self.viewerFlatVfovValue()
         state["viewer_front_offset_deg"] = self.videoFrontOffsetValue()
+        state["command_id"] = uuid.uuid4().hex
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp_path = f"{path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(state, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-            os.replace(tmp_path, path)
+            self.writeJsonFileAtomic(path, state)
             return True
         except OSError:
             return False
 
-    def writeViewerSessionState(self, state):
-        """QGIS側で補完したビューア状態をviewer_session.jsonへ原子的に書き戻す。"""
-        path = self.viewerSessionPath()
-        state = dict(state)
-        if "viewer_front_offset_deg" in state:
-            self.setVideoFrontOffsetValue(state.get("viewer_front_offset_deg"))
-        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    def writeJsonFileAtomic(self, path, state):
+        """同時書き込みでもtmp名が衝突しないようJSONを原子的に保存する。"""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp_path = f"{path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as handle:
                 json.dump(state, handle, ensure_ascii=False, indent=2)
                 handle.write("\n")
-            os.replace(tmp_path, path)
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, path)
+                    break
+                except OSError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+    def writeViewerCommandState(self, state):
+        """QGIS側で補完したビューア表示指示をviewer_command.jsonへ原子的に書き込む。"""
+        path = self.viewerCommandPath()
+        state = dict(state)
+        if "viewer_front_offset_deg" in state:
+            self.setVideoFrontOffsetValue(state.get("viewer_front_offset_deg"))
+        state["command_id"] = str(state.get("command_id") or uuid.uuid4().hex)
+        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            self.writeJsonFileAtomic(path, state)
             return state
         except OSError:
             return None
@@ -1512,7 +1562,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """カメラ高さ変更をランタイム設定と開いているビューアへ反映する。"""
         self.setViewerCameraHeightValue(self.viewerCameraHeightValue(), mark_dirty=True)
         self.writeViewerRuntimeConfig(show_error=False)
-        self.writeViewerCameraHeightSessionValue()
+        self.writeViewerCommandViewerSettings()
         if self.current_frame is not None and self.viewerHealth(timeout=0.15):
             self.postViewerNavigation(self.current_frame)
 
@@ -1520,14 +1570,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """HUD高さ倍率変更をランタイム設定と開いているビューアへ反映する。"""
         self.setViewerHudHeightScaleValue(self.viewerHudHeightScaleValue(), mark_dirty=True)
         self.writeViewerRuntimeConfig(show_error=False)
-        self.writeViewerCameraHeightSessionValue()
+        self.writeViewerCommandViewerSettings()
         if self.current_frame is not None and self.viewerHealth(timeout=0.15):
             self.postViewerNavigation(self.current_frame)
 
     def onVideoFrontOffsetChanged(self, _value):
-        """動画正面補正をviewer_sessionへ残し、ビューア表示へ反映する。"""
+        """動画正面補正をviewer_commandへ残し、ビューア表示へ反映する。"""
         self.setVideoFrontOffsetValue(self.videoFrontOffsetValue())
-        self.writeViewerCameraHeightSessionValue()
+        self.writeViewerCommandViewerSettings()
         if self.current_frame is not None and self.viewerHealth(timeout=0.15):
             self.postViewerNavigation(self.current_frame)
 
@@ -1571,7 +1621,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return (
             fields.indexFromName("frame") >= 0
             and fields.indexFromName("target_id") >= 0
-            and fields.indexFromName("target_yaw") >= 0
         )
 
     def isCandidateLayer(self, layer):
@@ -1651,6 +1700,50 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             except Exception:
                 continue
         return None
+
+    def findViewerTargetFeatureByFrame(self, frame_num):
+        """指定frameの保存済みクリック点地物と所属レイヤを返す。"""
+        target_frame = int(frame_num)
+        current_video = os.path.basename(self.video_file or "")
+        best_layer = None
+        best_feature = None
+        best_key = None
+        for layer in self.viewerTargetReadLayers(target_frame):
+            for feature in layer.getFeatures():
+                frame_value = self.targetFeatureFloat(feature, "frame")
+                if frame_value is None or int(frame_value) != target_frame:
+                    continue
+                feature_video = self.targetFeatureValue(feature, "video")
+                if current_video and feature_video and str(feature_video) != current_video:
+                    continue
+                target_order = self.targetFeatureFloat(feature, "target_order")
+                target_id = self.targetFeatureFloat(feature, "target_id")
+                order_key = int(target_order) if target_order is not None else 0
+                id_key = int(target_id) if target_id is not None else 0
+                key = (order_key, id_key)
+                if best_key is None or key >= best_key:
+                    best_layer = layer
+                    best_feature = feature
+                    best_key = key
+        return best_layer, best_feature
+
+    def selectViewerTargetFeature(self, frame_num):
+        """Picked pointナビ時に360 Click Targetsの該当点を選択して地図中心へ移動する。"""
+        layer, feature = self.findViewerTargetFeatureByFrame(frame_num)
+        if layer is None or feature is None:
+            return False
+        try:
+            layer.removeSelection()
+            layer.selectByIds([feature.id()])
+        except Exception:
+            pass
+        try:
+            if hasattr(self.iface, "setActiveLayer"):
+                self.iface.setActiveLayer(layer)
+        except Exception:
+            pass
+        self.centerMapOnFeature(feature, layer=layer)
+        return True
 
     def gpkgLayer(self, gpkg_path, layer_name, display_name):
         """GeoPackage内の指定レイヤをQGISレイヤとして開く。"""
@@ -2259,9 +2352,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if initial_targets:
                 initial_state["targets"] = initial_targets
                 initial_state["target"] = initial_targets[-1]
-            self.writeViewerSessionState(initial_state)
+            self.writeViewerCommandState(initial_state)
         else:
-            self.writeViewerCameraHeightSessionValue()
+            self.writeViewerCommandViewerSettings()
         self.setDatabaseRestoreMode(True)
 
         self.notifyInfo(
@@ -2306,8 +2399,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return False
         fields = layer.fields()
         missing_fields = []
-        if fields.indexFromName("quality") < 0:
-            missing_fields.append(QgsField("quality", QVariant.String))
+        for field_name, field_type in VIEWER_TARGET_FIELD_DEFS:
+            if fields.indexFromName(field_name) < 0:
+                missing_fields.append(QgsField(field_name, field_type))
         if not missing_fields:
             self.applyViewerTargetHiddenColumns(layer)
             return False
@@ -2326,26 +2420,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layer = QgsVectorLayer("Point?crs=EPSG:4326", "360 Click Targets", "memory")
         pr = layer.dataProvider()
         pr.addAttributes([
-            QgsField("video", QVariant.String),
-            QgsField("frame", QVariant.Int),
-            QgsField("target_id", QVariant.Int),
-            QgsField("target_order", QVariant.Int),
-            QgsField("latitude", QVariant.Double),
-            QgsField("longitude", QVariant.Double),
-            QgsField("distance_m", QVariant.Double),
-            QgsField("forward_m", QVariant.Double),
-            QgsField("bearing_deg", QVariant.Double),
-            QgsField("yaw_delta", QVariant.Double),
-            QgsField("target_yaw", QVariant.Double),
-            QgsField("target_pitch", QVariant.Double),
-            QgsField("view_yaw", QVariant.Double),
-            QgsField("view_pitch", QVariant.Double),
-            QgsField("view_zoom", QVariant.Double),
-            QgsField("source_lat", QVariant.Double),
-            QgsField("source_lon", QVariant.Double),
-            QgsField("projection", QVariant.String),
-            QgsField("quality", QVariant.String),
-            QgsField("created_at", QVariant.String),
+            QgsField(field_name, field_type)
+            for field_name, field_type in VIEWER_TARGET_FIELD_DEFS
         ])
         layer.updateFields()
         self.applyViewerTargetHiddenColumns(layer)
@@ -2420,7 +2496,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         for feature in layer.getFeatures():
             feature_video = self.targetFeatureValue(feature, "video")
-            if str(feature_video) != str(video_name):
+            if feature_video and str(feature_video) != str(video_name):
                 continue
             if frame_num is None:
                 return True
@@ -2490,6 +2566,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         target_order = self.targetFeatureFloat(feature, "target_order")
         target_id = int(target_id) if target_id is not None else int(fallback_order)
         target_order = int(target_order) if target_order is not None else target_id
+        x_ratio = self.targetFeatureFloat(feature, "x_ratio")
+        y_ratio = self.targetFeatureFloat(feature, "y_ratio")
         projection = self.targetFeatureValue(feature, "projection") or "ground_plane"
         distance_m = self.targetFeatureFloat(feature, "distance_m")
         map_bearing = self.targetFeatureFloat(feature, "bearing_deg")
@@ -2498,8 +2576,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         target = {
             "id": target_id,
             "order": target_order,
-            "x_ratio": 0.5,
-            "y_ratio": 0.5,
             "yaw_delta_deg": self.signedAngleDelta(0.0, yaw_delta),
             "pitch_delta_deg": max(-90.0, min(90.0, float(target_pitch) - float(view_pitch))),
             "target_yaw_to_camera_heading": float(target_yaw) % 360.0,
@@ -2511,6 +2587,20 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         }
         if str(projection) == "ground_plane" and distance_m is not None and distance_m > 0:
             target["ground_distance_m"] = float(distance_m)
+        has_legacy_center_ratio = (
+            x_ratio is not None
+            and y_ratio is not None
+            and abs(float(x_ratio) - 0.5) < 0.000001
+            and abs(float(y_ratio) - 0.5) < 0.000001
+            and (
+                abs(float(yaw_delta)) > 0.001
+                or abs(float(target_pitch) - float(view_pitch)) > 0.001
+            )
+        )
+        if x_ratio is not None and not has_legacy_center_ratio:
+            target["x_ratio"] = max(0.0, min(1.0, float(x_ratio)))
+        if y_ratio is not None and not has_legacy_center_ratio:
+            target["y_ratio"] = max(0.0, min(1.0, float(y_ratio)))
         if map_bearing is not None:
             target["map_bearing_deg"] = float(map_bearing) % 360.0
         if quality:
@@ -3630,8 +3720,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         quality = self.targetFeatureValue(feature, "quality")
 
         target_source = self.targetFeatureValue(feature, "target_source") or "yolo_candidate"
-        x_ratio = 0.5
-        y_ratio = 0.5
+        x_ratio = None
+        y_ratio = None
         bbox_x_ratio = None
         bbox_y_ratio = None
         flat_auto = False
@@ -3697,8 +3787,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             x_ratio = bbox_x_ratio
             y_ratio = bbox_y_ratio
         target = {
-            "x_ratio": x_ratio,
-            "y_ratio": y_ratio,
             "yaw_delta_deg": 0.0,
             "pitch_delta_deg": 0.0,
             "target_yaw_to_camera_heading": float(target_yaw) % 360.0,
@@ -3710,6 +3798,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "target_source": str(target_source),
             "viewer_marker": self.targetFeatureValue(feature, "viewer_marker") or "target_point",
         }
+        if x_ratio is not None and y_ratio is not None:
+            target["x_ratio"] = x_ratio
+            target["y_ratio"] = y_ratio
         if map_target_yaw is not None:
             target["map_target_yaw_to_camera_heading"] = float(map_target_yaw) % 360.0
         if map_bearing is not None:
@@ -3863,6 +3954,29 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return True
         return has_meaningful_payload(state.get("target"))
 
+    def viewerSessionHasUserClickTarget(self, state):
+        """session内にユーザが明示保存したクリック点があるかを返す。"""
+        if not isinstance(state, dict):
+            return False
+
+        def is_user_click(target):
+            if not isinstance(target, dict):
+                return False
+            target_source = str(target.get("target_source") or "").strip().lower()
+            if target_source in ("viewer_click", "manual_click", "user_click"):
+                return True
+            return (
+                target.get("candidate_id") in (None, "")
+                and target.get("semantic_class") in (None, "")
+                and target.get("viewer_marker") in (None, "")
+                and (target.get("id") is not None or target.get("order") is not None)
+            )
+
+        targets = state.get("targets")
+        if isinstance(targets, list) and any(is_user_click(target) for target in targets):
+            return True
+        return is_user_click(state.get("target"))
+
     def restoreViewerTargetsForState(self, state):
         """現在sessionに点が無ければ、Navモードに応じたtargetを補完して返す。"""
         if not isinstance(state, dict):
@@ -3881,19 +3995,21 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             nav_mode = ""
 
         if nav_mode == "detect":
+            if self.viewerSessionHasUserClickTarget(state):
+                return state
             targets = self.viewerDetectionTargetsForFrame(frame_index)
             if not targets:
                 if isinstance(state.get("target"), dict) or isinstance(state.get("targets"), list):
                     restored_state = dict(state)
                     restored_state.pop("target", None)
                     restored_state.pop("targets", None)
-                    written_state = self.writeViewerSessionState(restored_state)
+                    written_state = self.writeViewerCommandState(restored_state)
                     return written_state if isinstance(written_state, dict) else restored_state
                 return state
             restored_state = dict(state)
             restored_state["targets"] = targets
             restored_state["target"] = targets[0]
-            written_state = self.writeViewerSessionState(restored_state)
+            written_state = self.writeViewerCommandState(restored_state)
             return written_state if isinstance(written_state, dict) else restored_state
 
         if self.viewerSessionHasMeaningfulTarget(state):
@@ -3906,7 +4022,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         restored_state = dict(state)
         restored_state["targets"] = targets
         restored_state["target"] = targets[-1]
-        written_state = self.writeViewerSessionState(restored_state)
+        written_state = self.writeViewerCommandState(restored_state)
         return written_state if isinstance(written_state, dict) else restored_state
 
     def viewerTargetKey(self, video_name, frame_index, projection):
@@ -3928,9 +4044,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def registeredViewerTargetKeys(self, layer):
         """既存レイヤ内容から登録済みキー集合を復元する。"""
-        keys = set(getattr(self, "saved_viewer_target_keys", set()))
-        if keys:
-            return keys
+        keys = set()
 
         frame_idx = layer.fields().indexFromName("frame")
         video_idx = layer.fields().indexFromName("video")
@@ -3952,13 +4066,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def storeViewerTargetProjections(self, state, source_lat, source_lon, target_projections):
         """360クリック投影点を緯度経度geometryと属性として自前レイヤへ保存する。"""
+        def is_user_click_projection(projection):
+            """候補表示由来ではなく、ユーザが明示保存したクリック点だけを保存対象にする。"""
+            target_source = str(projection.get("target_source") or "").strip().lower()
+            if target_source and target_source not in ("viewer_click", "manual_click", "user_click"):
+                return False
+            if projection.get("candidate_id") not in (None, ""):
+                return False
+            if projection.get("semantic_class") not in (None, ""):
+                return False
+            if projection.get("viewer_marker") not in (None, ""):
+                return False
+            return projection.get("id") is not None or projection.get("order") is not None
+
         storable_projections = [
             projection for projection in target_projections
-            if (
-                projection.get("id") is not None
-                or projection.get("order") is not None
-            )
-            and projection.get("target_source") not in ("yolo_candidate", "auto_point")
+            if is_user_click_projection(projection)
         ]
         if not storable_projections:
             return
@@ -3989,6 +4112,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "frame": int(frame_index),
                 "target_id": int(target_id) if target_id is not None else None,
                 "target_order": int(target_order) if target_order is not None else None,
+                "x_ratio": float(projection.get("x_ratio")) if projection.get("x_ratio") is not None else None,
+                "y_ratio": float(projection.get("y_ratio")) if projection.get("y_ratio") is not None else None,
                 "latitude": float(point.y()),
                 "longitude": float(point.x()),
                 "distance_m": float(projection.get("distance_m")) if projection.get("distance_m") is not None else None,
@@ -4007,16 +4132,25 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "created_at": now_text,
             }
             feat.setAttributes([values.get(field.name()) for field in layer.fields()])
-            features.append(feat)
-            existing_keys.add(key)
+            features.append((key, feat))
 
         if not features:
             return
-        layer.dataProvider().addFeatures(features)
+        ok, added_features = layer.dataProvider().addFeatures([feature for _key, feature in features])
+        if not ok:
+            notifier = getattr(self, "reportViewerTargetStoreStatus", None)
+            if callable(notifier):
+                notifier("failed: addFeatures returned false", warning=True)
+            return
         layer.updateExtents()
         layer.triggerRepaint()
         self.markLayerSaveOnExit(layer)
+        for key, _feature in features[:len(added_features)]:
+            existing_keys.add(key)
         self.saved_viewer_target_keys = existing_keys
+        notifier = getattr(self, "reportViewerTargetStoreStatus", None)
+        if callable(notifier):
+            notifier(f"saved {len(added_features)} point(s) to 360 Click Targets")
 
     def matchedFrameCsvPaths(self):
         """KPマッチ済みフレームCSVの探索候補パスを返す。"""
@@ -4071,8 +4205,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 video_name = os.path.basename(self.video_file or "")
                 feature_video = self.targetFeatureValue(feature, "video")
                 if video_name and feature_video and str(feature_video) != video_name:
-                    continue
-                if not self.candidateFeatureMatchesViewerProjection(feature):
                     continue
                 frames.append(int(frame_value))
         return sorted(set(frames))

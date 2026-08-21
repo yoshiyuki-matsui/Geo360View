@@ -8,6 +8,8 @@ import math
 import mimetypes
 import os
 import re
+import time
+import uuid
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -112,6 +114,9 @@ def load_config() -> dict[str, Any]:
 
     video_dir = resolve_config_path(raw.get("video_dir", "sample_videos"))
     session_json_path = resolve_config_path(raw.get("session_json_path", "session.json"))
+    command_json_path = resolve_config_path(
+        raw.get("command_json_path", session_json_path.with_name("viewer_command.json"))
+    )
     viewer_cache_dir = resolve_config_path(raw.get("viewer_cache_dir", "viewer_cache"))
 
     return {
@@ -119,6 +124,7 @@ def load_config() -> dict[str, Any]:
         "port": int(raw.get("port", 8181)),
         "video_dir": video_dir,
         "session_json_path": session_json_path,
+        "command_json_path": command_json_path,
         "viewer_jpeg_quality": max(1, min(100, int(raw.get("viewer_jpeg_quality", 70)))),
         "viewer_progressive_jpeg": parse_bool(raw.get("viewer_progressive_jpeg", True)),
         "viewer_max_width": max(0, int(raw.get("viewer_max_width", 3072))),
@@ -338,10 +344,22 @@ def read_session() -> dict[str, Any]:
         return {}
 
 
-def write_session(state: dict[str, Any]) -> dict[str, Any]:
-    """ビューア状態をviewer_session.jsonへ原子的に書き込む。"""
+def read_command() -> dict[str, Any]:
+    """QGISからビューアへ送る表示指示JSONを読み込む。"""
     cfg = load_config()
-    path = cfg["session_json_path"]
+    path = cfg["command_json_path"]
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_state_file(path: Path, state: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    """ビューア状態JSONを指定パスへ原子的に書き込む。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     state = dict(state)
     state["viewer_camera_height_m"] = normalize_camera_height(
@@ -355,12 +373,38 @@ def write_session(state: dict[str, Any]) -> dict[str, Any]:
     state["updated_at"] = now_iso()
 
     # QGIS側ポーリングが途中書き込みを読まないよう、一時ファイルから置換する。
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except OSError:
+                if attempt >= 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
     return state
+
+
+def write_session(state: dict[str, Any]) -> dict[str, Any]:
+    """ブラウザの現在状態をviewer_session.jsonへ原子的に書き込む。"""
+    cfg = load_config()
+    return write_state_file(cfg["session_json_path"], state, cfg)
+
+
+def write_command(state: dict[str, Any]) -> dict[str, Any]:
+    """QGISからビューアへの表示指示をviewer_command.jsonへ原子的に書き込む。"""
+    cfg = load_config()
+    return write_state_file(cfg["command_json_path"], state, cfg)
 
 
 def state_from_request_args(query: dict[str, list[str]], video: str, frame_index: int) -> dict[str, Any]:
@@ -428,6 +472,11 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
             )
         except ApiError:
             pass
+    applied_command_id = str(payload.get("applied_command_id") or "").strip()
+    if applied_command_id:
+        state["applied_command_id"] = applied_command_id
+    if payload.get("viewer_image_loaded") is not None:
+        state["viewer_image_loaded"] = bool(payload.get("viewer_image_loaded"))
     target = validate_target_payload(payload.get("target"))
     if target:
         state["target"] = target
@@ -450,8 +499,6 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         return None
 
     try:
-        x_ratio = max(0.0, min(1.0, parse_float(payload.get("x_ratio"), "target.x_ratio", 0.5)))
-        y_ratio = max(0.0, min(1.0, parse_float(payload.get("y_ratio"), "target.y_ratio", 0.5)))
         yaw_delta_deg = normalize_signed_yaw(parse_float(payload.get("yaw_delta_deg"), "target.yaw_delta_deg", 0.0))
         pitch_delta_deg = max(-90.0, min(90.0, parse_float(payload.get("pitch_delta_deg"), "target.pitch_delta_deg", 0.0)))
         target_yaw = normalize_yaw(parse_float(payload.get("target_yaw_to_camera_heading"), "target.target_yaw_to_camera_heading"))
@@ -480,8 +527,6 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
             ground_distance_m = None
 
     target = {
-        "x_ratio": x_ratio,
-        "y_ratio": y_ratio,
         "yaw_delta_deg": yaw_delta_deg,
         "pitch_delta_deg": pitch_delta_deg,
         "target_yaw_to_camera_heading": target_yaw,
@@ -491,6 +536,15 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         "view_zoom": view_zoom,
         "projection": projection,
     }
+    for key in ("x_ratio", "y_ratio"):
+        if payload.get(key) is None:
+            continue
+        try:
+            ratio = parse_float(payload.get(key), f"target.{key}")
+            if math.isfinite(ratio):
+                target[key] = max(0.0, min(1.0, ratio))
+        except ApiError:
+            pass
     if ground_distance_m is not None:
         target["ground_distance_m"] = ground_distance_m
     if quality:
@@ -604,6 +658,7 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return value
 
     state = {
+        "command_id": str(payload.get("command_id") or uuid.uuid4().hex),
         "video": video,
         "frame_index": frame_index,
         "yaw_to_camera_heading": normalize_yaw(parse_float(view_value("yaw_to_camera_heading"), "yaw_to_camera_heading")),
@@ -920,6 +975,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self.send_json(read_session())
                 return
 
+            if parsed.path == "/api/session/viewer-command":
+                self.send_json(read_command())
+                return
+
             if parsed.path == "/api/navigation":
                 video = safe_video_name(query_value(query, "video", ""))
                 frame_index = parse_frame_index(query_value(query, "frame_index"))
@@ -1001,7 +1060,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/session/navigate":
                 payload = self.read_json_body()
-                state = write_session(state_from_navigation_payload(payload))
+                state = write_command(state_from_navigation_payload(payload))
                 self.send_json(state)
                 return
 

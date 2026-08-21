@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import sys
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -33,6 +34,10 @@ class ViewerControllerMixin:
     def viewerSessionPath(self):
         """WEBビューアとQGISが共有する視点状態JSONのパスを返す。"""
         return os.path.join(self.resolvedOutputDir(), "viewer_session.json")
+
+    def viewerCommandPath(self):
+        """QGISからWEBビューアへ送る表示指示JSONのパスを返す。"""
+        return os.path.join(self.resolvedOutputDir(), "viewer_command.json")
 
     def viewerCacheDir(self):
         """WEBビューア専用の軽量JPEGキャッシュディレクトリを返す。"""
@@ -100,6 +105,7 @@ class ViewerControllerMixin:
             "port": viewer_config.port,
             "video_dir": viewer_config.video_dir,
             "session_json_path": viewer_config.session_json_path,
+            "command_json_path": self.viewerCommandPath(),
             "viewer_jpeg_quality": viewer_config.jpeg_quality,
             "viewer_progressive_jpeg": viewer_config.progressive_jpeg,
             "viewer_max_width": viewer_config.max_width,
@@ -392,9 +398,12 @@ class ViewerControllerMixin:
         if self.viewerHealth(timeout=0.75):
             opens_viewer_page = frame_num is not None and bool(self.video_file)
             if not opens_viewer_page:
+                url = self.viewerUrl()
+                self.openViewerUrl(url)
+                self.viewer_browser_opened = True
                 self.iface.messageBar().pushMessage(
                     PLUGIN_TITLE,
-                    f"360Viewer is running: {self.viewerBaseUrl()}"
+                    f"360Viewer opened: {url}"
                 )
                 return
             self.postViewerNavigation(frame_num)
@@ -438,6 +447,7 @@ class ViewerControllerMixin:
             return False
 
         payload = {
+            "command_id": uuid.uuid4().hex,
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
             "viewer_camera_height_m": self.viewerCameraHeightValue(),

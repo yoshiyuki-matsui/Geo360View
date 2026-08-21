@@ -71,12 +71,10 @@ class RadarMixin:
         if frame_index is None:
             return
 
-        restore_targets = getattr(self, "restoreViewerTargetsForState", None)
-        if callable(restore_targets):
-            try:
-                state = restore_targets(state)
-            except Exception as e:
-                print(f"Viewer target restore failed: {e}")
+        try:
+            self.storeViewerTargetsFromSessionState(state, frame_index)
+        except Exception as e:
+            self.reportViewerTargetStoreStatus(f"failed: {e}", warning=True)
 
         yaw = _parse_float(state.get("yaw_to_camera_heading"))
         pitch = _parse_float(state.get("pitch"))
@@ -132,6 +130,38 @@ class RadarMixin:
             self.renderViewerRadar(state)
         except Exception as e:
             print(f"Viewer radar update failed: {e}")
+
+    def storeViewerTargetsFromSessionState(self, state, frame_index):
+        """viewer_session.jsonの手動クリック点を、レーダ描画とは独立してレイヤへ保存する。"""
+        if not self.viewerTargetPayloads(state):
+            return
+        lat, lon, _feature = self.framePosition(frame_index)
+        if lat is None or lon is None:
+            self.reportViewerTargetStoreStatus(f"skipped: no frame position for frame {frame_index}", warning=True)
+            return
+        heading, _trajectory_radius_m = self.radarHeadingAndRadius(frame_index)
+        state = self.persistViewerBearingOffsetForState(heading, state)
+        target_projections = self.viewerTargetProjections(lat, lon, heading, state)
+        if not target_projections:
+            self.reportViewerTargetStoreStatus(f"skipped: no projection for frame {frame_index}", warning=True)
+            return
+        store_targets = getattr(self, "storeViewerTargetProjections", None)
+        if callable(store_targets):
+            store_targets(state, lat, lon, target_projections)
+
+    def reportViewerTargetStoreStatus(self, message, warning=False):
+        """クリック点保存の診断を同じ内容で連発しないように表示する。"""
+        key = (str(message), bool(warning))
+        if getattr(self, "last_viewer_target_store_status", None) == key:
+            return
+        self.last_viewer_target_store_status = key
+        notifier_name = "notifyWarningText" if warning else "notifyInfoText"
+        notifier = getattr(self, notifier_name, None)
+        text = f"Viewer target store {message}"
+        if callable(notifier):
+            notifier(text)
+        else:
+            print(text)
 
     def sessionFrameIndex(self, state):
         """ビューア状態から整数フレーム番号を取り出す。"""
@@ -802,7 +832,7 @@ class RadarMixin:
             projection["id"] = target.get("id")
         if target.get("order") is not None:
             projection["order"] = target.get("order")
-        for key in ("target_source", "viewer_marker", "candidate_id", "semantic_class", "confidence", "map_bearing_deg"):
+        for key in ("target_source", "viewer_marker", "candidate_id", "semantic_class", "confidence", "map_bearing_deg", "x_ratio", "y_ratio"):
             if target.get(key) is not None:
                 projection[key] = target.get(key)
         return projection

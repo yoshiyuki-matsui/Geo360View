@@ -17,7 +17,6 @@
   const GROUND_RING_SAMPLE_COUNT = 96;
   const GROUND_GRID_SAMPLE_COUNT = 64;
   const MAX_CLICK_TARGETS = 100;
-  const SINGLE_CLICK_DELAY_MS = 320;
   const VIEW_STATE_POST_INTERVAL_MS = 1000;
   const EXTERNAL_SESSION_POLL_INTERVAL_MS = 300;
   const TARGET_CLEAR_GRACE_MS = 900;
@@ -27,10 +26,13 @@
   let postTimer = null;
   let suppressPostUntil = 0;
   let lastExternalSignature = null;
+  let lastAppliedCommandId = String(state.applied_command_id || "");
+  let pendingCommandId = "";
   let lastMarkerSignature = null;
   let pendingEmptyTargetKey = null;
   let pendingEmptyTargetSince = 0;
-  let singleClickTimer = null;
+  let transientNoticeTimer = null;
+  let markerFlashTimer = null;
   let krpanoReady = false;
   let krpanoImageLoaded = false;
   let debugLogVisible = false;
@@ -248,6 +250,34 @@
     }
     notice.hidden = false;
     notice.innerHTML = list.map((message) => `<div>${message}</div>`).join("");
+  }
+
+  function showTransientNotice(message, timeoutMs) {
+    if (transientNoticeTimer) {
+      window.clearTimeout(transientNoticeTimer);
+      transientNoticeTimer = null;
+    }
+    setNotice([message]);
+    transientNoticeTimer = window.setTimeout(() => {
+      transientNoticeTimer = null;
+      if (!notice.hidden && notice.textContent.trim() === message) {
+        setNotice([]);
+      }
+    }, timeoutMs || 2200);
+  }
+
+  function flashSavedClickTargetMarker() {
+    if (!clickTargetMarker) {
+      return;
+    }
+    clickTargetMarker.classList.add("click-target-marker-saved");
+    if (markerFlashTimer) {
+      window.clearTimeout(markerFlashTimer);
+    }
+    markerFlashTimer = window.setTimeout(() => {
+      markerFlashTimer = null;
+      clickTargetMarker.classList.remove("click-target-marker-saved");
+    }, 900);
   }
 
   function logDebug(message) {
@@ -793,6 +823,41 @@
     return target ? [target] : [];
   }
 
+  function isUserClickTarget(target) {
+    if (!target || typeof target !== "object") {
+      return false;
+    }
+    const targetSource = String(target.target_source || "").trim().toLowerCase();
+    if (targetSource === "viewer_click" || targetSource === "manual_click" || targetSource === "user_click") {
+      return true;
+    }
+    return (
+      (target.candidate_id === undefined || target.candidate_id === null || target.candidate_id === "")
+      && (target.semantic_class === undefined || target.semantic_class === null || target.semantic_class === "")
+      && (target.viewer_marker === undefined || target.viewer_marker === null || target.viewer_marker === "")
+      && (target.id !== undefined || target.order !== undefined)
+    );
+  }
+
+  function hasUserClickTarget(targets) {
+    return Array.isArray(targets) && targets.some(isUserClickTarget);
+  }
+
+  function isAutoTarget(target) {
+    if (!target || typeof target !== "object") {
+      return false;
+    }
+    const targetSource = String(target.target_source || "").trim().toLowerCase();
+    return Boolean(
+      targetSource === "yolo_candidate"
+      || targetSource === "auto_point"
+      || targetSource === "yolo_pinhole"
+      || target.viewer_marker === "target_point"
+      || target.candidate_id
+      || target.semantic_class
+    );
+  }
+
   function clickTargetLabelText(target) {
     const id = Number(target.id || target.order);
     const idText = Number.isFinite(id) && id > 0 ? `[${id}]` : "";
@@ -876,6 +941,9 @@
   }
 
   function projectClickTargetMarkerWithKrpano(target, stageRect) {
+    if (isFlatProjection()) {
+      return null;
+    }
     if (!krpano || !krpano.actions || typeof krpano.actions.spheretoscreen !== "function") {
       return null;
     }
@@ -931,6 +999,24 @@
     };
   }
 
+  function markerProjectionViewState(target) {
+    const activeView = readKrpanoView() || state;
+    if (!isFlatProjection() || !target || typeof target !== "object") {
+      return activeView;
+    }
+    const viewYaw = Number(target.view_yaw_to_camera_heading);
+    const viewPitch = Number(target.view_pitch);
+    const viewZoom = Number(target.view_zoom);
+    if (!Number.isFinite(viewYaw) || !Number.isFinite(viewPitch) || !Number.isFinite(viewZoom)) {
+      return activeView;
+    }
+    return Object.assign({}, activeView || {}, {
+      yaw_to_camera_heading: normalizeYaw(viewYaw),
+      pitch: normalizePitch(viewPitch),
+      zoom: normalizeZoom(viewZoom)
+    });
+  }
+
   function projectClickTargetMarkerImageXY(target, stageRect) {
     if (!isFlatProjection()) {
       return null;
@@ -954,9 +1040,15 @@
     if (!stageRect.width || !stageRect.height) {
       return null;
     }
-    return projectClickTargetMarkerImageXY(target, stageRect)
-      || projectClickTargetMarkerWithKrpano(target, stageRect)
-      || projectClickTargetMarkerFallback(target, readKrpanoView() || state, stageRect);
+    const imageProjection = projectClickTargetMarkerImageXY(target, stageRect);
+    if (imageProjection) {
+      return imageProjection;
+    }
+    if (isFlatProjection() && isAutoTarget(target)) {
+      return null;
+    }
+    return projectClickTargetMarkerWithKrpano(target, stageRect)
+      || projectClickTargetMarkerFallback(target, markerProjectionViewState(target), stageRect);
   }
 
   function ensureLockGuideOverlay() {
@@ -1153,7 +1245,7 @@
       targets.slice(0, MAX_CLICK_TARGETS).map(targetSignature).join("~")
     ].join("::");
     if (markerSignature === lastMarkerSignature) {
-      updateLockGuide(targets[0]);
+      repositionClickTargetMarkers();
       return;
     }
     lastMarkerSignature = markerSignature;
@@ -1193,6 +1285,10 @@
     const current = Object.assign({}, sourceState || readKrpanoView() || state);
     current.viewer_camera_height_m = viewerCameraHeightM;
     current.viewer_hud_height_scale = viewerHudHeightScale;
+    current.viewer_image_loaded = Boolean(krpanoImageLoaded);
+    if (state.applied_command_id) {
+      current.applied_command_id = state.applied_command_id;
+    }
     const viewerFrontOffset = Number(state.viewer_front_offset_deg);
     current.viewer_projection = normalizeViewerProjection(state.viewer_projection);
     current.viewer_flat_hfov_deg = normalizeFovDeg(state.viewer_flat_hfov_deg, 70);
@@ -1294,65 +1390,37 @@
     if (!panoStage) {
       return;
     }
-    function clearSingleClickTimer() {
-      if (singleClickTimer) {
-        window.clearTimeout(singleClickTimer);
-        singleClickTimer = null;
-      }
-    }
-
-    function commitSingleClickTarget(target) {
-      state.target = target;
-      updateReadout(readKrpanoView() || state);
-      postViewerState(true);
-      logDebug(`target click yaw=${target.target_yaw_to_camera_heading.toFixed(2)} delta=${target.yaw_delta_deg.toFixed(2)}`);
-    }
-
     function nextTargetId() {
       return normalizedClickTargets().reduce((maxId, target) => {
         return Math.max(maxId, Number(target.id) || Number(target.order) || 0);
       }, 0) + 1;
     }
 
-    function appendClickTarget(target) {
+    async function appendClickTarget(target) {
       const id = nextTargetId();
       const savedTarget = Object.assign({}, target, {
         id,
-        order: id
+        order: id,
+        target_source: "viewer_click"
       });
       const targets = normalizedClickTargets();
       targets.push(savedTarget);
       state.targets = targets.slice(-MAX_CLICK_TARGETS);
       state.target = savedTarget;
       updateReadout(readKrpanoView() || state);
-      postViewerState(true);
+      const posted = await postViewerState(true);
+      if (posted) {
+        showTransientNotice(`Saved picked point #${id}`);
+        flashSavedClickTargetMarker();
+      }
       logDebug(`target dblclick #${id} yaw=${savedTarget.target_yaw_to_camera_heading.toFixed(2)} delta=${savedTarget.yaw_delta_deg.toFixed(2)}`);
     }
-
-    panoStage.addEventListener("click", (event) => {
-      if (event.defaultPrevented || event.button !== 0) {
-        return;
-      }
-      if (event.detail > 1) {
-        return;
-      }
-      const target = screenClickTarget(event);
-      if (!target) {
-        return;
-      }
-      clearSingleClickTimer();
-      singleClickTimer = window.setTimeout(() => {
-        singleClickTimer = null;
-        commitSingleClickTarget(target);
-      }, SINGLE_CLICK_DELAY_MS);
-    }, true);
 
     panoStage.addEventListener("dblclick", (event) => {
       if (event.defaultPrevented || event.button !== 0) {
         return;
       }
       event.preventDefault();
-      clearSingleClickTimer();
       const target = screenClickTarget(event);
       if (!target) {
         return;
@@ -1393,6 +1461,11 @@
 
   window.viewerKrpanoLoadComplete = function () {
     krpanoImageLoaded = true;
+    if (pendingCommandId) {
+      state.applied_command_id = pendingCommandId;
+      pendingCommandId = "";
+      postViewerState(true, state);
+    }
     logDebug("krpano image load complete");
     hideFallbackFrame();
     requestAnimationFrame(() => {
@@ -1465,7 +1538,7 @@
   function noteExternalSession(session) {
     const signature = sessionSignature(session);
     if (signature && signature !== sessionSignature(state) && signature !== lastExternalSignature) {
-      // QGIS writes viewer_session.json independently. Without this guard, the
+      // QGIS writes viewer_command.json independently. Without this guard, the
       // browser's periodic view-state POST can race and restore the previous POI.
       suppressPostUntil = Date.now() + 1200;
     }
@@ -1541,11 +1614,18 @@
       video: nextVideo,
       frame_index: nextFrame
     });
+    const commandId = String(nextState.command_id || "");
+    if (commandId) {
+      lastAppliedCommandId = commandId;
+      pendingCommandId = commandId;
+      state.applied_command_id = "";
+    }
     state.radar = nextRadar;
     state.targets = nextTargets;
     state.target = nextTarget || (nextTargets.length ? nextTargets[nextTargets.length - 1] : null);
     updateReadout(state);
     updateBrowserUrl(nextVideo, nextFrame);
+    krpanoImageLoaded = false;
     postViewerState(true, state);
     refreshNavigation(nextVideo, nextFrame);
 
@@ -1555,10 +1635,14 @@
     fallbackFrame.dataset.src = nextFrameUrl;
 
     if (!krpano || !krpanoReady || typeof krpano.call !== "function") {
+      if (commandId) {
+        state.applied_command_id = commandId;
+        pendingCommandId = "";
+        postViewerState(true, state);
+      }
       return false;
     }
 
-    krpanoImageLoaded = false;
     const sceneUrl = krpanoSceneUrl(nextVideo, nextFrame, requestedView);
     logDebug(`krpano loadpano ${sceneUrl}`);
     krpano.call(`loadpano("${sceneUrl}", null, MERGE, BLEND(0.2));`);
@@ -1567,7 +1651,7 @@
 
   async function postViewerState(immediate, sourceState, options) {
     if (!immediate && Date.now() < suppressPostUntil) {
-      return;
+      return false;
     }
 
     const current = currentSessionState(sourceState);
@@ -1581,17 +1665,33 @@
     updateReadout(current);
 
     if (!immediate && sameState(current, lastPosted)) {
-      return;
+      return true;
     }
 
     lastPosted = Object.assign({}, current);
-    await fetch("/api/session/viewer-state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(current)
-    }).catch((error) => {
-      setNotice([`Failed to update session.json: ${error}`]);
-    });
+    try {
+      const response = await fetch("/api/session/viewer-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(current)
+      });
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (payload && payload.error) {
+            detail = `${detail}: ${payload.error}`;
+          }
+        } catch (parseError) {
+          // Keep the HTTP status when the server did not return JSON.
+        }
+        throw new Error(detail);
+      }
+      return true;
+    } catch (error) {
+      setNotice([`Failed to update viewer_session.json: ${error}`]);
+      return false;
+    }
   }
 
   function schedulePost() {
@@ -1666,7 +1766,7 @@
   }
 
   async function pollExternalNavigation() {
-    const response = await fetch(`/api/session/viewer-state?_=${Date.now()}`, {
+    const response = await fetch(`/api/session/viewer-command?_=${Date.now()}`, {
       cache: "no-store"
     }).catch(() => null);
     if (!response || !response.ok) {
@@ -1675,6 +1775,10 @@
 
     const session = await response.json().catch(() => null);
     if (!session || !session.video || session.frame_index === undefined || session.frame_index === null) {
+      return;
+    }
+    const commandId = String(session.command_id || "");
+    if (commandId && commandId === lastAppliedCommandId && sameFrame(session, state)) {
       return;
     }
 
@@ -1715,6 +1819,13 @@
     } else {
       pendingEmptyTargetKey = null;
       pendingEmptyTargetSince = 0;
+    }
+    const currentTargets = displayClickTargets();
+    if (hasUserClickTarget(currentTargets) && !hasUserClickTarget(incomingTargets)) {
+      updateReadout(readKrpanoView() || state);
+      updateGroundRings(readKrpanoView() || state);
+      lastPosted = currentSessionState(state);
+      return;
     }
     state.targets = Array.isArray(session.targets) ? session.targets : [];
     state.target = session.target && typeof session.target === "object"

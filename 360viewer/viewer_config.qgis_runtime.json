@@ -3,6 +3,7 @@
   "port": 8181,
   "video_dir": "W:\\workshop\\nishitetsu\\data",
   "session_json_path": "W:\\workshop\\nishitetsu\\viewer_session.json",
+  "command_json_path": "W:\\workshop\\nishitetsu\\viewer_command.json",
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
