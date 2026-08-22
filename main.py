@@ -4364,26 +4364,30 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return target, self.findFeatureByFrame(target)
 
         if mode == "picked":
-            frames = self.pickedFrames()
-            if not frames:
-                self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
-                return None, None
-            target = self.steppedFrame(frames, current_frame, direction, step_count)
-            if target is None:
-                self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
-                return None, None
-            return target, self.findFeatureByFrame(target)
+            if fast:
+                frames = self.pickedFrames()
+                if not frames:
+                    self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
+                    return None, None
+                target = self.steppedFrame(frames, current_frame, direction, 1)
+                if target is None:
+                    self.notifyWarning("no_picked_frame", direction="next" if direction > 0 else "previous")
+                    return None, None
+                return target, self.findFeatureByFrame(target)
+            return self.frameStepNavigationTarget(current_frame, direction, step_count)
 
         if mode == "detect":
-            frames = self.detectionFrames()
-            if not frames:
-                self.notifyWarning("no_detection_frame", direction="next" if direction > 0 else "previous")
-                return None, None
-            target = self.steppedFrame(frames, current_frame, direction, step_count)
-            if target is None:
-                self.notifyWarning("no_detection_frame", direction="next" if direction > 0 else "previous")
-                return None, None
-            return target, self.findFeatureByFrame(target)
+            if fast:
+                frames = self.detectionFrames()
+                if not frames:
+                    self.notifyWarning("no_detection_frame", direction="next" if direction > 0 else "previous")
+                    return None, None
+                target = self.steppedFrame(frames, current_frame, direction, 1)
+                if target is None:
+                    self.notifyWarning("no_detection_frame", direction="next" if direction > 0 else "previous")
+                    return None, None
+                return target, self.findFeatureByFrame(target)
+            return self.frameStepNavigationTarget(current_frame, direction, step_count)
 
         layer = self.activeFrameLayer()
         if layer is None:
