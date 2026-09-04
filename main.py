@@ -1,4 +1,4 @@
-"""GPXVideoProcessor QGISプラグインのUIと全体制御。"""
+"""Geo360View QGISプラグインのUIと全体制御。"""
 
 import csv
 from datetime import datetime, timezone
@@ -56,7 +56,7 @@ from .frame_extract import FrameExtractMixin
 from .kp import build_kp_matches
 from .map_tools import FrameIdentifyTool
 from .messages import message_text, ui_text
-from .processor import GPXVideoProcessor
+from .processor import Geo360View
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
 
@@ -4766,7 +4766,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(False)
 
-        self.worker = GPXVideoProcessor(
+        self.worker = Geo360View(
             config.gpx_file,
             config.video_file,
             frame_shift=config.frame_shift

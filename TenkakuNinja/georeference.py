@@ -2,7 +2,7 @@
 
 This module is QGIS-independent.  It reads click-compatible
 semantic_targets_360 rows, combines them with camera positions from the
-GPXVideoProcessor GeoPackage, and writes poi_candidates_360.
+Geo360View GeoPackage, and writes poi_candidates_360.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def normalize_text_values(values) -> tuple[str, ...]:
 
 
 def read_gpkg_job_metadata(database: Path) -> dict:
-    """Read GPXVideoProcessor job metadata from tmp.gpkg when available."""
+    """Read Geo360View job metadata from tmp.gpkg when available."""
 
     try:
         with sqlite3.connect(database) as conn:
@@ -211,7 +211,7 @@ def read_camera_positions(
     layer: str = DEFAULT_GPX_LAYER,
     frame_column: str | None = None,
 ) -> dict[int, geo_projection.GeoPoint]:
-    """Read camera frame positions from GPXVideoProcessor GeoPackage."""
+    """Read camera frame positions from Geo360View GeoPackage."""
 
     conn = connect_readonly_sqlite(database)
     try:

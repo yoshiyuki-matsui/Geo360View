@@ -3,7 +3,7 @@
 ## 背景
 
 `tenkaku_ninja_poi` で生成した `poi_clusters_road_360` を
-GPXVideoProcessor の `Detection check` で巡回し、CubeMap 検出由来の POI を
+Geo360View の `Detection check` で巡回し、CubeMap 検出由来の POI を
 元の 360 動画視点で確認できることを確認しました。
 
 当日の実データでは以下の規模でした。
@@ -20,7 +20,7 @@ GPXVideoProcessor の `Detection check` で巡回し、CubeMap 検出由来の P
 
 QGIS 属性テーブル内のフィルタ欄で式を入れて `適用` しても、
 レイヤの `subsetString()` は設定されません。
-そのため、GPXVideoProcessor の `Detection check` から見ると全件が対象になります。
+そのため、Geo360View の `Detection check` から見ると全件が対象になります。
 
 Nav に効くのは、レイヤ本体の subset filter です。
 

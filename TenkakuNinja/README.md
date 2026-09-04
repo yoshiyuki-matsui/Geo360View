@@ -9,7 +9,7 @@
 既存の `python TenkakuNinja/yolo_detect.py ...` 形式はまだ壊しません。
 次段階で、POI系ファイルを薄いshimへ置き換えます。
 
-GPXVideoProcessorが生成したGeoPackageと元MP4から、条件に合うフレーム画像を証跡用JPEGとして一括抽出する単体Exporterです。
+Geo360Viewが生成したGeoPackageと元MP4から、条件に合うフレーム画像を証跡用JPEGとして一括抽出する単体Exporterです。
 
 このフォルダは、QGISプラグイン外へコピーして単体利用できます。
 
@@ -208,7 +208,7 @@ python TenkakuNinja/gpkg_merge.py \
   --replace
 ```
 
-`semantic_work.sqlite` は処理途中の内部DBです。`tmp.gpkg` はGPXVideoProcessorの位置合わせ済み入力、
+`semantic_work.sqlite` は処理途中の内部DBです。`tmp.gpkg` はGeo360Viewの位置合わせ済み入力、
 `all_poi.gpkg` はconductorの出力として扱います。つまり、conductor の入力は `tmp.gpkg`、
 出力は `all_poi.gpkg` です。YOLO由来候補は `poi_candidates_360`
 レイヤへ出力します。

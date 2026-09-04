@@ -1,6 +1,6 @@
 """プラグイン全体で使う固定値。"""
 
-PLUGIN_TITLE = "GPXVideoProcessor"
+PLUGIN_TITLE = "Geo360View"
 
 LATITUDE_FIELDS = ("lat", "latitude", "gps_lat", "y", "緯度")
 LONGITUDE_FIELDS = ("lon", "lng", "longitude", "gps_lon", "gps_lng", "x", "経度")

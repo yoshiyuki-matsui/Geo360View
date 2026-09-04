@@ -1,5 +1,5 @@
 [general]
-name=GPXVideoProcessor
+name=Geo360View by TenkakuNinja
 version=0.3.0
 qgisMinimumVersion=3.40
 description=Processes GPX data with MP4 video and creates GPS points layer

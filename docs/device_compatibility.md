@@ -13,7 +13,7 @@ Confirmed input:
 
 Result:
 
-- GPXVideoProcessor loaded the Insta360 GPX directly.
+- Geo360View loaded the Insta360 GPX directly.
 - The H.265 MP4 was readable by the current QGIS Python/OpenCV environment.
 - With frame shift set to zero, the initial frame/position synchronization was broadly reasonable.
 

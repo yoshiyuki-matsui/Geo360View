@@ -1,6 +1,6 @@
-# GPXVideoProcessor
+# Geo360View
 
-GPXVideoProcessor is a QGIS plugin for synchronizing GPX-derived camera positions with MP4 frame numbers and checking 360-degree video frames on a map.
+Geo360View is a QGIS plugin for synchronizing GPX-derived camera positions with MP4 frame numbers and checking 360-degree video frames on a map.
 
 The current implementation focuses on:
 

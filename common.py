@@ -1,4 +1,4 @@
-"""GPXVideoProcessor全体で共有する小さな変換・入出力ヘルパー。"""
+"""Geo360View全体で共有する小さな変換・入出力ヘルパー。"""
 
 import csv
 import os

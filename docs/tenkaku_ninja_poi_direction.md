@@ -1,6 +1,6 @@
 # tenkaku_ninja_poi 方向性メモ
 
-このメモは、GPXVideoProcessor内で育ってきた360 semantic pipelineを、
+このメモは、Geo360View内で育ってきた360 semantic pipelineを、
 将来的に `tenkaku_ninja_poi` として専用特化させるための役割定義と接続方針を整理するものです。
 
 結論から言うと、これはQGISプラグインの1機能ではなく、360動画/GNSS/AI検出から
@@ -22,7 +22,7 @@ tenkaku_ninja_poi
   360動画/GNSS/YOLO/model runからPOI候補を生産する処理ライン。
   CubeMap、YOLO、Report、semantic_targets、georeference、gpkg_mergeを担う。
 
-GPXVideoProcessor / QGIS Plugin
+Geo360View / QGIS Plugin
   GPKG、地図、360証跡、NAV、採否判断のUI。
   重いGPU処理や長時間バッチは抱え込まない。
 
@@ -73,7 +73,7 @@ class別レイヤの単一シンボルへ同期します。
 QGISは食べる場所、`tenkaku_ninja_poi` は厨房です。
 この分離を守ると、QGIS Python環境、GPU依存、長時間ジョブ、DB lock、UI固まりが絡みにくくなります。
 
-`tmp.gpkg` は GPXVideoProcessor が位置合わせまで終えた入力です。
+`tmp.gpkg` は Geo360View が位置合わせまで終えた入力です。
 `gpkg_merge.py` が書き出す `all_poi.gpkg` は conductor の出力です。
 つまり、conductor の入力は `tmp.gpkg`、出力は `all_poi.gpkg` です。
 

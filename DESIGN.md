@@ -1,10 +1,10 @@
-# GPXVideoProcessor Design Notes
+# Geo360View Design Notes
 
 Last updated: 2026-06-07
 
 ## Purpose
 
-GPXVideoProcessor is a QGIS plugin for synchronizing 360-degree MP4 video frames with position information derived from GPX.
+Geo360View is a QGIS plugin for synchronizing 360-degree MP4 video frames with position information derived from GPX.
 
 The main use case is field-feature registration support:
 
@@ -19,7 +19,7 @@ This plugin is not intended to export all final evidence images. Full export is 
 ## Current Architecture
 
 ```text
-GPXVideoProcessor/
+Geo360View/
 ├── main.py                      QGIS plugin UI and top-level controller
 ├── constants.py                 Shared plugin constants
 ├── config.py                    UI input Config dataclasses and pure-Python validation
@@ -133,7 +133,7 @@ For H.265 MP4 input, the QGIS Python OpenCV build must be able to decode the cod
 For interactive 360 viewing, place the licensed krpano runtime here:
 
 ```text
-GPXVideoProcessor/360viewer/static/vendor/krpano/krpano.js
+Geo360View/360viewer/static/vendor/krpano/krpano.js
 ```
 
 If `krpano.js` is missing, the viewer falls back to a normal extracted equirectangular image.
@@ -232,7 +232,7 @@ The plugin panel provides frame navigation controls based on the current frame:
 Navigation settings:
 
 - `Frame step`: move by frame number.
-- `Layer point`: move through the `Video GPX Points` layer generated and retained by GPXVideoProcessor, sorted by `frame`.
+- `Layer point`: move through the `Video GPX Points` layer generated and retained by Geo360View, sorted by `frame`.
 - `KP matched CSV`: move through `<video_stem>_matched_frames.csv` sorted by `frame_index`.
 
 If `KP matched CSV` is missing or empty, the plugin shows a warning and automatically changes the navigation mode back to `Frame step`. This prevents the operator from repeatedly hitting the same unavailable KP navigation error when no KP data is being used.
@@ -255,16 +255,16 @@ The default normal step is `1`; the default fast step is `30`, which corresponds
 
 The plugin panel uses an always-on-top window flag so it remains visible during QGIS map operations.
 
-When click mode is active, or when the GPXVideoProcessor panel has focus, keyboard navigation is also available:
+When click mode is active, or when the Geo360View panel has focus, keyboard navigation is also available:
 
 - `Left` / `Right`: normal step
 - `Shift + Left` / `Shift + Right`: fast step
 - `Space`: redisplay the current frame
 - `Esc`: stop click mode
 
-Keyboard input is handled by the active map tool and by a QGIS application event filter. Even when another map tool, such as a feature registration tool, is active, navigation keys are accepted while the GPXVideoProcessor panel has focus. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
+Keyboard input is handled by the active map tool and by a QGIS application event filter. Even when another map tool, such as a feature registration tool, is active, navigation keys are accepted while the Geo360View panel has focus. Arrow keys inside spin boxes, combo boxes, and text inputs are not intercepted.
 
-QGIS allows only one active map tool on the map canvas. Map clicks are therefore explicitly switched: normal feature-registration work keeps the external feature tool as the primary map tool, while GPXVideoProcessor behaves as a subordinate viewer/navigation tool through its panel, keyboard handling, and WEB viewer session polling. The operator presses `Camera Point` only when they want to temporarily switch map clicks to GPXVideoProcessor camera-point selection.
+QGIS allows only one active map tool on the map canvas. Map clicks are therefore explicitly switched: normal feature-registration work keeps the external feature tool as the primary map tool, while Geo360View behaves as a subordinate viewer/navigation tool through its panel, keyboard handling, and WEB viewer session polling. The operator presses `Camera Point` only when they want to temporarily switch map clicks to Geo360View camera-point selection.
 
 QGIS remains the primary navigation source. Browser-side Prev/Next is a supplemental navigation path. When the browser viewer has focus, `Left` / `Right` also moves through Prev/Next frames from `matched_frames.csv`.
 
@@ -555,7 +555,7 @@ When switching to another frame image, the WEB viewer carries the latest `yaw_to
 
 ### Viewer Projection
 
-When an MP4 is selected, GPXVideoProcessor reads the video width and height through OpenCV and proposes an initial viewer projection from the aspect ratio.
+When an MP4 is selected, Geo360View reads the video width and height through OpenCV and proposes an initial viewer projection from the aspect ratio.
 
 - `width / height` near 2.0: `360 / Equirectangular`, stored internally as `viewer_projection = sphere`
 - Any other ratio: `Flat / Normal FOV`, stored internally as `viewer_projection = flat`
@@ -610,7 +610,7 @@ Responsibility boundary:
 The local viewer is served by:
 
 ```text
-GPXVideoProcessor/360viewer/app.py
+Geo360View/360viewer/app.py
 ```
 
 Server:

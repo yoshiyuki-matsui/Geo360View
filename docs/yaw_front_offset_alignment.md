@@ -1,9 +1,9 @@
-# 動画yaw補正とGPXVideoProcessor表示整合
+# 動画yaw補正とGeo360View表示整合
 
 更新日: 2026-06-28
 
 この文書は、CubeMap生成時に360動画の正面yawを補正したPOIを
-GPXVideoProcessorで表示する際の注意点をまとめます。
+Geo360Viewで表示する際の注意点をまとめます。
 
 POI生成側を含む全体仕様は、`tenkaku_ninja_poi/docs/yaw_front_offset_alignment.md`
 を正とします。この文書はQGISプラグイン側の挙動に絞ります。

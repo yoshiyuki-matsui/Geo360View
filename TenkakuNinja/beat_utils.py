@@ -108,7 +108,7 @@ def analyze_beat2(wavpath, verbose=False):
     1秒窓ごとのエネルギー立ち上がりから、同期に使えそうな最初のビートを推定する。
 
     単純なピーク検出だけではノイズを拾う場合があるため、1秒間隔で続く候補を優先する。
-    現在のGPXVideoProcessor本体では未使用だが、音声同期方式を戻す場合の候補処理として残す。
+    現在のGeo360View本体では未使用だが、音声同期方式を戻す場合の候補処理として残す。
     """
     import numpy as np
     import soundfile as sf

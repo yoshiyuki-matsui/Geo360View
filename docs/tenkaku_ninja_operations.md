@@ -2,7 +2,7 @@
 
 更新日: 2026-06-04
 
-この文書は、GPXVideoProcessorの `TenkakuNinja/` Exporterに反映している大量JPEG処理の運用ノウハウ、ベンチ結果、禁止事項をまとめるものです。
+この文書は、Geo360Viewの `TenkakuNinja/` Exporterに反映している大量JPEG処理の運用ノウハウ、ベンチ結果、禁止事項をまとめるものです。
 
 `TenkakuNinja/` にExporterを置く理由は、TenkakuNinjaCore由来の大量フレーム抽出・大量JPEG運用の経験則を、QGISプラグイン本体から分離して再利用するためです。
 

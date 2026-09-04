@@ -347,7 +347,7 @@ def parent_image_reference(record, config: CubemapConfig) -> str:
 
 
 def read_gpkg_job_metadata(database: Path) -> dict:
-    """Read GPXVideoProcessor job metadata from tmp.gpkg when available."""
+    """Read Geo360View job metadata from tmp.gpkg when available."""
 
     try:
         with sqlite3.connect(database) as conn:

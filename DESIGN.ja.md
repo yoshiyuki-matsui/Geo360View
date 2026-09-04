@@ -1,10 +1,10 @@
-# GPXVideoProcessor 設計メモ
+# Geo360View 設計メモ
 
 更新日: 2026-06-12
 
 ## 目的
 
-GPXVideoProcessor は、360度MP4動画のフレーム番号と、GPXから得られる撮影位置を同期するためのQGISプラグインです。
+Geo360View は、360度MP4動画のフレーム番号と、GPXから得られる撮影位置を同期するためのQGISプラグインです。
 
 主な目的は以下です。
 
@@ -19,7 +19,7 @@ GPXVideoProcessor は、360度MP4動画のフレーム番号と、GPXから得�
 ## 全体構成
 
 ```text
-GPXVideoProcessor/
+Geo360View/
 ├── main.py                      QGISプラグインUI/全体制御
 ├── constants.py                 プラグイン共通定数
 ├── config.py                    UI入力Configと純Python validation
@@ -136,7 +136,7 @@ H.265 MP4を扱う場合は、QGIS同梱PythonのOpenCVが当該コーデック�
 360パノラマ表示には、ライセンス済みの `krpano.js` を以下へ配置します。
 
 ```text
-GPXVideoProcessor/360viewer/static/vendor/krpano/krpano.js
+Geo360View/360viewer/static/vendor/krpano/krpano.js
 ```
 
 未配置の場合は通常のエクイレクタングラー静止画表示にフォールバックします。
@@ -294,7 +294,7 @@ UIは、マニュアルレスで触り始められることと、パネルのコ
 ナビゲーションモード:
 
 - `Frame step`: 現在フレーム番号に対して `±Step` / `±Fast` する。
-- `Layer point`: GPXVideoProcessorが生成・保持している `Video GPX Points` レイヤを `frame` 順に移動する。
+- `Layer point`: Geo360Viewが生成・保持している `Video GPX Points` レイヤを `frame` 順に移動する。
 - `Picked point`: 360クリック点があるframeを移動する。
 - `Detection check`: YOLO候補/クラスタがあるframeを移動し、同じframeの候補を360Viewerへ復元する。
 - `KP matched CSV`: `<video_stem>_matched_frames.csv` の `frame_index` 順に移動する。
@@ -334,16 +334,16 @@ POIクラスタレイヤのQGIS表示名は `POI: キロ程` のように短いp
 
 `Video GPX Points` は360画像参照用の内部レイヤとして扱います。プラグインは生成したレイヤIDを保持してナビゲーションやクリック待ち受けに使うため、ユーザが地物登録先として別レイヤを選択していても、画像送り側の参照先は変わりません。Process前に既存のframe属性レイヤを手動利用する場合のみ、選択中レイヤを保険として参照します。
 
-クリックモード中、またはGPXVideoProcessor操作パネルにフォーカスがある場合は、キーボードでも操作できます。
+クリックモード中、またはGeo360View操作パネルにフォーカスがある場合は、キーボードでも操作できます。
 
 - `←` / `→`: 通常移動
 - `Shift + ←` / `Shift + →`: 大きく戻る/進む
 - `Space`: 現在フレームを再表示
 - `Esc`: クリックモード解除
 
-キー入力は地図キャンバスのMapToolに加え、QGISアプリケーション側のイベントフィルタでも補助的に受けます。地物登録ツールなど別MapToolが有効な場合でも、GPXVideoProcessor操作パネルにフォーカスがあればナビゲーションキーを受け付けます。ただし、数値入力やコンボボックス操作中の矢印キーは奪いません。
+キー入力は地図キャンバスのMapToolに加え、QGISアプリケーション側のイベントフィルタでも補助的に受けます。地物登録ツールなど別MapToolが有効な場合でも、Geo360View操作パネルにフォーカスがあればナビゲーションキーを受け付けます。ただし、数値入力やコンボボックス操作中の矢印キーは奪いません。
 
-QGISのMapToolは同時に1つだけ有効になるため、地図クリックは明示切替式です。通常時は地物登録ツールを主とし、GPXVideoProcessorは操作パネル、キーボード、WEBビューア連携で従ツールとして動作します。撮影点を地図上で直接選択したい場合だけ、ユーザが `撮影点選択` を押して一時的にMapToolをGPXVideoProcessorへ切り替えます。
+QGISのMapToolは同時に1つだけ有効になるため、地図クリックは明示切替式です。通常時は地物登録ツールを主とし、Geo360Viewは操作パネル、キーボード、WEBビューア連携で従ツールとして動作します。撮影点を地図上で直接選択したい場合だけ、ユーザが `撮影点選択` を押して一時的にMapToolをGeo360Viewへ切り替えます。
 
 ナビゲーションはQGIS地図側を主導にしています。WEBビューアのPrev/Nextは補助機能であり、通常運用ではQGIS地図クリックまたはQGIS側ナビゲーションからフレームを指定します。
 
@@ -700,7 +700,7 @@ POST /api/session/navigate
 
 ### 投影方式
 
-GPXVideoProcessorは、MP4選択時にOpenCVで動画の幅/高さを読み取り、縦横比からビューア投影方式の初期候補を提示します。
+Geo360Viewは、MP4選択時にOpenCVで動画の幅/高さを読み取り、縦横比からビューア投影方式の初期候補を提示します。
 
 - `width / height` が2.0付近: `360 / Equirectangular`、viewer内部では `viewer_projection = sphere`
 - それ以外: `Flat / Normal FOV`、viewer内部では `viewer_projection = flat`

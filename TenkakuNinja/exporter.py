@@ -143,7 +143,7 @@ def minimal_exif_payload(tags, gps=None):
         entries.append((tag, 4, 1, struct.pack("<I", value)))
 
     add_ascii(0x010E, tags.get("description", ""))
-    add_ascii(0x0131, tags.get("software", "GPXVideoProcessor Exporter"))
+    add_ascii(0x0131, tags.get("software", "Geo360View Exporter"))
     add_ascii(0x0132, tags.get("datetime", ""))
     if gps:
         add_long(0x8825, 0)
@@ -458,7 +458,7 @@ def add_exif(jpeg_bytes, record, config):
 
     gps = gps_from_attrs(record.attrs)
     description = (
-        f"GPXVideoProcessor Exporter frame={record.frame}; "
+        f"Geo360View Exporter frame={record.frame}; "
         f"database={config.database.name}; "
         f"video={config.video.name}; "
         f"scale={config.scale}; "
@@ -467,7 +467,7 @@ def add_exif(jpeg_bytes, record, config):
     payload = minimal_exif_payload(
         {
             "description": description,
-            "software": "GPXVideoProcessor Exporter",
+            "software": "Geo360View Exporter",
             "datetime": datetime.now().strftime("%Y:%m:%d %H:%M:%S"),
         },
         gps=gps,

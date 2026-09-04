@@ -1,6 +1,6 @@
 # Changelog
 
-このファイルは、GPXVideoProcessor の主要な仕様変更、実装変更、運用上の意味を記録します。
+このファイルは、Geo360View の主要な仕様変更、実装変更、運用上の意味を記録します。
 
 ## 0.3.0 - 2026-09-04
 
@@ -62,7 +62,7 @@
 
 ### Changed
 
-- `tmp.gpkg` は GPXVideoProcessor の位置合わせ済み入力、`all_poi.gpkg` は conductor の出力、という役割分担を明確化した。
+- `tmp.gpkg` は Geo360View の位置合わせ済み入力、`all_poi.gpkg` は conductor の出力、という役割分担を明確化した。
 - `all_poi.gpkg` を開いた後の Nav は、QGIS のレイヤ選択と scope に追従する前提へ整理した。
 - `Session` / `All_POIs` グループは、レイヤがなくなれば残さないようにした。
 

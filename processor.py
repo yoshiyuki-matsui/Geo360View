@@ -9,7 +9,7 @@ from .TenkakuNinja.geo_util import (
 )
 
 
-class GPXVideoProcessor(QThread):
+class Geo360View(QThread):
     """重いGPX/動画同期処理をQGIS UIスレッドから分離して実行する。"""
 
     progress = pyqtSignal(int)
@@ -25,7 +25,7 @@ class GPXVideoProcessor(QThread):
 
     def run(self):
         """GPX点を動画FPSへ補間し、フレーム位置行を生成する。"""
-        print("GPXVideoProcessor: run() called")
+        print("Geo360View: run() called")
         try:
             try:
                 import cv2

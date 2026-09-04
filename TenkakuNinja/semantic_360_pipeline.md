@@ -6,7 +6,7 @@
 `semantic_targets_360` へ加工し、最終的に地図上のPOI候補へ変換するための
 CLIパイプライン設計メモです。
 
-当初の設計メモです。現時点では主要CLIをGPXVideoProcessor内の
+当初の設計メモです。現時点では主要CLIをGeo360View内の
 `TenkakuNinja/` 配下で単体CLIとして動かし、将来的に
 `tenkaku_ninja_core` へ合流できる構成にします。
 
@@ -587,7 +587,7 @@ up / down:
 この評価内容は `payload_json.representative_eval` に残します。
 
 手動クリック点の `click_targets_360` とは分けます。`semantic_work.sqlite` は処理途中の
-内部DB、GPXVideoProcessorの位置合わせ済み入力は `tmp.gpkg`、conductorの出力は
+内部DB、Geo360Viewの位置合わせ済み入力は `tmp.gpkg`、conductorの出力は
 `auto_poi.gpkg` です。
 
 NAVモードで自動認識できるように、GPKGへ出す候補レイヤ名は標準化します。
