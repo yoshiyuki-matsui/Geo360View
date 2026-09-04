@@ -1,6 +1,6 @@
 [general]
 name=GPXVideoProcessor
-version=0.2.0
+version=0.3.0
 qgisMinimumVersion=3.40
 description=Processes GPX data with MP4 video and creates GPS points layer
 author=Nakasha Creative co.,Ltd

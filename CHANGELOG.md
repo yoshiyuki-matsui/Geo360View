@@ -2,6 +2,31 @@
 
 このファイルは、GPXVideoProcessor の主要な仕様変更、実装変更、運用上の意味を記録します。
 
+## 0.3.0 - 2026-09-04
+
+### Added
+
+- 360ViewerにPhoto Sphere Viewer + MarkersPluginベースの代替表示エンジンを追加した。
+- `engine=psv` を指定した場合に、既存のJSON、画像キャッシュ、`viewer_session.json`、HTTP APIを流用してPhoto Sphere Viewer経路を起動できるようにした。
+- Photo Sphere Viewer経路で、ターゲットマーカー、クラス名/信頼度ラベル、HUD連動の表示/非表示、Lock時の視線レイを表示できるようにした。
+- Photo Sphere Viewer経路で、360画像だけでなく通常画角画像も同じ画面内の2D fallbackビューアとして表示できるようにした。
+- 通常画角画像のPhoto Sphere Viewer fallbackで、マウスホイールズーム、ドラッグPAN、ターゲットマーカー追従、Lock時の視線レイ表示に対応した。
+- Photo Sphere Viewer本体、MarkersPlugin、three.jsのESM/CSSをローカルvendor配下から配信する構成を追加した。
+- Photo Sphere Viewer用FOV設定として `viewer_psv_min_fov_deg` / `viewer_psv_max_fov_deg` を追加した。
+
+### Changed
+
+- 360ViewerのHTML生成をビューアエンジン選択式にし、既存krpano経路とPhoto Sphere Viewer経路を並走できる構成にした。
+- QGIS側のビューアURL/API payload/runtime configにPhoto Sphere Viewer用FOV設定を伝搬するようにした。
+- Photo Sphere Viewer経路では、保存状態は既存krpano互換のyaw/pitch/zoomのまま維持し、PSV境界でのみpitch符号差を吸収するようにした。
+- 通常画角画像はPhoto Sphere Viewerへパノラマとして渡さず、2D fallbackで扱うようにした。
+
+### Notes
+
+- Photo Sphere Viewer経路は、krpano配布ライセンス課題を切り分けるための代替ビューア検証です。現時点では機能互換を優先しており、フレーム切替時の描画性能はkrpano経路との差があります。
+- 地表同心円は360画像でのみ表示します。通常画角画像では3D球面投影を前提にできないため非表示です。
+- `viewer_psv_max_fov_deg` はPhoto Sphere Viewer側の制約に合わせて `1..179` に丸めます。広角側を最大に近づけたい場合は `179` を指定します。
+
 ## 0.2.2 - 2026-07-29
 
 ### Added

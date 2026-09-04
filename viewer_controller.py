@@ -57,6 +57,8 @@ class ViewerControllerMixin:
         jpeg_quality = 70
         progressive_jpeg = True
         max_width = 3072
+        psv_min_fov_deg = 20.0
+        psv_max_fov_deg = 120.0
         browser_app_window = True
         browser_path = ""
         try:
@@ -69,6 +71,12 @@ class ViewerControllerMixin:
                 config.get("viewer_progressive_jpeg", progressive_jpeg)
             )
             max_width = max(0, int(config.get("viewer_max_width", max_width)))
+            psv_min_fov_deg = max(1.0, min(179.0, float(
+                config.get("viewer_psv_min_fov_deg", config.get("psv_min_fov_deg", config.get("min_fov", psv_min_fov_deg)))
+            )))
+            psv_max_fov_deg = max(1.0, min(179.0, float(
+                config.get("viewer_psv_max_fov_deg", config.get("psv_max_fov_deg", config.get("max_fov", psv_max_fov_deg)))
+            )))
             browser_app_window = self.parseViewerBool(
                 config.get("viewer_browser_app_window", browser_app_window)
             )
@@ -80,6 +88,8 @@ class ViewerControllerMixin:
         self.viewer_jpeg_quality = jpeg_quality
         self.viewer_progressive_jpeg = progressive_jpeg
         self.viewer_max_width = max_width
+        self.viewer_psv_min_fov_deg = psv_min_fov_deg
+        self.viewer_psv_max_fov_deg = max(psv_min_fov_deg, psv_max_fov_deg)
         self.viewer_browser_app_window = browser_app_window
         self.viewer_browser_path = browser_path
         return host, port
@@ -116,6 +126,8 @@ class ViewerControllerMixin:
             "viewer_projection": self.viewerProjectionValue(),
             "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
             "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
+            "viewer_psv_min_fov_deg": self.viewer_psv_min_fov_deg,
+            "viewer_psv_max_fov_deg": self.viewer_psv_max_fov_deg,
         }
 
         try:
@@ -157,11 +169,14 @@ class ViewerControllerMixin:
         query = urlencode({
             "video": os.path.basename(self.video_file),
             "frame_index": int(frame_num),
+            "engine": "psv",
             "viewer_camera_height_m": self.viewerCameraHeightValue(),
             "viewer_hud_height_scale": self.viewerHudHeightScaleValue(),
             "viewer_projection": self.viewerProjectionValue(),
             "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
             "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
+            "viewer_psv_min_fov_deg": self.viewer_psv_min_fov_deg,
+            "viewer_psv_max_fov_deg": self.viewer_psv_max_fov_deg,
         })
         return f"{base_url}/viewer?{query}"
 
@@ -455,6 +470,8 @@ class ViewerControllerMixin:
             "viewer_projection": self.viewerProjectionValue(),
             "viewer_flat_hfov_deg": self.viewerFlatHfovValue(),
             "viewer_flat_vfov_deg": self.viewerFlatVfovValue(),
+            "viewer_psv_min_fov_deg": self.viewer_psv_min_fov_deg,
+            "viewer_psv_max_fov_deg": self.viewer_psv_max_fov_deg,
         }
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:

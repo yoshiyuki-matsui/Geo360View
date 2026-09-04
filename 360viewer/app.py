@@ -23,6 +23,13 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = Path(os.environ.get("VIEWER_CONFIG", BASE_DIR / "viewer_config.json"))
 STATIC_DIR = BASE_DIR / "static"
 KRPANO_JS_PATH = STATIC_DIR / "vendor" / "krpano" / "krpano.js"
+PSV_VENDOR_DIR = STATIC_DIR / "vendor" / "photo-sphere-viewer"
+PSV_CORE_JS_PATH = PSV_VENDOR_DIR / "core" / "index.module.js"
+PSV_CORE_CSS_PATH = PSV_VENDOR_DIR / "core" / "index.css"
+PSV_MARKERS_JS_PATH = PSV_VENDOR_DIR / "markers-plugin" / "index.module.js"
+PSV_MARKERS_CSS_PATH = PSV_VENDOR_DIR / "markers-plugin" / "index.css"
+PSV_THREE_JS_PATH = PSV_VENDOR_DIR / "three" / "three.module.js"
+PSV_THREE_CORE_JS_PATH = PSV_VENDOR_DIR / "three" / "three.core.js"
 DEFAULT_VIEW = {
     "yaw_to_camera_heading": 0.0,
     "pitch": 0.0,
@@ -38,8 +45,14 @@ MAX_VIEWER_TARGETS = 100
 VIEWER_PROJECTION_SPHERE = "sphere"
 VIEWER_PROJECTION_FLAT = "flat"
 VIEWER_PROJECTIONS = {VIEWER_PROJECTION_SPHERE, VIEWER_PROJECTION_FLAT}
+VIEWER_ENGINE_KRPANO = "krpano"
+VIEWER_ENGINE_PSV = "psv"
+VIEWER_ENGINES = {VIEWER_ENGINE_KRPANO, VIEWER_ENGINE_PSV}
+PSV_VENDOR_VERSION = "5.15.1-flatdrag1"
 DEFAULT_FLAT_HFOV_DEG = 70.0
 DEFAULT_FLAT_VFOV_DEG = 43.0
+DEFAULT_PSV_MIN_FOV_DEG = 20.0
+DEFAULT_PSV_MAX_FOV_DEG = 120.0
 
 
 
@@ -94,6 +107,33 @@ def normalize_viewer_projection(value: Any, default: str = VIEWER_PROJECTION_SPH
     return text if text in VIEWER_PROJECTIONS else default
 
 
+def normalize_viewer_engine(value: Any, default: str = VIEWER_ENGINE_KRPANO) -> str:
+    """viewer実装をkrpano/Photo Sphere Viewerの安全な値へ正規化する。"""
+    text = str(value or default).strip().lower()
+    aliases = {
+        "photo-sphere-viewer": VIEWER_ENGINE_PSV,
+        "photosphere": VIEWER_ENGINE_PSV,
+        "photo_sphere_viewer": VIEWER_ENGINE_PSV,
+    }
+    text = aliases.get(text, text)
+    return text if text in VIEWER_ENGINES else default
+
+
+def photo_sphere_viewer_available() -> bool:
+    """Photo Sphere Viewerのローカルvendor一式が配置済みかを返す。"""
+    return all(
+        path.is_file()
+        for path in (
+            PSV_CORE_JS_PATH,
+            PSV_CORE_CSS_PATH,
+            PSV_MARKERS_JS_PATH,
+            PSV_MARKERS_CSS_PATH,
+            PSV_THREE_JS_PATH,
+            PSV_THREE_CORE_JS_PATH,
+        )
+    )
+
+
 def normalize_fov_deg(value: Any, default: float) -> float:
     """flat表示用FOVをkrpanoが扱える範囲へ正規化する。"""
     try:
@@ -103,6 +143,14 @@ def normalize_fov_deg(value: Any, default: float) -> float:
     if not math.isfinite(numeric):
         numeric = float(default)
     return max(1.0, min(179.0, numeric))
+
+
+def config_value(raw: dict[str, Any], names: tuple[str, ...], default: Any) -> Any:
+    """複数の設定名候補から最初に見つかった値を返す。"""
+    for name in names:
+        if name in raw:
+            return raw.get(name)
+    return default
 
 
 def load_config() -> dict[str, Any]:
@@ -135,6 +183,14 @@ def load_config() -> dict[str, Any]:
         "viewer_projection": normalize_viewer_projection(raw.get("viewer_projection")),
         "viewer_flat_hfov_deg": normalize_fov_deg(raw.get("viewer_flat_hfov_deg"), DEFAULT_FLAT_HFOV_DEG),
         "viewer_flat_vfov_deg": normalize_fov_deg(raw.get("viewer_flat_vfov_deg"), DEFAULT_FLAT_VFOV_DEG),
+        "viewer_psv_min_fov_deg": normalize_fov_deg(
+            config_value(raw, ("viewer_psv_min_fov_deg", "psv_min_fov_deg", "min_fov", "minFov"), DEFAULT_PSV_MIN_FOV_DEG),
+            DEFAULT_PSV_MIN_FOV_DEG,
+        ),
+        "viewer_psv_max_fov_deg": normalize_fov_deg(
+            config_value(raw, ("viewer_psv_max_fov_deg", "psv_max_fov_deg", "max_fov", "maxFov"), DEFAULT_PSV_MAX_FOV_DEG),
+            DEFAULT_PSV_MAX_FOV_DEG,
+        ),
     }
 
 
@@ -248,6 +304,14 @@ def view_state_from_query(query: dict[str, list[str]], session: dict[str, Any] |
         "viewer_flat_vfov_deg": normalize_fov_deg(
             query_value(query, "viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg", cfg["viewer_flat_vfov_deg"])),
             cfg["viewer_flat_vfov_deg"],
+        ),
+        "viewer_psv_min_fov_deg": normalize_fov_deg(
+            query_value(query, "viewer_psv_min_fov_deg", session.get("viewer_psv_min_fov_deg", cfg["viewer_psv_min_fov_deg"])),
+            cfg["viewer_psv_min_fov_deg"],
+        ),
+        "viewer_psv_max_fov_deg": normalize_fov_deg(
+            query_value(query, "viewer_psv_max_fov_deg", session.get("viewer_psv_max_fov_deg", cfg["viewer_psv_max_fov_deg"])),
+            cfg["viewer_psv_max_fov_deg"],
         ),
     }
 
@@ -370,6 +434,14 @@ def write_state_file(path: Path, state: dict[str, Any], cfg: dict[str, Any]) -> 
         state.get("viewer_hud_height_scale"),
         cfg["viewer_hud_height_scale"],
     )
+    state["viewer_psv_min_fov_deg"] = normalize_fov_deg(
+        state.get("viewer_psv_min_fov_deg"),
+        cfg["viewer_psv_min_fov_deg"],
+    )
+    state["viewer_psv_max_fov_deg"] = normalize_fov_deg(
+        state.get("viewer_psv_max_fov_deg"),
+        cfg["viewer_psv_max_fov_deg"],
+    )
     state["updated_at"] = now_iso()
 
     # QGIS側ポーリングが途中書き込みを読まないよう、一時ファイルから置換する。
@@ -440,6 +512,8 @@ def state_from_request_args(query: dict[str, list[str]], video: str, frame_index
             query_value(query, "viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg", cfg["viewer_flat_vfov_deg"])),
             cfg["viewer_flat_vfov_deg"],
         ),
+        "viewer_psv_min_fov_deg": view["viewer_psv_min_fov_deg"],
+        "viewer_psv_max_fov_deg": view["viewer_psv_max_fov_deg"],
     }
 
 
@@ -464,6 +538,8 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "viewer_projection": normalize_viewer_projection(payload.get("viewer_projection", load_config()["viewer_projection"])),
         "viewer_flat_hfov_deg": normalize_fov_deg(payload.get("viewer_flat_hfov_deg"), load_config()["viewer_flat_hfov_deg"]),
         "viewer_flat_vfov_deg": normalize_fov_deg(payload.get("viewer_flat_vfov_deg"), load_config()["viewer_flat_vfov_deg"]),
+        "viewer_psv_min_fov_deg": normalize_fov_deg(payload.get("viewer_psv_min_fov_deg"), load_config()["viewer_psv_min_fov_deg"]),
+        "viewer_psv_max_fov_deg": normalize_fov_deg(payload.get("viewer_psv_max_fov_deg"), load_config()["viewer_psv_max_fov_deg"]),
     }
     if payload.get("viewer_front_offset_deg") is not None:
         try:
@@ -535,6 +611,8 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
         "view_pitch": view_pitch,
         "view_zoom": view_zoom,
         "projection": projection,
+        "x_ratio": 0.5,
+        "y_ratio": 0.5,
     }
     for key in ("x_ratio", "y_ratio"):
         if payload.get(key) is None:
@@ -675,6 +753,8 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "viewer_projection": normalize_viewer_projection(payload.get("viewer_projection", session.get("viewer_projection", load_config()["viewer_projection"]))),
         "viewer_flat_hfov_deg": normalize_fov_deg(payload.get("viewer_flat_hfov_deg", session.get("viewer_flat_hfov_deg")), load_config()["viewer_flat_hfov_deg"]),
         "viewer_flat_vfov_deg": normalize_fov_deg(payload.get("viewer_flat_vfov_deg", session.get("viewer_flat_vfov_deg")), load_config()["viewer_flat_vfov_deg"]),
+        "viewer_psv_min_fov_deg": normalize_fov_deg(payload.get("viewer_psv_min_fov_deg", session.get("viewer_psv_min_fov_deg")), load_config()["viewer_psv_min_fov_deg"]),
+        "viewer_psv_max_fov_deg": normalize_fov_deg(payload.get("viewer_psv_max_fov_deg", session.get("viewer_psv_max_fov_deg")), load_config()["viewer_psv_max_fov_deg"]),
     }
     viewer_front_offset = payload.get("viewer_front_offset_deg")
     if viewer_front_offset is None and session.get("video") == video:
@@ -733,13 +813,47 @@ def absolute_url(handler: BaseHTTPRequestHandler, path: str) -> str:
     return f"http://{host}{path}"
 
 
-def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_url: str) -> bytes:
+def build_viewer_html(
+    bootstrap: dict[str, Any],
+    krpano_available: bool,
+    frame_url: str,
+    viewer_engine: str = VIEWER_ENGINE_KRPANO,
+    psv_available: bool = False,
+) -> bytes:
     """ビューアHTMLを生成し、初期状態をJavaScriptへ埋め込む。"""
+    psv_core_js_url = f"/static/vendor/photo-sphere-viewer/core/index.module.js?v={PSV_VENDOR_VERSION}"
+    psv_markers_js_url = f"/static/vendor/photo-sphere-viewer/markers-plugin/index.module.js?v={PSV_VENDOR_VERSION}"
+    psv_three_js_url = f"/static/vendor/photo-sphere-viewer/three/three.module.js?v={PSV_VENDOR_VERSION}"
     bootstrap_json = json.dumps(bootstrap, ensure_ascii=False).replace("</", "<\\/")
     krpano_script = (
         '  <script src="/static/vendor/krpano/krpano.js"></script>\n'
-        if krpano_available
+        if viewer_engine == VIEWER_ENGINE_KRPANO and krpano_available
         else ""
+    )
+    psv_styles = (
+        '  <link rel="stylesheet" href="/static/vendor/photo-sphere-viewer/core/index.css">\n'
+        '  <link rel="stylesheet" href="/static/vendor/photo-sphere-viewer/markers-plugin/index.css">\n'
+        if viewer_engine == VIEWER_ENGINE_PSV and psv_available
+        else ""
+    )
+    psv_importmap = (
+        """  <script type="importmap">
+    {
+      "imports": {
+        "three": "%s",
+        "@photo-sphere-viewer/core": "%s",
+        "@photo-sphere-viewer/markers-plugin": "%s"
+      }
+    }
+  </script>
+""" % (psv_three_js_url, psv_core_js_url, psv_markers_js_url)
+        if viewer_engine == VIEWER_ENGINE_PSV and psv_available
+        else ""
+    )
+    viewer_script = (
+        f'<script type="module" src="/static/psv_viewer.js?v={PSV_VENDOR_VERSION}"></script>'
+        if viewer_engine == VIEWER_ENGINE_PSV
+        else '<script src="/static/viewer.js"></script>'
     )
     html = f"""<!doctype html>
 <html lang="en">
@@ -748,7 +862,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>360 Viewer PoC</title>
   <link rel="stylesheet" href="/static/viewer.css">
-{krpano_script}</head>
+{psv_styles}{psv_importmap}{krpano_script}</head>
 <body>
   <main class="viewer-shell">
     <section class="toolbar" aria-label="Viewer controls">
@@ -800,7 +914,7 @@ def build_viewer_html(bootstrap: dict[str, Any], krpano_available: bool, frame_u
   <script>
     window.VIEWER_BOOTSTRAP = {bootstrap_json};
   </script>
-  <script src="/static/viewer.js"></script>
+  {viewer_script}
 </body>
 </html>
 """
@@ -1100,6 +1214,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
         video_exists = video_path(video).is_file()
         matched_csv_exists = matched_frames_path(video).is_file()
         krpano_available = KRPANO_JS_PATH.is_file()
+        psv_available = photo_sphere_viewer_available()
+        requested_engine = normalize_viewer_engine(query_value(query, "engine", VIEWER_ENGINE_KRPANO))
         frame_url = frame_image_url(video, frame_index)
         scene_query_params = (
             f"video={quote(video)}&frame_index={frame_index}"
@@ -1121,18 +1237,30 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "frame_url": frame_url,
             "scene_url": scene_url,
             "krpano_available": krpano_available,
+            "psv_available": psv_available,
+            "viewer_engine": requested_engine,
             "matched_csv_exists": matched_csv_exists,
             "video_exists": video_exists,
             "krpano_js_url": "/static/vendor/krpano/krpano.js",
+            "psv_core_js_url": f"/static/vendor/photo-sphere-viewer/core/index.module.js?v={PSV_VENDOR_VERSION}",
+            "psv_markers_js_url": f"/static/vendor/photo-sphere-viewer/markers-plugin/index.module.js?v={PSV_VENDOR_VERSION}",
             "viewer_camera_height_m": state["viewer_camera_height_m"],
             "viewer_hud_height_scale": state["viewer_hud_height_scale"],
             "viewer_projection": state["viewer_projection"],
             "viewer_flat_hfov_deg": state["viewer_flat_hfov_deg"],
             "viewer_flat_vfov_deg": state["viewer_flat_vfov_deg"],
+            "viewer_psv_min_fov_deg": state["viewer_psv_min_fov_deg"],
+            "viewer_psv_max_fov_deg": state["viewer_psv_max_fov_deg"],
         }
 
         self.send_bytes(
-            build_viewer_html(bootstrap, krpano_available, frame_url),
+            build_viewer_html(
+                bootstrap,
+                krpano_available,
+                frame_url,
+                viewer_engine=requested_engine,
+                psv_available=psv_available,
+            ),
             "text/html; charset=utf-8",
             {"Cache-Control": "no-store"},
         )

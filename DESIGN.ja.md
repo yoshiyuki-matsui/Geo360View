@@ -141,6 +141,45 @@ GPXVideoProcessor/360viewer/static/vendor/krpano/krpano.js
 
 未配置の場合は通常のエクイレクタングラー静止画表示にフォールバックします。
 
+### Photo Sphere Viewer代替エンジン
+
+krpanoの配布ライセンス課題を切り分けるため、Photo Sphere Viewer + MarkersPluginによる代替表示経路を追加しています。これは既存実装を置き換えるものではなく、同じHTTP API、同じ画像キャッシュ、同じ `viewer_session.json` を使って、krpano非依存でどこまで同等操作に近づけられるかを検証するための並走エンジンです。
+
+選択は `/viewer` の `engine` クエリで行います。
+
+```text
+/viewer?video=<file.mp4>&frame_index=<frame>&engine=psv
+```
+
+QGIS側の一時検証では `viewer_controller.py` が `engine=psv` を付けてビューアを開きます。通常運用へ戻す場合は、このクエリ追加を外すことで既定のkrpano経路に戻せます。
+
+Photo Sphere Viewer本体はnpmパッケージ由来のESM/CSSをローカルvendorとして置きます。
+
+```text
+360viewer/static/vendor/photo-sphere-viewer/
+  core/index.module.js
+  core/index.css
+  markers-plugin/index.module.js
+  markers-plugin/index.css
+  three/three.module.js
+  three/three.core.js
+```
+
+`three.core.js` は `three.module.js` から相対importされるため必須です。これが無い場合、ブラウザ上では `core/index.module.js` のdynamic import失敗のように見えることがあります。
+
+PSV経路では、保存される状態値は既存krpano互換のままにしています。`yaw_to_camera_heading`、`pitch`、`zoom`、`target`、`targets` の意味を変えず、PSV側JSがビューアAPIに渡す直前だけ座標系差分を吸収します。特にpitchはPSVとkrpanoで符号が逆になるため、PSV境界でのみ反転します。これにより、QGIS連携、既存krpanoビューア、保存済み `viewer_session.json` の互換性を維持します。
+
+PSVのFOVは以下で調整します。
+
+```json
+{
+  "viewer_psv_min_fov_deg": 20,
+  "viewer_psv_max_fov_deg": 179
+}
+```
+
+設定値はQGIS起動時のruntime config、`/viewer` URL、bootstrap JSON、ブラウザ側セッションPOSTへ伝搬します。PSV本体はFOVを `1..179` に丸めるため、`180` 相当で試したい場合は `179` を指定します。
+
 ## プラグインメニュー
 
 現在のメニュー/ツールバーは以下です。
@@ -657,7 +696,7 @@ POST /api/session/viewer-state
 POST /api/session/navigate
 ```
 
-ブラウザ側は初回表示後、QGISクリックのたびにページ全体を再読み込みしません。セッション状態をポーリングし、krpanoの `loadpano()` でシーンだけ差し替えます。
+ブラウザ側は初回表示後、QGISクリックのたびにページ全体を再読み込みしません。既定のkrpano経路ではセッション状態をポーリングし、krpanoの `loadpano()` でシーンだけ差し替えます。PSV代替経路では同じ `/api/session/viewer-command` をポーリングし、360画像ではPhoto Sphere Viewerの `setPanorama()`、通常画角では2D画像差し替えでフレームを更新します。
 
 ### 投影方式
 
@@ -675,7 +714,17 @@ GPXVideoProcessorは、MP4選択時にOpenCVで動画の幅/高さを読み取�
 - `/viewer` URLと `/api/session/navigate` payload
 - `tmp.gpkg` 内の `gpx_video_processor_job_metadata`
 
-GPKG再読込時はmetadataの `viewer_projection` を優先します。古いGPKGなどmetadataに投影方式が無い場合だけ、復元したMP4の縦横比から再推定します。`flat` ではkrpanoへ `<flat>` 画像として渡し、固定視点・16:9ステージで表示します。`sphere` では従来通りequirectangular画像を `<sphere>` として渡します。
+GPKG再読込時はmetadataの `viewer_projection` を優先します。古いGPKGなどmetadataに投影方式が無い場合だけ、復元したMP4の縦横比から再推定します。krpano経路では、`flat` をkrpanoへ `<flat>` 画像として渡し、固定視点・16:9ステージで表示します。`sphere` では従来通りequirectangular画像を `<sphere>` として渡します。
+
+PSV代替経路では、`sphere` のみPhoto Sphere Viewerへ渡します。`flat` は通常画角画像であり、PSVへ渡すとパノラマ読込エラーになるため、同じページ内の `fallbackFrame` を2Dビューアとして使います。このflat fallbackでは、ターゲットマーカーは `x_ratio` / `y_ratio` で画像上に配置し、マウスホイールズームとドラッグPANに追従します。地表同心円は3D球面投影を前提にしているためflatでは非表示にし、簡易HUDとターゲット表示だけを維持します。
+
+PSV代替経路のHUD互換は以下です。
+
+- `HUD` ボタンで、距離HUD、同心円、ターゲットマーカー、ラベル、Lock視線レイをまとめてON/OFFする。
+- 360画像ではMarkersPluginでターゲットを表示し、保存済みyaw/pitchからPSV座標へ変換する。
+- 通常画角ではHTMLマーカーを使い、保存済み `x_ratio` / `y_ratio` へ配置する。
+- ラベルは `semantic_class`、`confidence`、`id` を表示する。
+- `Lock` 時の視線レイは、360画像ではyaw/pitch方向、通常画角では画像上のターゲット位置へ向けて描画する。
 
 ## パフォーマンス調整
 

@@ -184,8 +184,8 @@
   function normalizedView(source) {
     const projection = normalizeViewerProjection(source && source.viewer_projection);
     const view = {
-      yaw_to_camera_heading: projection === "flat" ? 0 : normalizeYaw(source && source.yaw_to_camera_heading),
-      pitch: projection === "flat" ? 0 : normalizePitch(source && source.pitch),
+      yaw_to_camera_heading: normalizeYaw(source && source.yaw_to_camera_heading),
+      pitch: normalizePitch(source && source.pitch),
       zoom: normalizeZoom(source && source.zoom),
       viewer_projection: projection,
       viewer_flat_hfov_deg: normalizeFovDeg(source && source.viewer_flat_hfov_deg, 70),
@@ -200,10 +200,10 @@
     }
 
     const projection = normalizeViewerProjection(state.viewer_projection);
-    const yaw = projection === "flat" ? 0 : normalizeYaw(krpano.get("view.hlookat"));
-    const pitch = projection === "flat" ? 0 : Number(krpano.get("view.vlookat")) || 0;
+    const yaw = projection === "flat" ? normalizeYaw(state.yaw_to_camera_heading) : normalizeYaw(krpano.get("view.hlookat"));
+    const pitch = projection === "flat" ? normalizePitch(state.pitch) : Number(krpano.get("view.vlookat")) || 0;
     const fov = Number(krpano.get("view.fov")) || (projection === "flat" ? normalizeFovDeg(state.viewer_flat_hfov_deg, 70) : 90);
-    const zoom = projection === "flat" ? 90 / normalizeFovDeg(state.viewer_flat_hfov_deg, 70) : 90 / Math.max(fov, 1);
+    const zoom = projection === "flat" ? normalizeZoom(state.zoom) : 90 / Math.max(fov, 1);
     const viewerFrontOffset = Number(state.viewer_front_offset_deg);
 
     const view = {
@@ -380,6 +380,9 @@
     }
     if (groundRingsOverlay) {
       groundRingsOverlay.hidden = !visible;
+    }
+    if (!radarHudVisible) {
+      clearLockGuide();
     }
     if (radarHudToggleButton) {
       radarHudToggleButton.textContent = radarHudVisible ? "Hide HUD" : "HUD";
@@ -915,6 +918,24 @@
     marker.hidden = false;
   }
 
+  function applyViewToKrpano(viewState) {
+    if (!krpano || typeof krpano.set !== "function" || !viewState) {
+      return false;
+    }
+    const projection = normalizeViewerProjection(viewState.viewer_projection || state.viewer_projection);
+    if (projection === "flat") {
+      return false;
+    }
+    const yaw = normalizeYaw(viewState.yaw_to_camera_heading);
+    const pitch = normalizePitch(viewState.pitch);
+    const zoom = normalizeZoom(viewState.zoom);
+    const fov = clamp(90 / zoom, 1, 179);
+    krpano.set("view.hlookat", yaw);
+    krpano.set("view.vlookat", pitch);
+    krpano.set("view.fov", fov);
+    return true;
+  }
+
   function targetPitch(target) {
     const storedPitch = Number(target.target_pitch_deg);
     if (Number.isFinite(storedPitch)) {
@@ -1093,6 +1114,8 @@
     ensureLockGuideOverlay();
     if (lockGuideOverlay) {
       lockGuideOverlay.hidden = true;
+      lockGuideOverlay.setAttribute("hidden", "");
+      lockGuideOverlay.style.display = "none";
     }
     if (lockGuideBand) {
       lockGuideBand.removeAttribute("d");
@@ -1104,6 +1127,15 @@
       lockGuideEndpoint.removeAttribute("cx");
       lockGuideEndpoint.removeAttribute("cy");
     }
+  }
+
+  function showLockGuideOverlay() {
+    if (!lockGuideOverlay) {
+      return;
+    }
+    lockGuideOverlay.hidden = false;
+    lockGuideOverlay.removeAttribute("hidden");
+    lockGuideOverlay.style.display = "";
   }
 
   function guideEndpointFromDirection(target, viewState, stageRect) {
@@ -1121,6 +1153,9 @@
     );
     const yawDeltaDeg = signedAngleDelta(viewState.yaw_to_camera_heading, sphere.h);
     const pitchDeltaDeg = normalizePitch(sphere.v) - normalizePitch(viewState.pitch);
+    if (Math.abs(yawDeltaDeg) >= 89.0) {
+      return null;
+    }
     let xNdc = Math.tan(yawDeltaDeg * Math.PI / 180) / Math.tan(horizontalHalfRadians);
     let yNdc = -Math.tan(pitchDeltaDeg * Math.PI / 180) / Math.tan(verticalHalfRadians);
     if (!Number.isFinite(xNdc) || !Number.isFinite(yNdc)) {
@@ -1147,6 +1182,14 @@
     }
     const yawDeltaDeg = signedAngleDelta(viewState.yaw_to_camera_heading, sphere.h);
     const pitchDeltaDeg = normalizePitch(sphere.v) - normalizePitch(viewState.pitch);
+    if (Math.abs(yawDeltaDeg) > 90.0) {
+      const side = yawDeltaDeg >= 0 ? 1 : -1;
+      const rearRatio = clamp((Math.abs(yawDeltaDeg) - 90.0) / 90.0, 0, 1);
+      return {
+        x: stageRect.width / 2 + side * (stageRect.width * (0.18 + 0.28 * rearRatio)),
+        y: stageRect.height * (0.78 + 0.12 * rearRatio)
+      };
+    }
     let dx = Math.sin(yawDeltaDeg * Math.PI / 180);
     let dy = -Math.sin(pitchDeltaDeg * Math.PI / 180);
     if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
@@ -1193,22 +1236,28 @@
       return;
     }
     const stageRect = panoStage.getBoundingClientRect();
-    if (!stageRect.width || !stageRect.height || !target) {
+    if (!stageRect.width || !stageRect.height) {
       clearLockGuide();
       return;
     }
     lockGuideOverlay.setAttribute("viewBox", `0 0 ${stageRect.width} ${stageRect.height}`);
     const viewState = readKrpanoView() || state;
-    const projected = projectClickTargetMarker(target)
-      || guideEndpointFromDirection(target, viewState, stageRect)
-      || guidePointFromYawPitch(target, viewState, stageRect);
+    const centerX = stageRect.width / 2;
+    // The line starts at the bottom center, representing the viewer/camera position.
+    const centerY = stageRect.height;
+    const projected = target
+      ? (
+        guideEndpointFromDirection(target, viewState, stageRect)
+        || guidePointFromYawPitch(target, viewState, stageRect)
+      )
+      : {
+        x: centerX,
+        y: stageRect.height / 2
+      };
     if (!projected) {
       clearLockGuide();
       return;
     }
-    const centerX = stageRect.width / 2;
-    // The line starts at the bottom center, representing the viewer/camera position.
-    const centerY = stageRect.height;
     const endpoint = rayToStageEdge(centerX, centerY, projected.x, projected.y, stageRect);
     const endX = endpoint.x;
     const endY = endpoint.y;
@@ -1217,11 +1266,16 @@
     lockGuideLine.setAttribute("d", path);
     lockGuideEndpoint.setAttribute("cx", String(endX.toFixed(1)));
     lockGuideEndpoint.setAttribute("cy", String(endY.toFixed(1)));
-    lockGuideOverlay.hidden = false;
+    showLockGuideOverlay();
   }
 
   function updateClickTargetMarker() {
-    if (!clickTargetMarker || !panoStage) {
+    if (!panoStage) {
+      clearLockGuide();
+      return;
+    }
+    if (!clickTargetMarker) {
+      updateLockGuide(displayClickTargets()[0] || null);
       return;
     }
     if (!radarHudVisible) {
@@ -1236,12 +1290,13 @@
       lastMarkerSignature = null;
       panoStage.querySelectorAll(".click-target-marker-extra").forEach((marker) => marker.remove());
       clickTargetMarker.hidden = true;
-      clearLockGuide();
+      updateLockGuide(null);
       return;
     }
     const markerSignature = [
       state.video || "",
       String(Number(state.frame_index)),
+      viewHoldEnabled ? "lock" : "free",
       targets.slice(0, MAX_CLICK_TARGETS).map(targetSignature).join("~")
     ].join("::");
     if (markerSignature === lastMarkerSignature) {
@@ -1704,8 +1759,9 @@
   }
 
   function currentViewHeldState(nextState) {
-    // Lock preserves the user's current view while QGIS changes frames/POIs.
-    // Do not alter target payloads or POI Lock math here; only carry yaw/pitch/zoom.
+    // Lock preserves the user's current viewing direction while QGIS changes
+    // frames/POIs. Target payloads still update markers and guides, but the
+    // user's neck direction is kept stable.
     if (!viewHoldEnabled) {
       return nextState;
     }
@@ -1831,6 +1887,16 @@
     state.target = session.target && typeof session.target === "object"
       ? session.target
       : (state.targets.length ? state.targets[state.targets.length - 1] : null);
+    const requestedView = currentViewHeldState(session);
+    Object.assign(state, normalizedView(requestedView));
+    if (!viewHoldEnabled) {
+      applyViewToKrpano(state);
+    }
+    if (commandId) {
+      lastAppliedCommandId = commandId;
+      pendingCommandId = commandId;
+      state.applied_command_id = commandId;
+    }
     updateReadout(readKrpanoView() || state);
     updateGroundRings(readKrpanoView() || state);
     lastPosted = currentSessionState(state);
@@ -1857,6 +1923,7 @@
     viewHoldButton.addEventListener("click", () => {
       viewHoldEnabled = !viewHoldEnabled;
       updateViewHoldButton();
+      updateLockGuide(displayClickTargets()[0] || null);
       updateClickTargetMarker();
       postViewerState(true);
     });

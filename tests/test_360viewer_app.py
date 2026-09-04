@@ -60,6 +60,37 @@ class ViewerAppValidationTests(unittest.TestCase):
                 with self.assertRaises(self.app.ApiError):
                     self.app.safe_video_name(value)
 
+    def test_normalize_viewer_engine_accepts_psv_aliases(self):
+        """Photo Sphere Viewer検証用engine名を安全に正規化する。"""
+        self.assertEqual(self.app.normalize_viewer_engine("psv"), "psv")
+        self.assertEqual(self.app.normalize_viewer_engine("photo-sphere-viewer"), "psv")
+        self.assertEqual(self.app.normalize_viewer_engine("unknown"), "krpano")
+
+    def test_photo_sphere_viewer_is_unavailable_without_vendor_files(self):
+        """PSV本体を同梱しない状態では明示的に利用不可になる。"""
+        missing_root = self.temp_dir / "missing_psv_vendor"
+        self.app.PSV_CORE_JS_PATH = missing_root / "core" / "index.module.js"
+        self.app.PSV_CORE_CSS_PATH = missing_root / "core" / "index.css"
+        self.app.PSV_MARKERS_JS_PATH = missing_root / "markers-plugin" / "index.module.js"
+        self.app.PSV_MARKERS_CSS_PATH = missing_root / "markers-plugin" / "index.css"
+        self.app.PSV_THREE_JS_PATH = missing_root / "three" / "three.module.js"
+        self.app.PSV_THREE_CORE_JS_PATH = missing_root / "three" / "three.core.js"
+
+        self.assertFalse(self.app.photo_sphere_viewer_available())
+
+    def test_build_viewer_html_can_select_psv_script(self):
+        """krpano版と並走できるようPSV用JSを選択できる。"""
+        html = self.app.build_viewer_html(
+            {"state": {"video": "abc.mp4", "frame_index": 1}},
+            krpano_available=True,
+            frame_url="/frames/abc.mp4/1.jpg",
+            viewer_engine="psv",
+            psv_available=False,
+        ).decode("utf-8")
+
+        self.assertIn('/static/psv_viewer.js', html)
+        self.assertNotIn('/static/viewer.js"></script>', html)
+
     def test_validate_state_payload_normalizes_view_and_target(self):
         """ビューア状態とクリックtargetを範囲内へ正規化する。"""
         state = self.app.validate_state_payload({

@@ -1,6 +1,10 @@
 # 360 Viewer PoC
 
-OpenCV + Python standard-library HTTP server + krpano based proof of concept for 360 viewer.
+OpenCV + Python standard-library HTTP server based proof of concept for frame-linked 360/flat video review.
+
+The original interactive viewer path uses krpano. A Photo Sphere Viewer based
+alternative path is also available for license and distribution feasibility
+testing.
 
 ## Layout
 
@@ -16,8 +20,14 @@ OpenCV + Python standard-library HTTP server + krpano based proof of concept for
 ├── static/
 │   ├── viewer.css
 │   ├── viewer.js
-│   └── vendor/krpano/
-│       └── krpano.js   # place your licensed krpano.js here
+│   ├── psv_viewer.js
+│   └── vendor/
+│       ├── krpano/
+│       │   └── krpano.js
+│       └── photo-sphere-viewer/
+│           ├── core/
+│           ├── markers-plugin/
+│           └── three/
 └── templates/
     └── viewer.html   # kept for reference; app.py renders HTML directly
 ```
@@ -69,6 +79,81 @@ static/vendor/krpano/krpano.js
 
 Older krpano runtimes can be used. The viewer sets `basepath` to `static/vendor/krpano/` and uses a same-origin XML scene with absolute frame image URLs.
 
+### Photo Sphere Viewer alternative
+
+Photo Sphere Viewer can be selected with the `engine=psv` query parameter:
+
+```text
+http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&engine=psv
+```
+
+The PSV path is designed as a krpano replacement candidate, not as a separate
+data model. It reuses the same HTTP endpoints and session JSON:
+
+- `/frames/<video>/<frame_index>.jpg`
+- `/api/session/viewer-state`
+- `/api/session/viewer-command`
+- `/api/navigation`
+
+The browser state remains krpano-compatible. Stored values such as
+`yaw_to_camera_heading`, `pitch`, `zoom`, `target`, and `targets` are not changed
+for PSV. `psv_viewer.js` converts only at the viewer boundary, for example by
+flipping pitch sign when sending view/marker positions into PSV.
+
+Place local npm package files under:
+
+```text
+static/vendor/photo-sphere-viewer/
+  core/index.module.js
+  core/index.css
+  markers-plugin/index.module.js
+  markers-plugin/index.css
+  three/three.module.js
+  three/three.core.js
+```
+
+`three.core.js` is required because the `three.module.js` build imports it with
+a relative `./three.core.js` import.
+
+PSV FOV can be tuned in `viewer_config.json`:
+
+```json
+{
+  "viewer_psv_min_fov_deg": 20,
+  "viewer_psv_max_fov_deg": 179
+}
+```
+
+Aliases `psv_min_fov_deg`, `psv_max_fov_deg`, `min_fov`, `max_fov`, `minFov`,
+and `maxFov` are accepted for local experiments. Values are clamped to
+`1..179` because PSV itself clamps FOV values in that range.
+
+Current compatibility notes:
+
+- Equirectangular 360 frames are displayed by Photo Sphere Viewer.
+- Target markers are rendered through MarkersPlugin and use existing target
+  yaw/pitch values.
+- Marker labels show semantic class, confidence, and id when present.
+- The `HUD` button toggles range HUD, projected ground rings, markers, labels,
+  and the lock guide together.
+- `Lock` draws a screen-space direction ray using the current target.
+- Ordinary flat frames are not passed to PSV. They are displayed by the fallback
+  image element as a 2D viewer to avoid PSV's panorama loader error.
+- Flat-frame markers use stored `x_ratio` / `y_ratio` and support wheel zoom and
+  drag pan.
+- Ground rings are disabled in flat mode because this fallback has no full 3D
+  camera model.
+
+Known differences from the optimized krpano path:
+
+- Frame switching can feel slower because PSV recreates or updates WebGL
+  textures through `setPanorama()`.
+- Ground-ring scale still needs empirical calibration against road width,
+  lane width, and camera height.
+- The PSV path is currently an evaluation path for distribution feasibility.
+  Keep the krpano path available while performance and calibration are being
+  reviewed.
+
 Put videos and matched-frame CSV files under `video_dir`.
 
 ```text
@@ -106,6 +191,8 @@ frame_index,image_path
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
+  "viewer_psv_min_fov_deg": 20,
+  "viewer_psv_max_fov_deg": 179,
   "viewer_cache_dir": "viewer_cache",
   "viewer_camera_height_m": 1.5,
   "viewer_browser_app_window": true,

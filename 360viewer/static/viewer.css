@@ -148,7 +148,7 @@ button:disabled {
   pointer-events: none;
   position: absolute;
   width: 100%;
-  z-index: 7;
+  z-index: 8;
 }
 
 .lock-guide-overlay[hidden] {
@@ -158,16 +158,16 @@ button:disabled {
 /* Wide translucent band. This is the main "rough direction" cue, not an exact hit marker. */
 .lock-guide-band {
   fill: none;
-  stroke: rgba(255, 214, 74, 0.12);
+  stroke: rgba(255, 214, 74, 0.24);
   stroke-linecap: round;
-  stroke-width: 5;
+  stroke-width: 4;
   vector-effect: non-scaling-stroke;
 }
 
 /* Thin dashed center line. Lower alpha or stroke-width if it competes with POI labels. */
 .lock-guide-line {
   fill: none;
-  stroke: rgba(255, 238, 128, 0.42);
+  stroke: rgba(255, 238, 128, 0.88);
   stroke-dasharray: 7 10;
   stroke-linecap: round;
   stroke-width: 1;
@@ -176,9 +176,9 @@ button:disabled {
 
 /* Small end cap at the viewport edge. Set fill/stroke alpha to 0 to keep only the line. */
 .lock-guide-endpoint {
-  fill: rgba(255, 238, 128, 0.38);
-  stroke: rgba(0, 0, 0, 0.28);
-  stroke-width: 1;
+  fill: rgba(255, 238, 128, 0.82);
+  stroke: rgba(0, 0, 0, 0.52);
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
@@ -288,6 +288,18 @@ button:disabled {
 
 .click-target-marker[hidden] {
   display: none;
+}
+
+.psv-target-marker {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.psv-target-pin.click-target-marker {
+  display: block;
+  left: 0;
+  position: relative;
+  top: 0;
 }
 
 .radar-hud {
