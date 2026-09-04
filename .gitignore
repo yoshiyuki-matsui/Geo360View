@@ -1,0 +1,38 @@
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test/type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# QGIS/Geo360View runtime outputs
+360view_output/
+360viewer/viewer_config.qgis_runtime.json
+360viewer/viewer_session.json
+viewer_session.json
+
+# Local media and GIS data outputs
+*.gpkg
+*.sqlite
+*.sqlite3
+*.db
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+
+# Local editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
