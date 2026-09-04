@@ -337,7 +337,7 @@ def video_path(video: str) -> Path:
 
 
 def matched_frames_path(video: str) -> Path:
-    """動画名に対応するKPマッチ済みナビゲーションCSVのパスを返す。"""
+    """動画名に対応する参照点マッチ済みナビゲーションCSVのパスを返す。"""
     cfg = load_config()
     stem = Path(video).stem
     return (cfg["video_dir"] / f"{stem}_matched_frames.csv").resolve()

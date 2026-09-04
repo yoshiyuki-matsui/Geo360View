@@ -6,7 +6,7 @@ Last updated: 2026-09-04
 
 Geo360 View is a lightweight QGIS plugin for aligning MP4 videos with GPX tracks and viewing the corresponding frames from camera points on a map.
 
-The public scope is limited to video/position synchronization, camera-point layer creation, optional KP master matching, and visual review in a browser viewer. Automatic object detection, POI generation, semantic clustering, and model-review workflows are intentionally outside this repository.
+The public scope is limited to video/position synchronization, camera-point layer creation, optional reference point matching, and visual review in a browser viewer. Automatic object detection, POI generation, semantic clustering, and model-review workflows are intentionally outside this repository.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Geo360View/
 ├── map_tools.py                 QGIS map-click tool
 ├── messages.py                  User-facing message templates and locale switching
 ├── radar.py                     viewer_session.json polling and radar overlay drawing
-├── kp.py                        KP CSV reader and nearest-neighbor matching
+├── kp.py                        Reference CSV reader and nearest-neighbor matching
 ├── exif_utils.py                JPEG EXIF helpers
 ├── TenkakuNinja/
 │   └── geo_util.py              GPX parsing and frame interpolation helpers
@@ -45,12 +45,12 @@ The QGIS plugin and browser viewer are loosely coupled. QGIS starts a local HTTP
 
 ## Main Flow
 
-1. The user selects an MP4, GPX, optional KP CSV, and output folder.
+1. The user selects an MP4, GPX, optional reference CSV, and output folder.
 2. OpenCV reads video FPS and frame count.
 3. GPX timestamps are interpolated to video frame numbers.
 4. An optional frame shift is applied.
 5. QGIS creates the `Video GPX Points` layer.
-6. Optional KP master matching writes navigation CSV output.
+6. Optional reference point matching writes navigation CSV output.
 7. A camera-point click or navigation command opens the corresponding frame in the browser viewer.
 
 ## Viewer Engines

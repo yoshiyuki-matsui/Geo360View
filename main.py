@@ -364,14 +364,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return int(self.frame_shift.value())
 
     def processKpFileValue(self):
-        """実行中ProcessのKP CSVパスを返す。未指定なら空文字を返す。"""
+        """実行中Processの参照点CSVパスを返す。未指定なら空文字を返す。"""
         config = getattr(self, "last_process_config", None)
         if config is not None:
             return config.kp_file or ""
         return self.kp_file
 
     def processKpToleranceValue(self):
-        """実行中ProcessのKP許容距離を返す。"""
+        """実行中Processの参照点マッチング許容距離を返す。"""
         config = getattr(self, "last_process_config", None)
         if config is not None:
             return float(config.kp_tolerance_m)
@@ -420,7 +420,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         self.new_job_button = QPushButton("New Job")
         self.new_job_button.clicked.connect(self.newJobSession)
-        self.new_job_button.setToolTip("Clear current GPX/MP4/KP/Output selections and start a fresh job.")
+        self.new_job_button.setToolTip("Clear current GPX/MP4/Reference/Output selections and start a fresh job.")
         set_fixed_width(self.new_job_button, 82)
 
         self.video_label = QLabel("Video:")
@@ -446,7 +446,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.applyHelp("ui.help.database", self.database_label, self.database_button)
         set_fixed_width(self.database_button, 72)
 
-        self.kp_label = QLabel("KP CSV:")
+        self.kp_label = QLabel("Ref CSV:")
         self.kp_path = self.makePathLabel(self.uiText("ui.path.no_kp"))
         self.kp_button = QPushButton(self.uiText("ui.button.browse"))
         self.kp_button.clicked.connect(self.selectKP)
@@ -456,7 +456,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         for label in (self.gpx_label, self.video_label, self.viewer_projection_label, self.database_label, self.kp_label):
             label.setMinimumWidth(52)
 
-        self.kp_tolerance_label = QLabel("KP tol:")
+        self.kp_tolerance_label = QLabel("Ref tol:")
         self.kp_tolerance = QDoubleSpinBox()
         self.kp_tolerance.setRange(0.0, 10000.0)
         self.kp_tolerance.setDecimals(1)
@@ -510,7 +510,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode = QComboBox()
         self.nav_mode.addItem("Frame step", "frame")
         self.nav_mode.addItem("Layer point", "layer")
-        self.nav_mode.addItem("KP matched CSV", "kp")
+        self.nav_mode.addItem("Reference matched", "kp")
         self.nav_mode.currentIndexChanged.connect(self.onNavigationModeChanged)
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 146)
@@ -1055,11 +1055,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 })
 
     def selectKP(self):
-        """KPマスタCSVを選択する。KP未指定でも通常処理は可能。"""
+        """参照点CSVを選択する。未指定でも通常処理は可能。"""
         if self.database_restore_mode:
             return
         start_dir = self.dialogStartDir("kp", self.kp_file, self.gpx_file, self.video_file, self.output_dir)
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select KP CSV", start_dir, "CSV Files (*.csv)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Reference CSV", start_dir, "CSV Files (*.csv)")
         if file_path:
             self.rememberDialogPath("kp", file_path)
             self.kp_file = file_path
@@ -4153,7 +4153,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             notifier(f"saved {len(added_features)} point(s) to 360 Click Targets")
 
     def matchedFrameCsvPaths(self):
-        """KPマッチ済みフレームCSVの探索候補パスを返す。"""
+        """参照点マッチ済みフレームCSVの探索候補パスを返す。"""
         if not self.video_file:
             return []
 
@@ -4174,7 +4174,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return unique_paths
 
     def matchedFrames(self):
-        """KPマッチ済みCSVからナビゲーション用frame_index一覧を読み込む。"""
+        """参照点マッチ済みCSVからナビゲーション用frame_index一覧を読み込む。"""
         for path in self.matchedFrameCsvPaths():
             if not os.path.isfile(path):
                 continue
@@ -4854,11 +4854,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.notifyWarning("no_rows_layer")
 
     def buildKpMatches(self, rows):
-        """現在UIのKPファイル/許容距離を使ってKPマッチングを実行する。"""
+        """現在UIの参照点CSV/許容距離を使って最近接マッチングを実行する。"""
         return build_kp_matches(rows, self.processKpFileValue(), self.processKpToleranceValue())
 
     def resolveKpMatches(self, rows):
-        """KPマッチングを安全に実行し、レイヤ属性とCSV出力で共有する。"""
+        """参照点マッチングを安全に実行し、レイヤ属性とCSV出力で共有する。"""
         try:
             matches, match_count = self.buildKpMatches(rows)
             return matches, match_count, None
@@ -4866,7 +4866,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return [None] * len(rows), 0, str(e)
 
     def exportFrameData(self, rows, matches=None, match_count=None):
-        """全フレーム同期CSV、KPナビゲーションJSON/CSVを出力する。"""
+        """全フレーム同期CSV、参照点ナビゲーションJSON/CSVを出力する。"""
         output_dir = self.resolvedOutputDir()
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -4940,7 +4940,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     })
 
                     if match:
-                        # KPマッチ済み点だけをWEBビューアPrev/Next用ノードにする。
+                        # 参照点マッチ済み点だけをWEBビューアPrev/Next用ノードにする。
                         navigation_nodes.append({
                             "index": len(navigation_nodes),
                             "frame": frame_num,

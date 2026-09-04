@@ -1,4 +1,4 @@
-"""KPマスタCSVを読み込み、撮影点を最近接KPへ寄せる処理。"""
+"""参照点CSVを読み込み、撮影点を最近接の参照点へ寄せる処理。"""
 
 from qgis.core import (
     QgsCoordinateReferenceSystem,
@@ -15,9 +15,10 @@ from .constants import KP_FIELDS, LATITUDE_FIELDS, LONGITUDE_FIELDS
 
 
 def _read_kp_csv(path):
-    """KP CSVから緯度経度とKP識別子を読み込む。
+    """参照点CSVから緯度経度と参照点識別子を読み込む。
 
     列名は現場データで揺れやすいため、候補列名から自動判定する。
+    既存CSVとの互換性のため、返却辞書の識別子キーは `kp` のまま維持する。
     """
     handle, reader = _open_csv_dict_reader(path)
     with handle:
@@ -28,7 +29,7 @@ def _read_kp_csv(path):
 
         if not lat_field or not lon_field:
             raise ValueError(
-                "KP CSV must contain latitude/longitude columns "
+                "Reference CSV must contain latitude/longitude columns "
                 f"(fields: {', '.join(fieldnames)})"
             )
 
@@ -49,13 +50,13 @@ def _read_kp_csv(path):
             })
 
     if not rows:
-        raise ValueError("KP CSV did not contain valid latitude/longitude rows.")
+        raise ValueError("Reference CSV did not contain valid latitude/longitude rows.")
 
     return rows
 
 
 def build_kp_matches(rows, kp_file, tolerance_m):
-    """フレーム位置行ごとに許容距離内の最近接KPを割り当てる。
+    """フレーム位置行ごとに許容距離内の最近接参照点を割り当てる。
 
     戻り値は `rows` と同じ長さのmatch配列と、マッチ件数。
     マッチしなかった行はNoneのままにして、後段CSV出力で元座標を維持する。

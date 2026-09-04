@@ -147,7 +147,7 @@ def validate_process_config(raw: dict[str, Any]) -> tuple[ProcessConfig | None, 
     output_dir = _text(raw.get("output_dir"))
     kp_file = _optional_text(raw.get("kp_file"))
     frame_shift = _int_value(raw.get("frame_shift", 0), "Frame shift", errors)
-    kp_tolerance_m = _float_value(raw.get("kp_tolerance_m", 5.0), "KP tolerance", errors, 5.0)
+    kp_tolerance_m = _float_value(raw.get("kp_tolerance_m", 5.0), "Reference tolerance", errors, 5.0)
 
     if not gpx_file:
         errors.append("GPX file is required.")
@@ -165,15 +165,15 @@ def validate_process_config(raw: dict[str, Any]) -> tuple[ProcessConfig | None, 
 
     if kp_file:
         if _extension(kp_file) != ".csv":
-            errors.append("KP file must be a .csv file.")
-        _file_exists(kp_file, "KP file", errors)
+            errors.append("Reference file must be a .csv file.")
+        _file_exists(kp_file, "Reference file", errors)
 
     _validate_output_dir(output_dir, errors)
 
     if not -1000000 <= frame_shift <= 1000000:
         errors.append("Frame shift must be between -1000000 and 1000000.")
     if kp_tolerance_m < 0:
-        errors.append("KP tolerance must be greater than or equal to 0.")
+        errors.append("Reference tolerance must be greater than or equal to 0.")
 
     if errors:
         return None, errors

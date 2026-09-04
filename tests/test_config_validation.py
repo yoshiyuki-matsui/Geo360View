@@ -27,7 +27,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_process_config_accepts_valid_inputs(self):
-        """GPX/MP4/KP/出力先/Shift/許容距離を正規化してConfig化する。"""
+        """GPX/MP4/参照点CSV/出力先/Shift/許容距離を正規化してConfig化する。"""
         result, errors = config.validate_process_config({
             "gpx_file": str(self.gpx),
             "video_file": str(self.video),
@@ -58,7 +58,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(any("not found" in error for error in errors))
 
     def test_process_config_rejects_negative_kp_tolerance(self):
-        """KP許容距離は負数にしない。"""
+        """参照点マッチング許容距離は負数にしない。"""
         result, errors = config.validate_process_config({
             "gpx_file": str(self.gpx),
             "video_file": str(self.video),
@@ -67,7 +67,7 @@ class ConfigValidationTests(unittest.TestCase):
         })
 
         self.assertIsNone(result)
-        self.assertIn("KP tolerance must be greater than or equal to 0.", errors)
+        self.assertIn("Reference tolerance must be greater than or equal to 0.", errors)
 
     def test_frame_extract_config_rejects_negative_frame(self):
         """負のフレーム番号をOpenCVへ渡さない。"""

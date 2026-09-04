@@ -9,7 +9,7 @@ It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, a
 - Read GPX tracks and interpolate camera positions to MP4 frame numbers.
 - Apply a frame shift to align video frames and GNSS positions.
 - Create a `Video GPX Points` layer in QGIS.
-- Optionally match generated camera points to a KP master CSV.
+- Optionally match generated camera points to a reference point CSV, such as KP markers, utility poles, bridges, or facility master points.
 - Open a local browser viewer from QGIS.
 - Display 360/equirectangular frames and normal-FOV frames.
 - Switch frames without exporting the whole video to images.
