@@ -1,10 +1,10 @@
 [general]
-name=Geo360View by TenkakuNinja
+name=Geo360 View
 version=0.3.0
 qgisMinimumVersion=3.40
-description=Processes GPX data with MP4 video and creates GPS points layer
+description=View GPX-synchronized 360-degree and normal videos on a QGIS map
 author=Nakasha Creative co.,Ltd
 email=rdcenter@nakasha.co.jp
 homepage=https://www.nakasha.co.jp
 license=Apache License 2.0
-about=Processes GPX data with MP4 video and creates GPS points layer
+about=Geo360 View aligns an MP4 video with a GPX track, creates frame camera points, and opens selected frames in a local map-linked viewer.

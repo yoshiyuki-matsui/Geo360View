@@ -1,4 +1,4 @@
-"""QGISがGPXVideoProcessorプラグインをロードするためのパッケージ入口。"""
+"""QGISがGeo360 Viewプラグインをロードするためのパッケージ入口。"""
 
 from .main import GPXVideoPlugin
 

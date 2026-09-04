@@ -510,8 +510,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode = QComboBox()
         self.nav_mode.addItem("Frame step", "frame")
         self.nav_mode.addItem("Layer point", "layer")
-        self.nav_mode.addItem("Picked point", "picked")
-        self.nav_mode.addItem("Detection check", "detect")
         self.nav_mode.addItem("KP matched CSV", "kp")
         self.nav_mode.currentIndexChanged.connect(self.onNavigationModeChanged)
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
@@ -527,6 +525,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             "Detection check target scope. QGIS visibility, selection, and subset filters can limit Nav targets."
         )
         self.nav_scope_label.setToolTip(self.nav_scope.toolTip())
+        self.nav_scope_label.hide()
+        self.nav_scope.hide()
         set_fixed_width(self.nav_scope, 132)
         self.nav_step_label = QLabel("Step:")
         self.nav_step = QSpinBox()
