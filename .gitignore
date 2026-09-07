@@ -16,6 +16,9 @@ htmlcov/
 360viewer/viewer_session.json
 viewer_session.json
 
+# Licensed local runtime files
+360viewer/static/vendor/krpano/
+
 # Local media and GIS data outputs
 *.gpkg
 *.sqlite

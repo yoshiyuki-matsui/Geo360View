@@ -6,5 +6,5 @@ description=View GPX-synchronized 360-degree and normal videos on a QGIS map
 author=Nakasha Creative co.,Ltd
 email=rdcenter@nakasha.co.jp
 homepage=https://www.nakasha.co.jp
-license=Apache License 2.0
+license=GPL-2.0-or-later
 about=Geo360 View aligns an MP4 video with a GPX track, creates frame camera points, and opens selected frames in a local map-linked viewer.

@@ -37,6 +37,18 @@ This public-oriented plugin is limited to video/GPX synchronization and visual r
 - QGIS Python with OpenCV (`cv2`) available.
 - A browser that can open the local viewer, preferably Edge or Chrome.
 
+## License
+
+Geo360 View is licensed under GPL-2.0-or-later to align with QGIS plugin distribution requirements.
+
+Bundled browser-side open source components are distributed under their own licenses:
+
+- Photo Sphere Viewer core: MIT
+- Photo Sphere Viewer MarkersPlugin: MIT
+- three.js: MIT
+
+krpano is not bundled. If you use the legacy krpano path locally, place your own licensed krpano runtime according to the krpano license.
+
 ## Documentation
 
 - [DESIGN.ja.md](DESIGN.ja.md): Japanese design notes.
