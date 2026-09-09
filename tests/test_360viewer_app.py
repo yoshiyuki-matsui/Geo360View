@@ -373,6 +373,60 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(payload["reference"]["latitude"], 35.1)
         self.assertEqual(payload["reference"]["longitude"], 136.2)
 
+    def test_navigation_payload_includes_frame_position_record(self):
+        """frames CSVがある場合、現在フレームの撮影点座標を返す。"""
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        frames_csv = self.temp_dir / "abc_frames.csv"
+        frames_csv.write_text(
+            "frame,latitude,longitude,aligned_latitude,aligned_longitude\n"
+            "11,35.1,136.2,35.3,136.4\n",
+            encoding="utf-8",
+        )
+        self.app.CONFIG_PATH = self.temp_dir / "viewer_config_runtime.json"
+        self.app.CONFIG_PATH.write_text(json.dumps({
+            "host": "127.0.0.1",
+            "port": 8181,
+            "video_dir": str(video_dir),
+            "session_json_path": str(self.temp_dir / "viewer_session.json"),
+            "viewer_cache_dir": str(self.temp_dir / "viewer_cache"),
+        }), encoding="utf-8")
+
+        payload = self.app.navigation_payload("abc.mp4", 11)
+
+        self.assertEqual(payload["frame_position"]["latitude"], 35.3)
+        self.assertEqual(payload["frame_position"]["longitude"], 136.4)
+        self.assertEqual(payload["frame_position"]["source"], "frames_csv")
+
+    def test_navigation_payload_finds_frame_csv_from_navigation_json(self):
+        """navigation JSONのframes_csvから、動画stem以外のCSV名も解決する。"""
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        frames_csv = self.temp_dir / "route_walk_frames.csv"
+        frames_csv.write_text(
+            "frame,latitude,longitude\n"
+            "11,35.1,136.2\n",
+            encoding="utf-8",
+        )
+        navigation_json = self.temp_dir / "route_walk_navigation.json"
+        navigation_json.write_text(json.dumps({
+            "video": str(video_dir / "abc.mp4"),
+            "frames_csv": "route_walk_frames.csv",
+        }), encoding="utf-8")
+        self.app.CONFIG_PATH = self.temp_dir / "viewer_config_runtime.json"
+        self.app.CONFIG_PATH.write_text(json.dumps({
+            "host": "127.0.0.1",
+            "port": 8181,
+            "video_dir": str(video_dir),
+            "session_json_path": str(self.temp_dir / "viewer_session.json"),
+            "viewer_cache_dir": str(self.temp_dir / "viewer_cache"),
+        }), encoding="utf-8")
+
+        payload = self.app.navigation_payload("abc.mp4", 11)
+
+        self.assertEqual(payload["frame_position"]["latitude"], 35.1)
+        self.assertEqual(payload["frame_position"]["longitude"], 136.2)
+
     def test_save_snapshot_writes_jpeg_with_exif(self):
         """ブラウザから送られたJPEGをsnapshotsへ保存し、EXIF APP1を付与する。"""
         tiny_jpeg = base64.b64encode(
@@ -393,6 +447,11 @@ class ViewerAppValidationTests(unittest.TestCase):
                 "latitude": 35.1,
                 "longitude": 136.2,
             },
+            "frame_position": {
+                "latitude": 35.3,
+                "longitude": 136.4,
+                "source": "frames_csv",
+            },
         })
 
         path = Path(result["path"])
@@ -401,6 +460,42 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertTrue(data.startswith(b"\xff\xd8\xff\xe1"))
         self.assertIn(b"Exif\x00\x00", data[:32])
         self.assertTrue(result["gps_written"])
+        self.assertEqual(result["gps_source"], "frames_csv")
+
+    def test_save_snapshot_uses_frame_csv_without_reference_match(self):
+        """Reference未マッチでも、元フレームCSVの撮影点座標をGPS EXIFへ使う。"""
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        frames_csv = self.temp_dir / "abc_frames.csv"
+        frames_csv.write_text(
+            "frame,latitude,longitude\n"
+            "11,35.1,136.2\n",
+            encoding="utf-8",
+        )
+        self.app.CONFIG_PATH = self.temp_dir / "viewer_config_runtime.json"
+        self.app.CONFIG_PATH.write_text(json.dumps({
+            "host": "127.0.0.1",
+            "port": 8181,
+            "video_dir": str(video_dir),
+            "session_json_path": str(self.temp_dir / "viewer_session.json"),
+            "viewer_cache_dir": str(self.temp_dir / "viewer_cache"),
+        }), encoding="utf-8")
+        tiny_jpeg = base64.b64encode(
+            b"\xff\xd8\xff\xdb\x00C\x00" + b"\x00" * 64 + b"\xff\xd9"
+        ).decode("ascii")
+
+        result = self.app.save_snapshot({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "image_data": f"data:image/jpeg;base64,{tiny_jpeg}",
+        })
+
+        self.assertTrue(Path(result["path"]).is_file())
+        self.assertTrue(result["gps_written"])
+        self.assertEqual(result["gps_source"], "frames_csv")
+        self.assertIsNone(result["reference"])
+        self.assertEqual(result["frame_position"]["latitude"], 35.1)
+        self.assertEqual(result["frame_position"]["longitude"], 136.2)
 
 
 if __name__ == "__main__":

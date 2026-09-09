@@ -356,6 +356,56 @@ def matched_frames_path(video: str) -> Path:
     return (cfg["video_dir"] / f"{stem}_matched_frames.csv").resolve()
 
 
+def frame_csv_candidates(video: str) -> list[Path]:
+    """動画名に対応する全フレームCSVの候補パスを返す。"""
+    cfg = load_config()
+    stem = Path(video).stem
+    session_dir = cfg["session_json_path"].resolve().parent
+    paths = [
+        session_dir / f"{stem}_frames.csv",
+        cfg["video_dir"] / f"{stem}_frames.csv",
+    ]
+    navigation_paths = [
+        session_dir / f"{stem}_navigation.json",
+        cfg["video_dir"] / f"{stem}_navigation.json",
+    ]
+    for root in [session_dir, cfg["video_dir"]]:
+        try:
+            navigation_paths.extend(root.glob("*_navigation.json"))
+        except OSError:
+            continue
+
+    for path in navigation_paths:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        payload_video = payload.get("video") if isinstance(payload, dict) else None
+        if payload_video and Path(str(payload_video)).name != video:
+            continue
+        frames_csv = payload.get("frames_csv") if isinstance(payload, dict) else None
+        if isinstance(frames_csv, str) and frames_csv:
+            paths.append(path.parent / frames_csv)
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for path in paths:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            candidates.append(resolved)
+    return candidates
+
+
+def first_present_path(paths: list[Path]) -> Path | None:
+    """候補パスのうち最初に存在するファイルを返す。"""
+    for path in paths:
+        if path.is_file():
+            return path
+    return None
+
+
 def load_matched_frames(video: str) -> list[int]:
     """matched_frames CSVからPrev/Next用frame_index一覧を読み込む。"""
     path = matched_frames_path(video)
@@ -407,6 +457,41 @@ def load_matched_frame_record(video: str, frame_index: int) -> dict[str, Any] | 
     return None
 
 
+def load_frame_position_record(video: str, frame_index: int) -> dict[str, Any] | None:
+    """frames CSVから現在フレームの撮影点座標を返す。"""
+    path = first_present_path(frame_csv_candidates(video))
+    if not path:
+        return None
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            return None
+        frame_field = "frame_index" if "frame_index" in reader.fieldnames else "frame"
+        if frame_field not in reader.fieldnames:
+            return None
+        for row in reader:
+            try:
+                row_frame = int((row.get(frame_field) or "").strip())
+            except ValueError:
+                continue
+            if row_frame != int(frame_index):
+                continue
+            lat = parse_optional_float(row.get("aligned_latitude"))
+            lon = parse_optional_float(row.get("aligned_longitude"))
+            if lat is None or lon is None:
+                lat = parse_optional_float(row.get("latitude"))
+                lon = parse_optional_float(row.get("longitude"))
+            if lat is None or lon is None:
+                return None
+            return {
+                "latitude": lat,
+                "longitude": lon,
+                "source": "frames_csv",
+            }
+    return None
+
+
 def neighbor_frames(frames: list[int], current: int) -> tuple[int | None, int | None]:
     """現在フレームに対する前後のマッチ済みフレームを返す。"""
     prev_frame = None
@@ -432,6 +517,7 @@ def navigation_payload(video: str, frame_index: int) -> dict[str, Any]:
         "matched_csv_exists": matched_frames_path(video).is_file(),
         "matched_frame_count": len(frames),
         "reference": load_matched_frame_record(video, frame_index),
+        "frame_position": load_frame_position_record(video, frame_index),
     }
 
 
@@ -571,11 +657,14 @@ def decode_snapshot_image(data_url: Any) -> bytes:
     return jpeg_bytes
 
 
-def snapshot_gps(payload: dict[str, Any], reference: dict[str, Any] | None) -> dict[str, float] | None:
-    """EXIF GPSへ入れる座標をReference優先で決める。"""
+def snapshot_gps(
+    payload: dict[str, Any],
+    frame_position: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """EXIF GPSへ入れる撮影点座標を決める。"""
     candidates = [
-        reference or {},
-        payload.get("target") if isinstance(payload.get("target"), dict) else {},
+        frame_position or {},
+        payload.get("frame_position") if isinstance(payload.get("frame_position"), dict) else {},
         payload,
     ]
     for item in candidates:
@@ -591,7 +680,11 @@ def snapshot_gps(payload: dict[str, Any], reference: dict[str, Any] | None) -> d
         except AttributeError:
             continue
         if lat is not None and lon is not None:
-            return {"lat": lat, "lon": lon}
+            return {
+                "lat": lat,
+                "lon": lon,
+                "source": item.get("source", "snapshot_payload"),
+            }
     return None
 
 
@@ -603,13 +696,18 @@ def save_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     reference = payload.get("reference") if isinstance(payload.get("reference"), dict) else None
     if reference is None:
         reference = load_matched_frame_record(video, frame_index)
-    gps = snapshot_gps(payload, reference)
+    frame_position = payload.get("frame_position") if isinstance(payload.get("frame_position"), dict) else None
+    if frame_position is None:
+        frame_position = load_frame_position_record(video, frame_index)
+    gps = snapshot_gps(payload, frame_position)
     now = datetime.now().astimezone()
     description = json.dumps({
         "app": "Geo360View",
         "video": video,
         "frame_index": frame_index,
         "reference": reference,
+        "frame_position": frame_position,
+        "gps_source": gps.get("source") if gps else None,
         "view": {
             "yaw_to_camera_heading": payload.get("yaw_to_camera_heading"),
             "pitch": payload.get("pitch"),
@@ -639,7 +737,9 @@ def save_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         "path": str(path),
         "filename": filename,
         "gps_written": bool(gps),
+        "gps_source": gps.get("source") if gps else None,
         "reference": reference,
+        "frame_position": frame_position,
     }
 
 
@@ -1467,6 +1567,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         frames = load_matched_frames(video)
         prev_frame, next_frame = neighbor_frames(frames, frame_index)
         reference = load_matched_frame_record(video, frame_index)
+        frame_position = load_frame_position_record(video, frame_index)
         video_exists = video_path(video).is_file()
         matched_csv_exists = matched_frames_path(video).is_file()
         krpano_available = KRPANO_JS_PATH.is_file()
@@ -1491,6 +1592,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "prev_frame": prev_frame,
             "next_frame": next_frame,
             "reference": reference,
+            "frame_position": frame_position,
             "frame_url": frame_url,
             "scene_url": scene_url,
             "krpano_available": krpano_available,

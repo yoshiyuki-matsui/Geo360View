@@ -92,7 +92,8 @@
     prev_frame: bootstrap.prev_frame,
     next_frame: bootstrap.next_frame,
     matched_csv_exists: Boolean(bootstrap.matched_csv_exists),
-    reference: bootstrap.reference || null
+    reference: bootstrap.reference || null,
+    frame_position: bootstrap.frame_position || null
   };
 
   function clamp(value, minValue, maxValue) {
@@ -800,7 +801,8 @@
       const imageData = await buildSnapshotDataUrl();
       const payload = Object.assign({}, current, {
         image_data: imageData,
-        reference: navigationState.reference || null
+        reference: navigationState.reference || null,
+        frame_position: navigationState.frame_position || null
       });
       const response = await fetch("/api/snapshot", {
         method: "POST",
@@ -1204,7 +1206,8 @@
       prev_frame: payload.prev_frame,
       next_frame: payload.next_frame,
       matched_csv_exists: Boolean(payload.matched_csv_exists),
-      reference: payload.reference || null
+      reference: payload.reference || null,
+      frame_position: payload.frame_position || null
     };
     updateNavigationButtons();
   }

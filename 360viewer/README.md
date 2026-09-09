@@ -133,8 +133,8 @@ Current compatibility notes:
 - `Lock` draws a screen-space direction ray using the current target.
 - `Save snapshot` saves the current viewer stage to `snapshots/` beside the
   configured session JSON. The saved JPEG includes visible HUD/target cues
-  where possible and writes GPS EXIF from the current Reference match when one
-  is available.
+  where possible and writes GPS EXIF from the current frame position when one
+  is available. Reference matches remain visible as overlay/footer context.
 - Ordinary flat frames are not passed to PSV. They are displayed by the fallback
   image element as a 2D viewer to avoid PSV's panorama loader error.
 - Flat-frame markers use stored `x_ratio` / `y_ratio` and support wheel zoom and
