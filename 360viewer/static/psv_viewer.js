@@ -58,6 +58,7 @@
   const nextButton = document.getElementById("nextButton");
   const viewHoldButton = document.getElementById("viewHoldButton");
   const radarHudToggleButton = document.getElementById("radarHudToggleButton");
+  const snapshotButton = document.getElementById("snapshotButton");
   const notice = document.getElementById("notice");
   const fallbackFrame = document.getElementById("fallbackFrame");
   const videoLabel = document.getElementById("videoLabel");
@@ -90,7 +91,8 @@
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
     next_frame: bootstrap.next_frame,
-    matched_csv_exists: Boolean(bootstrap.matched_csv_exists)
+    matched_csv_exists: Boolean(bootstrap.matched_csv_exists),
+    reference: bootstrap.reference || null
   };
 
   function clamp(value, minValue, maxValue) {
@@ -641,6 +643,185 @@
     notice.innerHTML = list.map((message) => `<div>${message}</div>`).join("");
   }
 
+  function referenceSummary(reference) {
+    if (!reference || typeof reference !== "object") {
+      return "";
+    }
+    const parts = [];
+    if (reference.label) {
+      parts.push(`Reference: ${reference.label}`);
+    }
+    const distance = Number(reference.distance_m);
+    if (Number.isFinite(distance)) {
+      parts.push(`distance: ${distance.toFixed(1)} m`);
+    }
+    return parts.join("  ");
+  }
+
+  function drawTextWithBackground(ctx, text, x, y, options = {}) {
+    if (!text) {
+      return;
+    }
+    const font = options.font || "14px Arial, sans-serif";
+    const paddingX = options.paddingX ?? 8;
+    const paddingY = options.paddingY ?? 5;
+    ctx.save();
+    ctx.font = font;
+    ctx.textBaseline = "top";
+    const metrics = ctx.measureText(text);
+    const height = options.height || 18;
+    ctx.fillStyle = options.background || "rgba(0, 0, 0, 0.64)";
+    ctx.fillRect(x - paddingX, y - paddingY, metrics.width + paddingX * 2, height + paddingY * 2);
+    ctx.fillStyle = options.color || "#f7f7f7";
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
+  function imageFromSvg(svg) {
+    return new Promise((resolve, reject) => {
+      if (!svg || svg.hidden || svg.style.display === "none") {
+        resolve(null);
+        return;
+      }
+      const clone = svg.cloneNode(true);
+      clone.removeAttribute("hidden");
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const xml = new XMLSerializer().serializeToString(clone);
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+    });
+  }
+
+  async function drawSvgOverlay(ctx, svg, width, height) {
+    const image = await imageFromSvg(svg);
+    if (image) {
+      ctx.drawImage(image, 0, 0, width, height);
+    }
+  }
+
+  function drawTargetMarkers(ctx, stageRect) {
+    const markers = panoStage.querySelectorAll(".click-target-marker");
+    ctx.save();
+    markers.forEach((marker) => {
+      const rect = marker.getBoundingClientRect();
+      const x = rect.left + rect.width / 2 - stageRect.left;
+      const y = rect.top + rect.height / 2 - stageRect.top;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
+      }
+      ctx.strokeStyle = "rgba(112, 255, 142, 0.96)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.moveTo(x - 13, y);
+      ctx.lineTo(x + 13, y);
+      ctx.moveTo(x, y - 13);
+      ctx.lineTo(x, y + 13);
+      ctx.stroke();
+      const label = marker.textContent ? marker.textContent.trim() : "";
+      if (label) {
+        drawTextWithBackground(ctx, label, x + 14, y - 10, {
+          font: "13px Arial, sans-serif",
+          color: "#ffffff",
+          background: "rgba(0, 0, 0, 0.58)"
+        });
+      }
+    });
+    ctx.restore();
+  }
+
+  function drawSnapshotFooter(ctx, width, height, current) {
+    const lines = [
+      `video: ${current.video || ""}`,
+      `frame_index: ${current.frame_index}`,
+      referenceSummary(navigationState.reference)
+    ].filter(Boolean);
+    if (!lines.length) {
+      return;
+    }
+    ctx.save();
+    ctx.font = "14px Arial, sans-serif";
+    ctx.textBaseline = "top";
+    const lineHeight = 20;
+    const boxHeight = lines.length * lineHeight + 14;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.64)";
+    ctx.fillRect(12, height - boxHeight - 12, Math.min(width - 24, 620), boxHeight);
+    ctx.fillStyle = "#f7f7f7";
+    lines.forEach((line, index) => {
+      ctx.fillText(line, 22, height - boxHeight - 2 + index * lineHeight);
+    });
+    ctx.restore();
+  }
+
+  async function buildSnapshotDataUrl() {
+    const stageRect = panoStage.getBoundingClientRect();
+    const width = Math.max(1, Math.round(stageRect.width));
+    const height = Math.max(1, Math.round(stageRect.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+
+    if (isFlatProjection()) {
+      const rect = flatImageRect(stageRect);
+      if (fallbackFrame.complete && fallbackFrame.naturalWidth > 0) {
+        ctx.drawImage(fallbackFrame, rect.left, rect.top, rect.width, rect.height);
+      }
+    } else {
+      const sourceCanvas = pano.querySelector("canvas");
+      if (!sourceCanvas) {
+        throw new Error("viewer canvas is not ready");
+      }
+      ctx.drawImage(sourceCanvas, 0, 0, width, height);
+    }
+
+    if (radarHudVisible) {
+      await drawSvgOverlay(ctx, groundRingsOverlay, width, height);
+      await drawSvgOverlay(ctx, lockGuideOverlay, width, height);
+      drawTargetMarkers(ctx, stageRect);
+    }
+    drawSnapshotFooter(ctx, width, height, readPsvView());
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  async function saveSnapshot() {
+    if (!snapshotButton) {
+      return;
+    }
+    snapshotButton.disabled = true;
+    const previousText = snapshotButton.textContent;
+    snapshotButton.textContent = "Saving...";
+    try {
+      const current = currentSessionState();
+      const imageData = await buildSnapshotDataUrl();
+      const payload = Object.assign({}, current, {
+        image_data: imageData,
+        reference: navigationState.reference || null
+      });
+      const response = await fetch("/api/snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(result && result.error ? result.error : `HTTP ${response.status}`);
+      }
+      setNotice([`Snapshot saved: ${result.filename}`]);
+      logDebug(`snapshot saved: ${result.path}`);
+    } catch (error) {
+      setNotice([`Snapshot failed: ${error}`]);
+      logDebug(`snapshot failed: ${error}`);
+    } finally {
+      snapshotButton.disabled = false;
+      snapshotButton.textContent = previousText;
+    }
+  }
+
   function logDebug(message) {
     if (!debugLog) {
       return;
@@ -1022,7 +1203,8 @@
     navigationState = {
       prev_frame: payload.prev_frame,
       next_frame: payload.next_frame,
-      matched_csv_exists: Boolean(payload.matched_csv_exists)
+      matched_csv_exists: Boolean(payload.matched_csv_exists),
+      reference: payload.reference || null
     };
     updateNavigationButtons();
   }
@@ -1256,6 +1438,12 @@
     updateNavigationButtons();
   }
 
+  function setupSnapshot() {
+    if (snapshotButton) {
+      snapshotButton.addEventListener("click", saveSnapshot);
+    }
+  }
+
   async function setupPhotoSphereViewer() {
     if (isFlatProjection()) {
       showFlatFrame(bootstrap.frame_url);
@@ -1305,6 +1493,7 @@
         defaultYaw: `${normalizeYaw(state.yaw_to_camera_heading)}deg`,
         defaultPitch: `${krpanoPitchToPsvPitch(state.pitch)}deg`,
         defaultZoomLvl: zoomToPsvLevel(state.zoom),
+        rendererParameters: { alpha: true, antialias: true, preserveDrawingBuffer: true },
         navbar: ["zoom", "move", "caption", "fullscreen"],
         plugins: [
           [MarkersPlugin, { markers: psvMarkersFromTargets() }]
@@ -1341,5 +1530,6 @@
   setupViewHoldToggle();
   setupFlatInteractions();
   setupNavigation();
+  setupSnapshot();
   await setupPhotoSphereViewer();
 }());

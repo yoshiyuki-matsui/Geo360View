@@ -1,6 +1,7 @@
 """360Viewer HTTPアプリの純Python部分を検証する退行テスト。"""
 
 import importlib.util
+import base64
 import json
 import os
 import tempfile
@@ -345,6 +346,61 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(target["semantic_class"], "traffic_sign")
         self.assertEqual(target["confidence"], 0.87)
         self.assertEqual(target["review_status"], "candidate")
+
+    def test_navigation_payload_includes_reference_record(self):
+        """matched_frames CSVがある場合、現在フレームのReference情報を返す。"""
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        matched_csv = video_dir / "abc_matched_frames.csv"
+        matched_csv.write_text(
+            "frame_index,kp,kp_distance_m,latitude,longitude\n"
+            "11,P35,2.4,35.1,136.2\n",
+            encoding="utf-8",
+        )
+        self.app.CONFIG_PATH = self.temp_dir / "viewer_config_runtime.json"
+        self.app.CONFIG_PATH.write_text(json.dumps({
+            "host": "127.0.0.1",
+            "port": 8181,
+            "video_dir": str(video_dir),
+            "session_json_path": str(self.temp_dir / "viewer_session.json"),
+            "viewer_cache_dir": str(self.temp_dir / "viewer_cache"),
+        }), encoding="utf-8")
+
+        payload = self.app.navigation_payload("abc.mp4", 11)
+
+        self.assertEqual(payload["reference"]["label"], "P35")
+        self.assertEqual(payload["reference"]["distance_m"], 2.4)
+        self.assertEqual(payload["reference"]["latitude"], 35.1)
+        self.assertEqual(payload["reference"]["longitude"], 136.2)
+
+    def test_save_snapshot_writes_jpeg_with_exif(self):
+        """ブラウザから送られたJPEGをsnapshotsへ保存し、EXIF APP1を付与する。"""
+        tiny_jpeg = base64.b64encode(
+            b"\xff\xd8\xff\xdb\x00C\x00" + b"\x00" * 64 + b"\xff\xd9"
+        ).decode("ascii")
+
+        result = self.app.save_snapshot({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "image_data": f"data:image/jpeg;base64,{tiny_jpeg}",
+            "yaw_to_camera_heading": 90,
+            "pitch": -5,
+            "zoom": 1.2,
+            "viewer_projection": "sphere",
+            "reference": {
+                "label": "P35",
+                "distance_m": 2.4,
+                "latitude": 35.1,
+                "longitude": 136.2,
+            },
+        })
+
+        path = Path(result["path"])
+        self.assertTrue(path.is_file())
+        data = path.read_bytes()
+        self.assertTrue(data.startswith(b"\xff\xd8\xff\xe1"))
+        self.assertIn(b"Exif\x00\x00", data[:32])
+        self.assertTrue(result["gps_written"])
 
 
 if __name__ == "__main__":

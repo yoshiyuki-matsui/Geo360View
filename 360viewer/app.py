@@ -3,11 +3,14 @@ from __future__ import annotations
 """QGISプラグインから起動される標準ライブラリ製ローカル360Viewerサーバ。"""
 
 import csv
+import base64
+import binascii
 import json
 import math
 import mimetypes
 import os
 import re
+import struct
 import time
 import uuid
 from datetime import datetime
@@ -271,6 +274,16 @@ def parse_float(value: Any, name: str, default: float | None = None) -> float:
         raise ApiError(400, f"{name} must be a number")
 
 
+def parse_optional_float(value: Any) -> float | None:
+    """空値をNoneとして扱う任意float変換。"""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_yaw(value: float) -> float:
     """yaw角を0以上360未満へ正規化する。"""
     return value % 360.0
@@ -367,6 +380,33 @@ def load_matched_frames(video: str) -> list[int]:
     return sorted(frames)
 
 
+def load_matched_frame_record(video: str, frame_index: int) -> dict[str, Any] | None:
+    """matched_frames CSVから現在フレームの参照点情報を返す。"""
+    path = matched_frames_path(video)
+    if not path.is_file():
+        return None
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames or "frame_index" not in reader.fieldnames:
+            return None
+        for row in reader:
+            try:
+                row_frame = int((row.get("frame_index") or "").strip())
+            except ValueError:
+                continue
+            if row_frame != int(frame_index):
+                continue
+            return {
+                "label": (row.get("kp") or "").strip(),
+                "distance_m": parse_optional_float(row.get("kp_distance_m")),
+                "latitude": parse_optional_float(row.get("latitude")),
+                "longitude": parse_optional_float(row.get("longitude")),
+                "source": "matched_frames_csv",
+            }
+    return None
+
+
 def neighbor_frames(frames: list[int], current: int) -> tuple[int | None, int | None]:
     """現在フレームに対する前後のマッチ済みフレームを返す。"""
     prev_frame = None
@@ -391,6 +431,215 @@ def navigation_payload(video: str, frame_index: int) -> dict[str, Any]:
         "next_frame": next_frame,
         "matched_csv_exists": matched_frames_path(video).is_file(),
         "matched_frame_count": len(frames),
+        "reference": load_matched_frame_record(video, frame_index),
+    }
+
+
+def exif_ascii(value: Any) -> bytes:
+    """EXIF ASCII型のNULL終端バイト列へ変換する。"""
+    return str(value or "").encode("ascii", "replace") + b"\x00"
+
+
+def decimal_to_dms_rationals(value: float) -> list[tuple[int, int]]:
+    """十進緯度経度をGPS EXIFの度分秒RATIONAL配列へ変換する。"""
+    value = abs(float(value))
+    degrees = int(value)
+    minutes_float = (value - degrees) * 60
+    minutes = int(minutes_float)
+    seconds = (minutes_float - minutes) * 60
+    return [
+        (degrees, 1),
+        (minutes, 1),
+        (round(seconds * 1000000), 1000000),
+    ]
+
+
+def gps_ifd_entries(gps: dict[str, float]) -> list[tuple[int, int, int, Any]]:
+    """GPS EXIF IFDに入れる緯度経度・測地系タグを作る。"""
+    lat = float(gps["lat"])
+    lon = float(gps["lon"])
+    return [
+        (0x0001, 2, 2, exif_ascii("N" if lat >= 0 else "S")),
+        (0x0002, 5, 3, decimal_to_dms_rationals(lat)),
+        (0x0003, 2, 2, exif_ascii("E" if lon >= 0 else "W")),
+        (0x0004, 5, 3, decimal_to_dms_rationals(lon)),
+        (0x0012, 2, 7, exif_ascii("WGS-84")),
+    ]
+
+
+def pack_gps_ifd(entries: list[tuple[int, int, int, Any]], data_offset: int, data: bytearray) -> bytes:
+    """GPS IFDをTIFF形式でpackし、可変長データを共有dataへ追加する。"""
+    gps_ifd = bytearray()
+    gps_ifd.extend(struct.pack("<H", len(entries)))
+    for tag, field_type, count, value in entries:
+        if field_type == 5:
+            packed_value = struct.pack("<I", data_offset + len(data))
+            for numerator, denominator in value:
+                data.extend(struct.pack("<II", numerator, denominator))
+        elif len(value) <= 4:
+            packed_value = value.ljust(4, b"\x00")
+        else:
+            packed_value = struct.pack("<I", data_offset + len(data))
+            data.extend(value)
+        gps_ifd.extend(struct.pack("<HHI", tag, field_type, count))
+        gps_ifd.extend(packed_value)
+    gps_ifd.extend(struct.pack("<I", 0))
+    return bytes(gps_ifd)
+
+
+def minimal_exif_payload(tags: dict[str, Any], gps: dict[str, float] | None = None) -> bytes:
+    """ImageDescription/Software/DateTime/GPSだけを持つEXIF payloadを作る。"""
+    entries = []
+    data = bytearray()
+
+    def add_ascii(tag: int, value: Any) -> None:
+        value_bytes = exif_ascii(value)
+        entries.append((tag, 2, len(value_bytes), value_bytes))
+
+    def add_long(tag: int, value: int) -> None:
+        entries.append((tag, 4, 1, struct.pack("<I", value)))
+
+    add_ascii(0x010E, tags.get("description", "Geo360View snapshot"))
+    add_ascii(0x0131, tags.get("software", "Geo360View 360 viewer"))
+    add_ascii(0x0132, tags.get("datetime", ""))
+    if gps:
+        add_long(0x8825, 0)
+    entries.sort(key=lambda item: item[0])
+
+    ifd_offset = 8
+    data_offset = ifd_offset + 2 + len(entries) * 12 + 4
+    gps_entries = gps_ifd_entries(gps) if gps else []
+    if gps_entries:
+        data_offset += 2 + len(gps_entries) * 12 + 4
+
+    ifd = bytearray()
+    ifd.extend(struct.pack("<H", len(entries)))
+    for tag, field_type, count, value_bytes in entries:
+        if tag == 0x8825:
+            gps_ifd_offset = ifd_offset + 2 + len(entries) * 12 + 4
+            ifd.extend(struct.pack("<HHI", tag, field_type, count))
+            ifd.extend(struct.pack("<I", gps_ifd_offset))
+            continue
+        if len(value_bytes) <= 4:
+            packed_value = value_bytes.ljust(4, b"\x00")
+        else:
+            packed_value = struct.pack("<I", data_offset + len(data))
+            data.extend(value_bytes)
+        ifd.extend(struct.pack("<HHI", tag, field_type, count))
+        ifd.extend(packed_value)
+    ifd.extend(struct.pack("<I", 0))
+    gps_ifd = pack_gps_ifd(gps_entries, data_offset, data) if gps_entries else b""
+    tiff = b"II*\x00" + struct.pack("<I", ifd_offset) + bytes(ifd) + gps_ifd + bytes(data)
+    return b"Exif\x00\x00" + tiff
+
+
+def insert_exif(jpeg_bytes: bytes, exif_payload: bytes) -> bytes:
+    """JPEG先頭のSOI直後へAPP1 EXIFセグメントを挿入する。"""
+    if not jpeg_bytes.startswith(b"\xff\xd8"):
+        return jpeg_bytes
+    segment_length = len(exif_payload) + 2
+    if segment_length > 65535:
+        return jpeg_bytes
+    return jpeg_bytes[:2] + b"\xff\xe1" + struct.pack(">H", segment_length) + exif_payload + jpeg_bytes[2:]
+
+
+def safe_snapshot_name(value: Any, fallback: str = "snapshot") -> str:
+    """ファイル名へ入れる識別子を安全なASCII寄り文字列へ正規化する。"""
+    text = str(value or fallback).strip()
+    text = re.sub(r"[^\w.-]+", "_", text, flags=re.ASCII).strip("._")
+    return text[:80] or fallback
+
+
+def snapshot_dir() -> Path:
+    """QGIS出力先のsnapshotsディレクトリを返す。"""
+    cfg = load_config()
+    return cfg["session_json_path"].resolve().parent / "snapshots"
+
+
+def decode_snapshot_image(data_url: Any) -> bytes:
+    """data:image/jpeg;base64,... 形式のキャプチャ画像をJPEG bytesへ変換する。"""
+    text = str(data_url or "")
+    prefix = "data:image/jpeg;base64,"
+    if not text.startswith(prefix):
+        raise ApiError(400, "snapshot image must be a JPEG data URL")
+    try:
+        jpeg_bytes = base64.b64decode(text[len(prefix):], validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError(400, "snapshot image is not valid base64")
+    if not jpeg_bytes.startswith(b"\xff\xd8"):
+        raise ApiError(400, "snapshot image is not a JPEG")
+    return jpeg_bytes
+
+
+def snapshot_gps(payload: dict[str, Any], reference: dict[str, Any] | None) -> dict[str, float] | None:
+    """EXIF GPSへ入れる座標をReference優先で決める。"""
+    candidates = [
+        reference or {},
+        payload.get("target") if isinstance(payload.get("target"), dict) else {},
+        payload,
+    ]
+    for item in candidates:
+        try:
+            lat_value = item.get("latitude")
+            if lat_value in (None, ""):
+                lat_value = item.get("lat")
+            lon_value = item.get("longitude")
+            if lon_value in (None, ""):
+                lon_value = item.get("lon")
+            lat = parse_optional_float(lat_value)
+            lon = parse_optional_float(lon_value)
+        except AttributeError:
+            continue
+        if lat is not None and lon is not None:
+            return {"lat": lat, "lon": lon}
+    return None
+
+
+def save_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """ブラウザから送られた現在表示JPEGをsnapshotsへ保存する。"""
+    video = safe_video_name(str(payload.get("video", "")))
+    frame_index = parse_frame_index(payload.get("frame_index"))
+    jpeg_bytes = decode_snapshot_image(payload.get("image_data"))
+    reference = payload.get("reference") if isinstance(payload.get("reference"), dict) else None
+    if reference is None:
+        reference = load_matched_frame_record(video, frame_index)
+    gps = snapshot_gps(payload, reference)
+    now = datetime.now().astimezone()
+    description = json.dumps({
+        "app": "Geo360View",
+        "video": video,
+        "frame_index": frame_index,
+        "reference": reference,
+        "view": {
+            "yaw_to_camera_heading": payload.get("yaw_to_camera_heading"),
+            "pitch": payload.get("pitch"),
+            "zoom": payload.get("zoom"),
+            "viewer_projection": payload.get("viewer_projection"),
+        },
+    }, ensure_ascii=True, separators=(",", ":"))[:60000]
+    jpeg_bytes = insert_exif(
+        jpeg_bytes,
+        minimal_exif_payload(
+            {
+                "description": description,
+                "software": "Geo360View 360 viewer",
+                "datetime": now.strftime("%Y:%m:%d %H:%M:%S"),
+            },
+            gps=gps,
+        ),
+    )
+    label = safe_snapshot_name((reference or {}).get("label"), "ref")
+    filename = f"{safe_snapshot_name(Path(video).stem)}_frame{frame_index:06d}_{label}_{now.strftime('%Y%m%d_%H%M%S')}.jpg"
+    path = snapshot_dir() / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    tmp_path.write_bytes(jpeg_bytes)
+    os.replace(tmp_path, path)
+    return {
+        "path": str(path),
+        "filename": filename,
+        "gps_written": bool(gps),
+        "reference": reference,
     }
 
 
@@ -870,6 +1119,7 @@ def build_viewer_html(
       <button id="nextButton" type="button">Next</button>
       <button id="viewHoldButton" class="view-hold-toggle" type="button" aria-pressed="false">Lock</button>
       <button id="radarHudToggleButton" class="hud-toggle" type="button" aria-expanded="true">HUD</button>
+      <button id="snapshotButton" class="snapshot-button" type="button">Save snapshot</button>
       <button id="debugToggleButton" class="debug-toggle" type="button" aria-expanded="false">Log</button>
       <div class="readout">
         <span id="videoLabel"></span>
@@ -1178,6 +1428,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self.send_json(state)
                 return
 
+            if parsed.path == "/api/snapshot":
+                payload = self.read_json_body()
+                self.send_json(save_snapshot(payload))
+                return
+
             raise ApiError(404, "not found")
         except ApiError as e:
             self.send_api_error(e)
@@ -1211,6 +1466,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         state = write_session(state)
         frames = load_matched_frames(video)
         prev_frame, next_frame = neighbor_frames(frames, frame_index)
+        reference = load_matched_frame_record(video, frame_index)
         video_exists = video_path(video).is_file()
         matched_csv_exists = matched_frames_path(video).is_file()
         krpano_available = KRPANO_JS_PATH.is_file()
@@ -1234,6 +1490,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "state": state,
             "prev_frame": prev_frame,
             "next_frame": next_frame,
+            "reference": reference,
             "frame_url": frame_url,
             "scene_url": scene_url,
             "krpano_available": krpano_available,

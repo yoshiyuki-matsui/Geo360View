@@ -63,6 +63,10 @@ button:disabled {
   min-width: 52px;
 }
 
+.snapshot-button {
+  min-width: 112px;
+}
+
 .readout {
   display: flex;
   flex-wrap: wrap;
