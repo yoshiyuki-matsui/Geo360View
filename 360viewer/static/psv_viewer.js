@@ -802,7 +802,7 @@
       const payload = Object.assign({}, current, {
         image_data: imageData,
         reference: navigationState.reference || null,
-        frame_position: navigationState.frame_position || null
+        frame_position: navigationState.frame_position || current.frame_position || state.frame_position || null
       });
       const response = await fetch("/api/snapshot", {
         method: "POST",
@@ -1213,7 +1213,7 @@
       next_frame: payload.next_frame,
       matched_csv_exists: Boolean(payload.matched_csv_exists),
       reference: payload.reference || null,
-      frame_position: payload.frame_position || null
+      frame_position: payload.frame_position || state.frame_position || navigationState.frame_position || null
     };
     updateNavigationButtons();
   }
