@@ -160,7 +160,7 @@ def load_config() -> dict[str, Any]:
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
         raw = json.load(f)
 
-    video_dir = resolve_config_path(raw.get("video_dir", "sample_videos"))
+    video_dir = resolve_config_path(raw.get("video_dir", "."))
     session_json_path = resolve_config_path(raw.get("session_json_path", "session.json"))
     command_json_path = resolve_config_path(
         raw.get("command_json_path", session_json_path.with_name("viewer_command.json"))
@@ -1068,7 +1068,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/":
                 self.send_bytes(
-                    b"Open /viewer?video=abc.mp4&frame_index=1234",
+                    b"Open /viewer?video=your-video.mp4&frame_index=0",
                     "text/plain; charset=utf-8",
                 )
                 return

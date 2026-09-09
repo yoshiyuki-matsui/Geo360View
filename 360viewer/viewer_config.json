@@ -1,7 +1,7 @@
 {
   "host": "127.0.0.1",
   "port": 8182,
-  "video_dir": "sample_videos",
+  "video_dir": ".",
   "session_json_path": "session.json",
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,

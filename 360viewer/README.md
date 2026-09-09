@@ -1,29 +1,23 @@
-# 360 Viewer PoC
+# 360 Viewer
 
-OpenCV + Python standard-library HTTP server based proof of concept for frame-linked 360/flat video review.
+OpenCV + Python standard-library HTTP server for frame-linked 360/flat video review.
 
-The original interactive viewer path uses krpano. A Photo Sphere Viewer based
-alternative path is also available for license and distribution feasibility
-testing.
+Geo360 View uses Photo Sphere Viewer as the public viewer path. A
+krpano-compatible code path is kept for local compatibility testing, but krpano
+runtime files are not bundled.
 
 ## Layout
 
 ```text
 .
 ├── app.py
-├── make_sample_video.py
 ├── viewer_config.json
 ├── session.json
-├── sample_videos/
-│   ├── abc.mp4
-│   └── abc_matched_frames.csv
 ├── static/
 │   ├── viewer.css
 │   ├── viewer.js
 │   ├── psv_viewer.js
 │   └── vendor/
-│       ├── krpano/
-│       │   └── krpano.js
 │       └── photo-sphere-viewer/
 │           ├── core/
 │           ├── markers-plugin/
@@ -84,7 +78,7 @@ Older krpano runtimes can be used. The viewer sets `basepath` to `static/vendor/
 Photo Sphere Viewer can be selected with the `engine=psv` query parameter:
 
 ```text
-http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&engine=psv
+http://127.0.0.1:8181/viewer?video=your-video.mp4&frame_index=0&engine=psv
 ```
 
 The PSV path is designed as a krpano replacement candidate, not as a separate
@@ -154,21 +148,24 @@ Known differences from the optimized krpano path:
   Keep the krpano path available while performance and calibration are being
   reviewed.
 
-Put videos and matched-frame CSV files under `video_dir`.
+Sample videos are not bundled because 360-degree videos are usually large and
+may contain privacy-sensitive information. In normal QGIS use, the plugin
+writes a runtime config that points `video_dir` to the selected MP4 folder.
+
+For standalone viewer testing, either set `video_dir` in `viewer_config.json`
+to a folder containing your MP4, or start the viewer with a QGIS-generated
+runtime config.
 
 ```text
-sample_videos/
-  abc.mp4
-  abc_matched_frames.csv
+your_video_folder/
+  route.mp4
+  route_matched_frames.csv   # optional Reference-matched navigation file
 ```
 
-This prototype includes a small generated `abc.mp4` for endpoint testing. Regenerate it if needed:
+The default `viewer_config.json` uses `"video_dir": "."` only as a safe
+standalone fallback. It does not imply that sample videos are bundled.
 
-```bash
-python make_sample_video.py
-```
-
-`abc_matched_frames.csv` contains only the frames that the viewer can move to. `image_path` is optional and is used by downstream exported-image workflows; Prev/Next navigation only requires `frame_index`.
+`<video-stem>_matched_frames.csv` contains only the frames that the viewer can move to. `image_path` is optional and is used by downstream exported-image workflows; Prev/Next navigation only requires `frame_index`.
 
 ```csv
 frame_index,image_path
@@ -186,7 +183,7 @@ frame_index,image_path
 {
   "host": "127.0.0.1",
   "port": 8181,
-  "video_dir": "sample_videos",
+  "video_dir": ".",
   "session_json_path": "session.json",
   "viewer_jpeg_quality": 70,
   "viewer_progressive_jpeg": true,
@@ -213,7 +210,7 @@ python app.py
 Open:
 
 ```text
-http://127.0.0.1:8181/viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90&pitch=0&zoom=1
+http://127.0.0.1:8181/viewer?video=your-video.mp4&frame_index=0&yaw_to_camera_heading=90&pitch=0&zoom=1
 ```
 
 When view parameters are specified, the viewer uses them for the initial krpano view. When they are omitted, the viewer restores `yaw_to_camera_heading`, `pitch`, and `zoom` from the session file.
@@ -223,7 +220,7 @@ When another frame is loaded through browser navigation, the viewer carries the 
 ## Endpoints
 
 ```text
-GET /viewer?video=abc.mp4&frame_index=1234&yaw_to_camera_heading=90&pitch=0&zoom=1
+GET /viewer?video=your-video.mp4&frame_index=0&yaw_to_camera_heading=90&pitch=0&zoom=1
 ```
 
 Displays the viewer and writes the initial state to the configured session file.
@@ -244,8 +241,8 @@ Example:
 
 ```json
 {
-  "video": "abc.mp4",
-  "frame_index": 1234,
+  "video": "your-video.mp4",
+  "frame_index": 0,
   "yaw_to_camera_heading": 90.0,
   "pitch": -10.0,
   "zoom": 1.0
