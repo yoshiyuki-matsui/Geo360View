@@ -1,6 +1,7 @@
 """Qt5/Qt6で移動したenum値を吸収する互換定義。"""
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtWidgets import QMessageBox, QSizePolicy
 
 
 def qt_enum(group_name, name):
@@ -11,6 +12,16 @@ def qt_enum(group_name, name):
         if value is not None:
             return value
     return getattr(Qt, name)
+
+
+def widget_enum(widget_class, group_name, name):
+    """Qt6のWidgets enum groupを優先し、Qt5のclass直下定義へフォールバックする。"""
+    group = getattr(widget_class, group_name, None)
+    if group is not None:
+        value = getattr(group, name, None)
+        if value is not None:
+            return value
+    return getattr(widget_class, name)
 
 
 QT_ACTIVE_WINDOW_FOCUS_REASON = qt_enum("FocusReason", "ActiveWindowFocusReason")
@@ -28,3 +39,8 @@ QT_SMOOTH_TRANSFORMATION = qt_enum("TransformationMode", "SmoothTransformation")
 QT_TEXT_SELECTABLE_BY_MOUSE = qt_enum("TextInteractionFlag", "TextSelectableByMouse")
 QT_USER_ROLE = qt_enum("ItemDataRole", "UserRole")
 QT_WINDOW_STAYS_ON_TOP_HINT = qt_enum("WindowType", "WindowStaysOnTopHint")
+
+QT_MESSAGE_BOX_NO = widget_enum(QMessageBox, "StandardButton", "No")
+QT_MESSAGE_BOX_YES = widget_enum(QMessageBox, "StandardButton", "Yes")
+QT_SIZE_POLICY_IGNORED = widget_enum(QSizePolicy, "Policy", "Ignored")
+QT_SIZE_POLICY_PREFERRED = widget_enum(QSizePolicy, "Policy", "Preferred")

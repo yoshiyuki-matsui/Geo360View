@@ -66,7 +66,11 @@ from .qt_compat import (
     QT_KEY_LEFT,
     QT_KEY_RIGHT,
     QT_KEY_SPACE,
+    QT_MESSAGE_BOX_NO,
+    QT_MESSAGE_BOX_YES,
     QT_SHIFT_MODIFIER,
+    QT_SIZE_POLICY_IGNORED,
+    QT_SIZE_POLICY_PREFERRED,
     QT_TEXT_SELECTABLE_BY_MOUSE,
     QT_USER_ROLE,
     QT_WINDOW_STAYS_ON_TOP_HINT,
@@ -679,7 +683,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.preview_info.setWordWrap(True)
         self.preview_info.setMinimumHeight(38)
         self.preview_info.setMaximumHeight(44)
-        self.preview_info.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.preview_info.setSizePolicy(QT_SIZE_POLICY_IGNORED, QT_SIZE_POLICY_PREFERRED)
         self.preview_label = QLabel()
         self.preview_label.setAlignment(QT_ALIGN_CENTER)
         self.preview_label.setMinimumHeight(120)
@@ -919,7 +923,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         label = QLabel(text)
         label.setMinimumWidth(160)
         label.setWordWrap(False)
-        label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        label.setSizePolicy(QT_SIZE_POLICY_IGNORED, QT_SIZE_POLICY_PREFERRED)
         return label
 
     def compactPathText(self, path, fallback):
@@ -4726,10 +4730,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self,
             "Confirm Output Overwrite",
             message,
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
+            QT_MESSAGE_BOX_YES | QT_MESSAGE_BOX_NO,
+            QT_MESSAGE_BOX_NO,
         )
-        return answer == QtWidgets.QMessageBox.Yes
+        return answer == QT_MESSAGE_BOX_YES
 
     def activateClickMode(self):
         """参照用Video GPX Pointsレイヤをクリック待ち受け状態にする。"""
