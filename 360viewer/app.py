@@ -447,8 +447,18 @@ def load_matched_frame_record(video: str, frame_index: int) -> dict[str, Any] | 
                 continue
             if row_frame != int(frame_index):
                 continue
+            reference_label = (
+                row.get("reference_label")
+                or row.get("reference_name")
+                or row.get("kp")
+                or row.get("reference_id")
+                or ""
+            )
             return {
-                "label": (row.get("kp") or "").strip(),
+                "label": str(reference_label).strip(),
+                "reference_id": (row.get("reference_id") or "").strip(),
+                "reference_name": (row.get("reference_name") or "").strip(),
+                "kp": (row.get("kp") or "").strip(),
                 "distance_m": parse_optional_float(row.get("kp_distance_m")),
                 "latitude": parse_optional_float(row.get("latitude")),
                 "longitude": parse_optional_float(row.get("longitude")),

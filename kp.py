@@ -11,7 +11,13 @@ from qgis.core import (
 )
 
 from .common import _find_field, _open_csv_dict_reader, _parse_float
-from .constants import KP_FIELDS, LATITUDE_FIELDS, LONGITUDE_FIELDS
+from .constants import (
+    KP_FIELDS,
+    LATITUDE_FIELDS,
+    LONGITUDE_FIELDS,
+    REFERENCE_ID_FIELDS,
+    REFERENCE_LABEL_FIELDS,
+)
 
 
 def _read_kp_csv(path):
@@ -26,6 +32,8 @@ def _read_kp_csv(path):
         lat_field = _find_field(fieldnames, LATITUDE_FIELDS)
         lon_field = _find_field(fieldnames, LONGITUDE_FIELDS)
         kp_field = _find_field(fieldnames, KP_FIELDS)
+        reference_id_field = _find_field(fieldnames, REFERENCE_ID_FIELDS)
+        reference_label_field = _find_field(fieldnames, REFERENCE_LABEL_FIELDS)
 
         if not lat_field or not lon_field:
             raise ValueError(
@@ -40,10 +48,18 @@ def _read_kp_csv(path):
             if lat is None or lon is None:
                 continue
 
+            reference_id = row.get(reference_id_field) if reference_id_field else None
+            reference_id = str(reference_id).strip() if reference_id not in (None, "") else ""
+            reference_name = row.get(reference_label_field) if reference_label_field else None
+            reference_name = str(reference_name).strip() if reference_name not in (None, "") else ""
             kp_value = row.get(kp_field) if kp_field else None
-            kp_value = str(kp_value).strip() if kp_value not in (None, "") else str(index)
+            kp_value = str(kp_value).strip() if kp_value not in (None, "") else ""
+            reference_label = reference_name or kp_value or reference_id or str(index)
             rows.append({
-                "kp": kp_value,
+                "kp": reference_label,
+                "reference_id": reference_id,
+                "reference_name": reference_name,
+                "reference_label": reference_label,
                 "lat": lat,
                 "lon": lon,
                 "point": QgsPointXY(lon, lat),
@@ -100,6 +116,9 @@ def build_kp_matches(rows, kp_file, tolerance_m):
 
         matches[row_index] = {
             "kp": kp["kp"],
+            "reference_id": kp.get("reference_id", ""),
+            "reference_name": kp.get("reference_name", ""),
+            "reference_label": kp.get("reference_label", kp["kp"]),
             "distance_m": distance_m,
             "lat": kp["lat"],
             "lon": kp["lon"],

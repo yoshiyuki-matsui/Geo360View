@@ -430,6 +430,32 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(payload["reference"]["latitude"], 35.1)
         self.assertEqual(payload["reference"]["longitude"], 136.2)
 
+    def test_navigation_payload_prefers_reference_label(self):
+        """新しいReference列がある場合は表示ラベルとしてreference_labelを優先する。"""
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        matched_csv = video_dir / "abc_matched_frames.csv"
+        matched_csv.write_text(
+            "frame_index,kp,reference_id,reference_name,reference_label,kp_distance_m,latitude,longitude\n"
+            "11,北陸道上り KP:1991,1991,北陸道上り KP:1991,北陸道上り KP:1991,2.4,35.1,136.2\n",
+            encoding="utf-8",
+        )
+        self.app.CONFIG_PATH = self.temp_dir / "viewer_config_runtime.json"
+        self.app.CONFIG_PATH.write_text(json.dumps({
+            "host": "127.0.0.1",
+            "port": 8181,
+            "video_dir": str(video_dir),
+            "session_json_path": str(self.temp_dir / "viewer_session.json"),
+            "viewer_cache_dir": str(self.temp_dir / "viewer_cache"),
+        }), encoding="utf-8")
+
+        payload = self.app.navigation_payload("abc.mp4", 11)
+
+        self.assertEqual(payload["reference"]["label"], "北陸道上り KP:1991")
+        self.assertEqual(payload["reference"]["reference_id"], "1991")
+        self.assertEqual(payload["reference"]["reference_name"], "北陸道上り KP:1991")
+        self.assertEqual(payload["reference"]["kp"], "北陸道上り KP:1991")
+
     def test_navigation_payload_includes_frame_position_record(self):
         """frames CSVがある場合、現在フレームの撮影点座標を返す。"""
         video_dir = self.temp_dir / "videos"
