@@ -21,6 +21,7 @@ from qgis.core import (
 from qgis.gui import QgsRubberBand
 
 from .common import _parse_float
+from .qt_compat import QT_DOT_LINE
 
 
 RADAR_TRAJECTORY_WINDOW_FRAMES = 10
@@ -566,7 +567,7 @@ class RadarMixin:
             #線幅
             self.radar_grid_band.setWidth(1)
             if hasattr(self.radar_grid_band, "setLineStyle"):
-                self.radar_grid_band.setLineStyle(Qt.DotLine)   #破線
+                self.radar_grid_band.setLineStyle(QT_DOT_LINE)   #破線
 
         if self.radar_direction_band is None:
             self.radar_direction_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)

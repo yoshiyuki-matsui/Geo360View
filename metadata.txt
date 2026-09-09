@@ -2,6 +2,7 @@
 name=Geo360 View
 version=0.3.0
 qgisMinimumVersion=3.40
+qgisMaximumVersion=4.99
 description=View GPX-synchronized 360-degree and normal videos on a QGIS map
 author=Nakasha Creative co.,Ltd
 email=rdcenter@nakasha.co.jp

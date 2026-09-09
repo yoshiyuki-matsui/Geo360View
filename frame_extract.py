@@ -11,6 +11,7 @@ from qgis.PyQt.QtCore import Qt
 from .common import _parse_float
 from .constants import PLUGIN_TITLE
 from .exif_utils import _insert_exif, _minimal_exif_payload
+from .qt_compat import QT_KEEP_ASPECT_RATIO, QT_SMOOTH_TRANSFORMATION
 
 
 class FrameExtractMixin:
@@ -97,7 +98,7 @@ class FrameExtractMixin:
             self.preview_label.setToolTip(tooltip)
         else:
             self.preview_label.setPixmap(
-                pixmap.scaled(480, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap.scaled(480, 180, QT_KEEP_ASPECT_RATIO, QT_SMOOTH_TRANSFORMATION)
             )
             self.preview_label.setToolTip(tooltip)
         self.preview_info.setText(info)

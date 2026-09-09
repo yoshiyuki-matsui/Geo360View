@@ -57,6 +57,20 @@ from .kp import build_kp_matches
 from .map_tools import FrameIdentifyTool
 from .messages import message_text, ui_text
 from .processor import Geo360View
+from .qt_compat import (
+    QT_ACTIVE_WINDOW_FOCUS_REASON,
+    QT_ALIGN_CENTER,
+    QT_DISPLAY_ROLE,
+    QT_EDIT_ROLE,
+    QT_KEY_ESCAPE,
+    QT_KEY_LEFT,
+    QT_KEY_RIGHT,
+    QT_KEY_SPACE,
+    QT_SHIFT_MODIFIER,
+    QT_TEXT_SELECTABLE_BY_MOUSE,
+    QT_USER_ROLE,
+    QT_WINDOW_STAYS_ON_TOP_HINT,
+)
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
 
@@ -437,7 +451,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_projection_combo.currentIndexChanged.connect(self.onViewerProjectionChanged)
         set_fixed_width(self.viewer_projection_combo, 168)
         self.viewer_projection_reason_label = QLabel("")
-        self.viewer_projection_reason_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.viewer_projection_reason_label.setTextInteractionFlags(QT_TEXT_SELECTABLE_BY_MOUSE)
 
         self.database_label = QLabel("GPKG:")
         self.database_path = self.makePathLabel(self.uiText("ui.path.no_database"))
@@ -667,7 +681,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.preview_info.setMaximumHeight(44)
         self.preview_info.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.preview_label = QLabel()
-        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setAlignment(QT_ALIGN_CENTER)
         self.preview_label.setMinimumHeight(120)
         self.preview_label.setMaximumHeight(190)
         self.preview_label.setText(self.uiText("ui.preview.title"))
@@ -863,17 +877,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return False
 
             key = event.key()
-            fast = bool(event.modifiers() & Qt.ShiftModifier)
-            if key == Qt.Key_Left:
+            fast = bool(event.modifiers() & QT_SHIFT_MODIFIER)
+            if key == QT_KEY_LEFT:
                 self.navigateRelative(-1, fast=fast)
                 return True
-            if key == Qt.Key_Right:
+            if key == QT_KEY_RIGHT:
                 self.navigateRelative(1, fast=fast)
                 return True
-            if key == Qt.Key_Space:
+            if key == QT_KEY_SPACE:
                 self.displayCurrentFrame()
                 return True
-            if key == Qt.Key_Escape:
+            if key == QT_KEY_ESCAPE:
                 self.deactivateClickMode()
                 return True
 
@@ -882,8 +896,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def applyPanelWindowFlags(self):
         """操作パネルをQGIS操作中も前面へ出しやすいウィンドウにする。"""
         flags = self.windowFlags()
-        if not (flags & Qt.WindowStaysOnTopHint):
-            self.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
+        if not (flags & QT_WINDOW_STAYS_ON_TOP_HINT):
+            self.setWindowFlags(flags | QT_WINDOW_STAYS_ON_TOP_HINT)
 
     def showWindow(self):
         """プラグインパネルを前面に表示する。"""
@@ -891,7 +905,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.show()
         self.raise_()
         self.activateWindow()
-        self.setFocus(Qt.ActiveWindowFocusReason)
+        self.setFocus(QT_ACTIVE_WINDOW_FOCUS_REASON)
 
     def run(self):
         """Startメニューからパネルを開き、ビューア状態監視を開始する。"""
@@ -3333,7 +3347,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     pass
         data = getattr(node, "data", None)
         if callable(data):
-            for role in (Qt.DisplayRole, Qt.EditRole, Qt.UserRole):
+            for role in (QT_DISPLAY_ROLE, QT_EDIT_ROLE, QT_USER_ROLE):
                 try:
                     value = data(role)
                     if value not in (None, ""):

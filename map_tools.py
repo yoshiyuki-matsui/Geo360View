@@ -5,6 +5,8 @@ from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsWkbTypes
 from qgis.gui import QgsMapToolIdentifyFeature, QgsRubberBand
 
+from .qt_compat import QT_KEY_ESCAPE, QT_KEY_LEFT, QT_KEY_RIGHT, QT_KEY_SPACE, QT_SHIFT_MODIFIER
+
 class FrameIdentifyTool(QgsMapToolIdentifyFeature):
     """`Video GPX Points` をクリックし、対応フレームをプラグインへ通知する。"""
 
@@ -44,16 +46,16 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
 
     def keyPressEvent(self, event):
         """クリックモード中のキーボードナビゲーションを処理する。"""
-        if event.key() == Qt.Key_Escape:
+        if event.key() == QT_KEY_ESCAPE:
             self.plugin.deactivateClickMode()
             return
-        if event.key() == Qt.Key_Left:
-            self.plugin.navigateRelative(-1, fast=bool(event.modifiers() & Qt.ShiftModifier))
+        if event.key() == QT_KEY_LEFT:
+            self.plugin.navigateRelative(-1, fast=bool(event.modifiers() & QT_SHIFT_MODIFIER))
             return
-        if event.key() == Qt.Key_Right:
-            self.plugin.navigateRelative(1, fast=bool(event.modifiers() & Qt.ShiftModifier))
+        if event.key() == QT_KEY_RIGHT:
+            self.plugin.navigateRelative(1, fast=bool(event.modifiers() & QT_SHIFT_MODIFIER))
             return
-        if event.key() == Qt.Key_Space:
+        if event.key() == QT_KEY_SPACE:
             self.plugin.displayCurrentFrame()
             return
 
