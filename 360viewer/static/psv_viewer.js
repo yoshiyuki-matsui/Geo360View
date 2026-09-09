@@ -678,30 +678,6 @@
     ctx.restore();
   }
 
-  function imageFromSvg(svg) {
-    return new Promise((resolve, reject) => {
-      if (!svg || svg.hidden || svg.style.display === "none") {
-        resolve(null);
-        return;
-      }
-      const clone = svg.cloneNode(true);
-      clone.removeAttribute("hidden");
-      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      const xml = new XMLSerializer().serializeToString(clone);
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = reject;
-      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
-    });
-  }
-
-  async function drawSvgOverlay(ctx, svg, width, height) {
-    const image = await imageFromSvg(svg);
-    if (image) {
-      ctx.drawImage(image, 0, 0, width, height);
-    }
-  }
-
   function drawTargetMarkers(ctx, stageRect) {
     const markers = panoStage.querySelectorAll(".click-target-marker");
     ctx.save();
@@ -731,6 +707,101 @@
       }
     });
     ctx.restore();
+  }
+
+  function elementIsDrawable(element) {
+    return Boolean(element) && !element.hidden && element.style.display !== "none";
+  }
+
+  function drawSvgPathOnCanvas(ctx, element, options) {
+    if (!elementIsDrawable(element) || typeof Path2D === "undefined") {
+      return;
+    }
+    const pathData = element.getAttribute("d");
+    if (!pathData) {
+      return;
+    }
+    let path;
+    try {
+      path = new Path2D(pathData);
+    } catch (error) {
+      logDebug(`snapshot path skipped: ${error}`);
+      return;
+    }
+    ctx.save();
+    ctx.globalAlpha = options.alpha ?? 1;
+    ctx.strokeStyle = options.stroke;
+    ctx.lineWidth = options.lineWidth ?? 1;
+    ctx.lineCap = options.lineCap || "round";
+    ctx.lineJoin = options.lineJoin || "round";
+    ctx.setLineDash(options.dash || []);
+    ctx.stroke(path);
+    ctx.restore();
+  }
+
+  function drawSvgCircleOnCanvas(ctx, element, options) {
+    if (!elementIsDrawable(element)) {
+      return;
+    }
+    const cx = Number(element.getAttribute("cx"));
+    const cy = Number(element.getAttribute("cy"));
+    const r = Number(element.getAttribute("r") || 5);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(r) || r <= 0) {
+      return;
+    }
+    ctx.save();
+    ctx.globalAlpha = options.alpha ?? 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    if (options.fill) {
+      ctx.fillStyle = options.fill;
+      ctx.fill();
+    }
+    if (options.stroke && options.lineWidth > 0) {
+      ctx.strokeStyle = options.stroke;
+      ctx.lineWidth = options.lineWidth;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawGroundRingsOnCanvas(ctx) {
+    if (!elementIsDrawable(groundRingsOverlay)) {
+      return;
+    }
+    drawSvgPathOnCanvas(ctx, groundRingGrid, {
+      stroke: "rgba(71, 71, 68, 0.973)",
+      lineWidth: 1,
+      dash: [2, 8]
+    });
+    drawSvgPathOnCanvas(ctx, groundRingOuter, {
+      stroke: "rgba(0, 190, 255, 0.78)",
+      lineWidth: 2
+    });
+    drawSvgPathOnCanvas(ctx, groundRingInner, {
+      stroke: "rgba(247, 242, 1, 0.92)",
+      lineWidth: 2
+    });
+  }
+
+  function drawLockGuideOnCanvas(ctx) {
+    if (!elementIsDrawable(lockGuideOverlay)) {
+      return;
+    }
+    drawSvgPathOnCanvas(ctx, lockGuideBand, {
+      stroke: "rgba(255, 214, 74, 0.24)",
+      lineWidth: 4
+    });
+    drawSvgPathOnCanvas(ctx, lockGuideLine, {
+      stroke: "rgba(255, 238, 128, 0.88)",
+      lineWidth: 1,
+      dash: [7, 10]
+    });
+    drawSvgCircleOnCanvas(ctx, lockGuideEndpoint, {
+      fill: "rgba(255, 238, 128, 0.82)",
+      stroke: "rgba(0, 0, 0, 0.52)",
+      lineWidth: 2
+    });
   }
 
   function drawSnapshotFooter(ctx, width, height, current) {
@@ -781,8 +852,8 @@
     }
 
     if (radarHudVisible) {
-      await drawSvgOverlay(ctx, groundRingsOverlay, width, height);
-      await drawSvgOverlay(ctx, lockGuideOverlay, width, height);
+      drawGroundRingsOnCanvas(ctx);
+      drawLockGuideOnCanvas(ctx);
       drawTargetMarkers(ctx, stageRect);
     }
     drawSnapshotFooter(ctx, width, height, readPsvView());
