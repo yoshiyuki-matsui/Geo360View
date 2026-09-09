@@ -82,6 +82,10 @@
   const lockGuideBand = document.getElementById("lockGuideBand");
   const lockGuideLine = document.getElementById("lockGuideLine");
   const lockGuideEndpoint = document.getElementById("lockGuideEndpoint");
+  const referenceOverlay = document.getElementById("referenceOverlay");
+  const referenceOverlayLabel = document.getElementById("referenceOverlayLabel");
+  const referenceOverlayMeta = document.getElementById("referenceOverlayMeta");
+  const referenceOverlayCoords = document.getElementById("referenceOverlayCoords");
   const debugLog = document.getElementById("debugLog");
   const debugToggleButton = document.getElementById("debugToggleButton");
   let viewerCameraHeightM = normalizeCameraHeight(state.viewer_camera_height_m);
@@ -520,6 +524,7 @@
     if (groundRingsOverlay) {
       groundRingsOverlay.hidden = !visible;
     }
+    updateReferenceOverlay();
     updateMarkers();
     if (!radarHudVisible) {
       // Treat HUD as the visual-aid group: range HUD, rings, target markers,
@@ -657,6 +662,38 @@
       parts.push(`distance: ${distance.toFixed(1)} m`);
     }
     return parts.join("  ");
+  }
+
+  function updateReferenceOverlay() {
+    if (!referenceOverlay || !referenceOverlayLabel || !referenceOverlayMeta || !referenceOverlayCoords) {
+      return;
+    }
+    const reference = navigationState.reference;
+    if (!radarHudVisible || !reference || typeof reference !== "object") {
+      referenceOverlay.hidden = true;
+      referenceOverlayLabel.textContent = "";
+      referenceOverlayMeta.textContent = "";
+      referenceOverlayCoords.textContent = "";
+      return;
+    }
+    const label = String(reference.label || reference.reference_name || reference.kp || reference.reference_id || "").trim();
+    const referenceId = String(reference.reference_id || "").trim();
+    const distance = Number(reference.distance_m);
+    const latitude = Number(reference.latitude);
+    const longitude = Number(reference.longitude);
+    const meta = [];
+    if (referenceId && referenceId !== label) {
+      meta.push(`ID: ${referenceId}`);
+    }
+    if (Number.isFinite(distance)) {
+      meta.push(`distance: ${distance.toFixed(1)} m`);
+    }
+    referenceOverlayLabel.textContent = label || "Reference";
+    referenceOverlayMeta.textContent = meta.join("  ");
+    referenceOverlayCoords.textContent = Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? `lat/lon: ${latitude.toFixed(7)}, ${longitude.toFixed(7)}`
+      : "";
+    referenceOverlay.hidden = false;
   }
 
   function drawTextWithBackground(ctx, text, x, y, options = {}) {
@@ -1286,6 +1323,7 @@
       reference: payload.reference || null,
       frame_position: payload.frame_position || state.frame_position || navigationState.frame_position || null
     };
+    updateReferenceOverlay();
     updateNavigationButtons();
   }
 

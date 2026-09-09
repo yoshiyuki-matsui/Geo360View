@@ -51,7 +51,7 @@ VIEWER_PROJECTIONS = {VIEWER_PROJECTION_SPHERE, VIEWER_PROJECTION_FLAT}
 VIEWER_ENGINE_KRPANO = "krpano"
 VIEWER_ENGINE_PSV = "psv"
 VIEWER_ENGINES = {VIEWER_ENGINE_KRPANO, VIEWER_ENGINE_PSV}
-PSV_VENDOR_VERSION = "5.15.1-snapshotgps2"
+PSV_VENDOR_VERSION = "5.15.1-reference1"
 DEFAULT_FLAT_HFOV_DEG = 70.0
 DEFAULT_FLAT_VFOV_DEG = 43.0
 DEFAULT_PSV_MIN_FOV_DEG = 20.0
@@ -1280,6 +1280,11 @@ def build_viewer_html(
         <circle id="lockGuideEndpoint" class="lock-guide-endpoint" r="5" />
       </svg>
       <div id="clickTargetMarker" class="click-target-marker" hidden></div>
+      <div id="referenceOverlay" class="reference-overlay" hidden>
+        <div id="referenceOverlayLabel" class="reference-overlay-label"></div>
+        <div id="referenceOverlayMeta" class="reference-overlay-meta"></div>
+        <div id="referenceOverlayCoords" class="reference-overlay-coords"></div>
+      </div>
       <div id="radarHud" class="radar-hud" aria-hidden="true">
         <svg viewBox="0 0 260 118" role="img" aria-label="Viewer range guide">
           <path class="hud-ring hud-ring-outer" d="M 30 104 A 100 100 0 0 1 230 104" />

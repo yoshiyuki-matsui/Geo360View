@@ -42,7 +42,9 @@
   let navigationState = {
     prev_frame: bootstrap.prev_frame,
     next_frame: bootstrap.next_frame,
-    matched_csv_exists: Boolean(bootstrap.matched_csv_exists)
+    matched_csv_exists: Boolean(bootstrap.matched_csv_exists),
+    reference: bootstrap.reference || null,
+    frame_position: bootstrap.frame_position || null
   };
 
   const prevButton = document.getElementById("prevButton");
@@ -63,6 +65,10 @@
   let lockGuideBand = document.getElementById("lockGuideBand");
   let lockGuideLine = document.getElementById("lockGuideLine");
   let lockGuideEndpoint = document.getElementById("lockGuideEndpoint");
+  const referenceOverlay = document.getElementById("referenceOverlay");
+  const referenceOverlayLabel = document.getElementById("referenceOverlayLabel");
+  const referenceOverlayMeta = document.getElementById("referenceOverlayMeta");
+  const referenceOverlayCoords = document.getElementById("referenceOverlayCoords");
   const videoLabel = document.getElementById("videoLabel");
   const frameLabel = document.getElementById("frameLabel");
   const viewLabel = document.getElementById("viewLabel");
@@ -252,6 +258,38 @@
     notice.innerHTML = list.map((message) => `<div>${message}</div>`).join("");
   }
 
+  function updateReferenceOverlay() {
+    if (!referenceOverlay || !referenceOverlayLabel || !referenceOverlayMeta || !referenceOverlayCoords) {
+      return;
+    }
+    const reference = navigationState.reference;
+    if (!radarHudVisible || !reference || typeof reference !== "object") {
+      referenceOverlay.hidden = true;
+      referenceOverlayLabel.textContent = "";
+      referenceOverlayMeta.textContent = "";
+      referenceOverlayCoords.textContent = "";
+      return;
+    }
+    const label = String(reference.label || reference.reference_name || reference.kp || reference.reference_id || "").trim();
+    const referenceId = String(reference.reference_id || "").trim();
+    const distance = Number(reference.distance_m);
+    const latitude = Number(reference.latitude);
+    const longitude = Number(reference.longitude);
+    const meta = [];
+    if (referenceId && referenceId !== label) {
+      meta.push(`ID: ${referenceId}`);
+    }
+    if (Number.isFinite(distance)) {
+      meta.push(`distance: ${distance.toFixed(1)} m`);
+    }
+    referenceOverlayLabel.textContent = label || "Reference";
+    referenceOverlayMeta.textContent = meta.join("  ");
+    referenceOverlayCoords.textContent = Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? `lat/lon: ${latitude.toFixed(7)}, ${longitude.toFixed(7)}`
+      : "";
+    referenceOverlay.hidden = false;
+  }
+
   function showTransientNotice(message, timeoutMs) {
     if (transientNoticeTimer) {
       window.clearTimeout(transientNoticeTimer);
@@ -381,6 +419,7 @@
     if (groundRingsOverlay) {
       groundRingsOverlay.hidden = !visible;
     }
+    updateReferenceOverlay();
     if (!radarHudVisible) {
       clearLockGuide();
     }
@@ -1816,8 +1855,11 @@
     navigationState = {
       prev_frame: payload.prev_frame,
       next_frame: payload.next_frame,
-      matched_csv_exists: Boolean(payload.matched_csv_exists)
+      matched_csv_exists: Boolean(payload.matched_csv_exists),
+      reference: payload.reference || null,
+      frame_position: payload.frame_position || state.frame_position || navigationState.frame_position || null
     };
+    updateReferenceOverlay();
     updateNavigationButtons();
   }
 
