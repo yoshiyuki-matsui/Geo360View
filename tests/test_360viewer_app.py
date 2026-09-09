@@ -327,6 +327,22 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["viewer_camera_height_m"], 2.4)
         self.assertEqual(state["viewer_hud_height_scale"], 1.3)
 
+    def test_navigation_payload_accepts_frame_position_from_qgis(self):
+        """QGISから渡された現在フレーム座標をviewer_session.jsonへ保存する。"""
+        state = self.app.state_from_navigation_payload({
+            "video": "abc.mp4",
+            "frame_index": 11,
+            "frame_position": {
+                "latitude": "35.1",
+                "longitude": "136.2",
+                "source": "qgis_frame_position",
+            },
+        })
+
+        self.assertEqual(state["frame_position"]["latitude"], 35.1)
+        self.assertEqual(state["frame_position"]["longitude"], 136.2)
+        self.assertEqual(state["frame_position"]["source"], "qgis_frame_position")
+
     def test_navigation_payload_accepts_restored_targets_from_qgis(self):
         """QGISから渡された保存済みクリック点をviewer_session.jsonへ復元する。"""
         state = self.app.state_from_navigation_payload({

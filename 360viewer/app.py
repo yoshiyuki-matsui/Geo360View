@@ -689,6 +689,24 @@ def snapshot_gps(
     return None
 
 
+def validate_frame_position_payload(payload: Any) -> dict[str, Any] | None:
+    """QGIS/ブラウザから受け取った現在フレーム座標を検証する。"""
+    if not isinstance(payload, dict):
+        return None
+    lat = parse_optional_float(payload.get("latitude"))
+    lon = parse_optional_float(payload.get("longitude"))
+    if lat is None or lon is None:
+        lat = parse_optional_float(payload.get("lat"))
+        lon = parse_optional_float(payload.get("lon"))
+    if lat is None or lon is None:
+        return None
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "source": str(payload.get("source") or "payload"),
+    }
+
+
 def save_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     """ブラウザから送られた現在表示JPEGをsnapshotsへ保存する。"""
     video = safe_video_name(str(payload.get("video", "")))
@@ -697,7 +715,7 @@ def save_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     reference = payload.get("reference") if isinstance(payload.get("reference"), dict) else None
     if reference is None:
         reference = load_matched_frame_record(video, frame_index)
-    frame_position = payload.get("frame_position") if isinstance(payload.get("frame_position"), dict) else None
+    frame_position = validate_frame_position_payload(payload.get("frame_position"))
     if frame_position is None:
         frame_position = load_frame_position_record(video, frame_index)
     gps = snapshot_gps(payload, frame_position)
@@ -903,6 +921,9 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
         state["applied_command_id"] = applied_command_id
     if payload.get("viewer_image_loaded") is not None:
         state["viewer_image_loaded"] = bool(payload.get("viewer_image_loaded"))
+    frame_position = validate_frame_position_payload(payload.get("frame_position"))
+    if frame_position:
+        state["frame_position"] = frame_position
     target = validate_target_payload(payload.get("target"))
     if target:
         state["target"] = target
@@ -1119,6 +1140,9 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
         state["radar"] = radar
+    frame_position = validate_frame_position_payload(payload.get("frame_position"))
+    if frame_position:
+        state["frame_position"] = frame_position
     if "targets" in payload:
         targets = validate_targets_payload(payload.get("targets"))
         state["targets"] = targets
@@ -1569,6 +1593,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
         prev_frame, next_frame = neighbor_frames(frames, frame_index)
         reference = load_matched_frame_record(video, frame_index)
         frame_position = load_frame_position_record(video, frame_index)
+        if frame_position is None and same_video_frame(session, video, frame_index):
+            frame_position = validate_frame_position_payload(session.get("frame_position"))
         video_exists = video_path(video).is_file()
         matched_csv_exists = matched_frames_path(video).is_file()
         krpano_available = KRPANO_JS_PATH.is_file()

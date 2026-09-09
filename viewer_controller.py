@@ -473,6 +473,18 @@ class ViewerControllerMixin:
             "viewer_psv_min_fov_deg": self.viewer_psv_min_fov_deg,
             "viewer_psv_max_fov_deg": self.viewer_psv_max_fov_deg,
         }
+        try:
+            lat, lon, _feature = self.framePosition(frame_num)
+        except Exception as e:
+            self.viewerDebugPrint(f"360Viewer frame position payload failed: {e}")
+            lat = None
+            lon = None
+        if lat is not None and lon is not None:
+            payload["frame_position"] = {
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "source": "qgis_frame_position",
+            }
         radar_payload = self.viewerRadarHudPayload(frame_num)
         if radar_payload:
             payload["radar"] = radar_payload

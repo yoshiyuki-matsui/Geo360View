@@ -1155,6 +1155,9 @@
     if (Array.isArray(state.targets) && state.targets.length) {
       current.targets = state.targets;
     }
+    if (state.frame_position) {
+      current.frame_position = state.frame_position;
+    }
     if (state.applied_command_id) {
       current.applied_command_id = state.applied_command_id;
     }
