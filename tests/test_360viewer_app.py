@@ -4,6 +4,7 @@ import importlib.util
 import base64
 import json
 import os
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,46 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = REPO_ROOT / "360viewer" / "app.py"
+
+
+def read_exif_gps_tags(jpeg_bytes):
+    """テスト用にJPEG APP1 EXIFからGPS IFDタグを読む。"""
+    offset = 2
+    while offset + 4 <= len(jpeg_bytes):
+        marker = jpeg_bytes[offset:offset + 2]
+        if marker == b"\xff\xe1":
+            length = struct.unpack(">H", jpeg_bytes[offset + 2:offset + 4])[0]
+            payload = jpeg_bytes[offset + 4:offset + 2 + length]
+            if not payload.startswith(b"Exif\x00\x00II*\x00"):
+                return {}
+            tiff = payload[6:]
+            ifd0_offset = struct.unpack("<I", tiff[4:8])[0]
+            ifd0_count = struct.unpack("<H", tiff[ifd0_offset:ifd0_offset + 2])[0]
+            gps_offset = None
+            cursor = ifd0_offset + 2
+            for _index in range(ifd0_count):
+                tag, field_type, count = struct.unpack("<HHI", tiff[cursor:cursor + 8])
+                value = tiff[cursor + 8:cursor + 12]
+                if tag == 0x8825 and field_type == 4 and count == 1:
+                    gps_offset = struct.unpack("<I", value)[0]
+                    break
+                cursor += 12
+            if gps_offset is None:
+                return {}
+            gps_count = struct.unpack("<H", tiff[gps_offset:gps_offset + 2])[0]
+            tags = {}
+            cursor = gps_offset + 2
+            for _index in range(gps_count):
+                tag, field_type, count = struct.unpack("<HHI", tiff[cursor:cursor + 8])
+                value = tiff[cursor + 8:cursor + 12]
+                tags[tag] = (field_type, count, value)
+                cursor += 12
+            return tags
+        if not marker.startswith(b"\xff"):
+            break
+        length = struct.unpack(">H", jpeg_bytes[offset + 2:offset + 4])[0]
+        offset += 2 + length
+    return {}
 
 
 def load_viewer_app(temp_dir):
@@ -459,6 +500,13 @@ class ViewerAppValidationTests(unittest.TestCase):
         data = path.read_bytes()
         self.assertTrue(data.startswith(b"\xff\xd8\xff\xe1"))
         self.assertIn(b"Exif\x00\x00", data[:32])
+        gps_tags = read_exif_gps_tags(data)
+        self.assertIn(0x0000, gps_tags)
+        self.assertIn(0x0001, gps_tags)
+        self.assertIn(0x0002, gps_tags)
+        self.assertIn(0x0003, gps_tags)
+        self.assertIn(0x0004, gps_tags)
+        self.assertIn(0x0012, gps_tags)
         self.assertTrue(result["gps_written"])
         self.assertEqual(result["gps_source"], "frames_csv")
 

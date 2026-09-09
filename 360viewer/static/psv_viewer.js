@@ -813,7 +813,10 @@
       if (!response.ok) {
         throw new Error(result && result.error ? result.error : `HTTP ${response.status}`);
       }
-      setNotice([`Snapshot saved: ${result.filename}`]);
+      const gpsStatus = result.gps_written
+        ? `GPS: ${result.gps_source || "written"}`
+        : "GPS: unavailable";
+      setNotice([`Snapshot saved: ${result.filename}`, gpsStatus]);
       logDebug(`snapshot saved: ${result.path}`);
     } catch (error) {
       setNotice([`Snapshot failed: ${error}`]);

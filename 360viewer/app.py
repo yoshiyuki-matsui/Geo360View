@@ -545,6 +545,7 @@ def gps_ifd_entries(gps: dict[str, float]) -> list[tuple[int, int, int, Any]]:
     lat = float(gps["lat"])
     lon = float(gps["lon"])
     return [
+        (0x0000, 1, 4, b"\x02\x03\x00\x00"),
         (0x0001, 2, 2, exif_ascii("N" if lat >= 0 else "S")),
         (0x0002, 5, 3, decimal_to_dms_rationals(lat)),
         (0x0003, 2, 2, exif_ascii("E" if lon >= 0 else "W")),
