@@ -34,6 +34,13 @@ viewer_session.json
 *.tif
 *.tiff
 
+# Public documentation assets
+!docs/
+!docs/images/
+!docs/images/*.png
+!icons/
+!icons/*.png
+
 # Local editor/OS files
 .vscode/
 .idea/

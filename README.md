@@ -1,8 +1,16 @@
 # Geo360 View
 
-Geo360 View is a QGIS plugin for viewing georeferenced 360-degree and normal field videos on a map.
+[Japanese README](README_ja.md)
 
-It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens the selected frame in a browser-based viewer. The plugin is intended as a lightweight review tool: keep the original video as the source of truth, generate only the frame images needed for viewing, and move through the route from QGIS.
+Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map.
+
+It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
+
+Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
+
+![Geo360 View overview](docs/images/overview.png)
+
+![Geo360 View viewer with reference overlay](docs/images/viewer.png)
 
 ## Features
 
@@ -15,6 +23,8 @@ It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, a
 - Switch frames without exporting the whole video to images.
 - Preserve viewer yaw, pitch, and zoom while navigating.
 - Show map-side and viewer-side HUD guides for orientation and distance cues.
+- Show matched reference attributes as an overlay in the viewer.
+- Save GPS-tagged snapshots with optional HUD/reference overlays.
 - Save and restore a GeoPackage work session.
 - Use Photo Sphere Viewer as the open viewer engine, with a krpano-compatible integration path kept for local evaluation.
 
@@ -37,6 +47,77 @@ This public-oriented plugin is limited to video/GPX synchronization and visual r
 - QGIS Python with OpenCV (`cv2`) available.
 - A browser that can open the local viewer, preferably Edge or Chrome.
 
+## Install
+
+Install the plugin directory into your QGIS Python plugin folder and restart QGIS.
+
+On Windows, the default user plugin folder is typically:
+
+```text
+C:\Users\<user>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\Geo360View
+```
+
+## OpenCV Setup For Windows/QGIS
+
+If QGIS reports that `cv2` is not available, install OpenCV into the Python environment used by QGIS. Installing OpenCV into a normal Windows Python, Conda, or another virtual environment may not make it available from QGIS.
+
+For OSGeo4W/QGIS on Windows, open **OSGeo4W Shell** from the Start menu and run:
+
+```bash
+python -m pip install "opencv-python>=4.8"
+python -c "import cv2; print(cv2.__version__)"
+```
+
+If the second command prints an OpenCV version, the QGIS Python environment can import `cv2`.
+
+## Input Data
+
+- MP4 video recorded along a route.
+- GPX track recorded during the same run.
+- Optional reference point CSV with latitude/longitude columns.
+
+Reference CSV files should be saved as UTF-8. When editing with Microsoft Excel, choose `CSV UTF-8 (Comma delimited) (*.csv)`. If Japanese text is garbled, reopen the CSV in a text editor such as Sakura Editor or VS Code and save it again as UTF-8.
+
+Minimal reference CSV example:
+
+```csv
+id,name,latitude,longitude
+1991,Route A KP:1991,35.97173562,136.2038756
+2034,Route A KP:2034,35.97156058,136.2037934
+```
+
+`name` is used as the viewer label when present. The matched output also preserves `reference_id`, `reference_name`, and `reference_label` fields.
+
+## Outputs
+
+Geo360 View keeps the original video as the source of truth and writes practical intermediate outputs:
+
+- `Video GPX Points` QGIS layer.
+- Frame-position CSV files.
+- Reference-matched CSV files.
+- Navigation JSON for the local viewer.
+- On-demand viewer cache images.
+- GPS EXIF snapshots with optional HUD and reference overlays.
+
+For 360-degree videos, cached frame images are equirectangular intermediate images. Snapshots are the human-readable view images generated from the current viewer direction.
+
+## Known Limitations
+
+- Sample video data is not bundled because 360-degree video files are usually large and may contain privacy-sensitive content.
+- QGIS 4/Qt 6 compatibility is experimental.
+- Snapshot image quality depends on source video quality, cache image resolution, viewer rendering, and JPEG compression.
+- The krpano path is kept for local compatibility checks only. Photo Sphere Viewer is the preferred open distribution path.
+
+## Contact
+
+For bugs and feature requests, please use GitHub Issues:
+
+https://github.com/yoshiyuki-matsui/Geo360View/issues
+
+For business inquiries, custom workflows, automatic POI generation, object detection, or reporting, contact:
+
+rdcenter.nakashacreative@gmail.com
+
 ## License
 
 Geo360 View is licensed under GPL-2.0-or-later to align with QGIS plugin distribution requirements.
@@ -54,3 +135,4 @@ krpano is not bundled. If you use the legacy krpano path locally, place your own
 - [DESIGN.ja.md](DESIGN.ja.md): Japanese design notes.
 - [DESIGN.md](DESIGN.md): English design notes.
 - [CHANGELOG.md](CHANGELOG.md): release notes.
+- [samples/README.md](samples/README.md): sample data policy and input notes.

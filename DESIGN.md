@@ -1,6 +1,6 @@
 # Geo360 View Design Notes
 
-Last updated: 2026-09-04
+Last updated: 2026-09-11
 
 ## Purpose
 
@@ -73,6 +73,9 @@ The plugin suggests an initial projection from MP4 aspect ratio and allows manua
 
 ## Public Boundary
 
+Geo360View is the open viewer layer.
+It lets users validate whether their own MP4, GPX, and reference-point data can be reviewed smoothly in QGIS.
+
 Geo360 View does not include:
 
 - Automatic object detection.
@@ -81,4 +84,4 @@ Geo360 View does not include:
 - Semantic-class candidate layer review.
 - Model comparison and detection review workflows.
 
-Those workflows belong to the internal GPXVideoProcessor line or separate product code.
+Advanced workflows such as automatic object detection, POI generation, multi-frame ray intersection, clustering, and report generation are handled by GPXVideoProcessor and related commercial services.
