@@ -8,9 +8,19 @@ It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, a
 
 Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
 
-![Geo360 View overview](docs/images/overview.png)
 
-![Geo360 View viewer with reference overlay](docs/images/viewer.png)
+### OverView
+![Geo360 View OverView](docs/images/overview.png)
+### Panel
+![Geo360 View panel](docs/images/panel_0.png)
+### Shooting Points
+![Geo360 View 撮影点](docs/images/point.png)
+### 360 HUD Viewer
+![Geo360 View 360 HUD Viewer](docs/images/viewer.png)
+### Save Snap Shot
+![Geo360 View スナップショット保存](docs/images/capture.png)
+### EXIF Tag
+![Geo360 View EXIF GPS](docs/images/exif.png)
 
 ## Features
 

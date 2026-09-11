@@ -8,16 +8,17 @@ MP4動画とGPX軌跡を同期し、フレームごとの撮影点を生成し�
 
 Geo360 Viewは単なる再生ビューアではありません。撮影点GeoPackage、フレームCSV、参照点マッチCSV、閲覧用キャッシュ画像、GPS EXIF付きスナップショットなど、GISで再利用できる中間成果物を生成します。
 
+### 概要
 ![Geo360 View 概要](docs/images/overview.png)
-
+### 操作パネル
 ![Geo360 View 操作パネル](docs/images/panel_0.png)
-
+### 撮影点
 ![Geo360 View 撮影点](docs/images/point.png)
-
+### ビューア表示
 ![Geo360 View ビューア表示](docs/images/viewer.png)
-
+### スナップショット保存
 ![Geo360 View スナップショット保存](docs/images/capture.png)
-
+### EXIFタグ
 ![Geo360 View EXIF GPS](docs/images/exif.png)
 
 
