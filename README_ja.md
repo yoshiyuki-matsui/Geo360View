@@ -8,6 +8,7 @@ MP4動画とGPX軌跡を同期し、フレームごとの撮影点を生成し�
 
 Geo360 Viewは単なる再生ビューアではありません。撮影点GeoPackage、フレームCSV、参照点マッチCSV、閲覧用キャッシュ画像、GPS EXIF付きスナップショットなど、GISで再利用できる中間成果物を生成します。
 
+![Geo360 View Geo360View](docs/images/Geo360Viewe.png)
 ### 概要
 ![Geo360 View 概要](docs/images/overview.png)
 ### 操作パネル
@@ -124,15 +125,6 @@ Geo360 Viewは元動画を正として保持し、作業結果として以下の
 - 表示画質やスナップショット画質は、元動画、キャッシュ画像解像度、ビューア描画、JPEG圧縮の影響を受けます。
 - krpano経路はローカル互換確認用です。公開配布の主経路はPhoto Sphere Viewerです。
 
-## 問い合わせ
-
-不具合報告や改善要望はGitHub Issuesへお願いします。
-
-https://github.com/yoshiyuki-matsui/Geo360View/issues
-
-業務利用、個別ワークフロー、自動POI生成、物体検出、帳票化などの相談は以下へお問い合わせください。
-
-rdcenter.nakashacreative@gmail.com
 
 ## ライセンス
 
@@ -153,10 +145,12 @@ krpanoは同梱しません。ローカルで旧krpano経路を使う場合は�
 - [CHANGELOG.md](CHANGELOG.md): 変更履歴
 - [samples/README.md](samples/README.md): サンプルデータ方針と入力データメモ
 
-## Contact
+
+## 問い合わせ
 
 バグの発見、機能の要望などはGitHubのIssuesまでお願いします:
 https://github.com/yoshiyuki-matsui/Geo360View/issues
 
 業務フローへの組み込み、自動POI生成、物体・損傷検出モデル、検出結果レイヤ出力、レイヤスタイル適用、報告書生成などのご依頼は下記までご連絡ください:
 rdcenter.nakashacreative@gmail.com
+
