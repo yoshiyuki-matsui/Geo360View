@@ -10,7 +10,7 @@ Geo360 Viewは単なる再生ビューアではありません。撮影点GeoPac
 
 ![Geo360 View Geo360View](docs/images/Geo360Viewe.png)
 ### 概要
-![Geo360 View 概要](docs/images/overview.png)
+![Geo360 View 概要](docs/images/overview.gif)
 ### 操作パネル
 ![Geo360 View 操作パネル](docs/images/panel_0.png)
 ### 撮影点

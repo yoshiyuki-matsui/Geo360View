@@ -11,7 +11,7 @@ Geo360 View is more than a playback viewer. It produces reusable intermediate ou
 
 ![Geo360 View Geo360View](docs/images/Geo360Viewe.png)
 ### OverView
-![Geo360 View OverView](docs/images/overview.png)
+![Geo360 View OverView](docs/images/overview.gif)
 ### Panel
 ![Geo360 View panel](docs/images/panel_0.png)
 ### Shooting Points
