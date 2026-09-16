@@ -20,6 +20,8 @@
   const VIEW_STATE_POST_INTERVAL_MS = 1000;
   const EXTERNAL_SESSION_POLL_INTERVAL_MS = 300;
   const TARGET_CLEAR_GRACE_MS = 900;
+  const SNAPSHOT_JPEG_QUALITY = Math.max(0.1, Math.min(1.0, Number(bootstrap.viewer_snapshot_jpeg_quality || 96) / 100));
+  const SNAPSHOT_OUTPUT_SCALE = Math.max(1, Math.min(3, Number(bootstrap.viewer_snapshot_output_scale || 2)));
 
   let krpano = null;
   let lastPosted = null;
@@ -316,6 +318,135 @@
       markerFlashTimer = null;
       clickTargetMarker.classList.remove("click-target-marker-saved");
     }, 900);
+  }
+
+  function drawImageCover(ctx, image, width, height) {
+    const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    ctx.drawImage(
+      image,
+      (width - drawWidth) / 2,
+      (height - drawHeight) / 2,
+      drawWidth,
+      drawHeight
+    );
+  }
+
+  function referenceSummary(reference) {
+    if (!reference || typeof reference !== "object") {
+      return "";
+    }
+    const parts = [];
+    if (reference.label) {
+      parts.push(`Reference: ${reference.label}`);
+    }
+    const distance = Number(reference.distance_m);
+    if (Number.isFinite(distance)) {
+      parts.push(`distance: ${distance.toFixed(1)} m`);
+    }
+    return parts.join("  ");
+  }
+
+  function loadSnapshotImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = src;
+    });
+  }
+
+  function drawSnapshotFooter(ctx, width, height, current) {
+    const lines = [
+      `video: ${current.video || ""}`,
+      `frame_index: ${current.frame_index}`,
+      referenceSummary(navigationState.reference)
+    ].filter(Boolean);
+    if (!lines.length) {
+      return;
+    }
+    ctx.save();
+    ctx.font = "14px Arial, sans-serif";
+    ctx.textBaseline = "top";
+    const lineHeight = 20;
+    const boxHeight = lines.length * lineHeight + 14;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.64)";
+    ctx.fillRect(12, height - boxHeight - 12, Math.min(width - 24, 620), boxHeight);
+    ctx.fillStyle = "#f7f7f7";
+    lines.forEach((line, index) => {
+      ctx.fillText(line, 22, height - boxHeight - 2 + index * lineHeight);
+    });
+    ctx.restore();
+  }
+
+  async function buildSnapshotDataUrl() {
+    const stageRect = panoStage.getBoundingClientRect();
+    const cssWidth = Math.max(1, Math.round(stageRect.width));
+    const cssHeight = Math.max(1, Math.round(stageRect.height));
+    const width = Math.max(1, Math.round(cssWidth * SNAPSHOT_OUTPUT_SCALE));
+    const height = Math.max(1, Math.round(cssHeight * SNAPSHOT_OUTPUT_SCALE));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+
+    if (isFlatProjection()) {
+      const frameImage = await loadSnapshotImage(`${frameImageUrl(state.video, state.frame_index)}?snapshot=${Date.now()}`);
+      drawImageCover(ctx, frameImage, width, height);
+    } else {
+      const sourceCanvas = pano.querySelector("canvas");
+      if (!sourceCanvas) {
+        throw new Error("viewer canvas is not ready");
+      }
+      ctx.drawImage(sourceCanvas, 0, 0, width, height);
+    }
+
+    ctx.save();
+    ctx.scale(width / cssWidth, height / cssHeight);
+    drawSnapshotFooter(ctx, cssWidth, cssHeight, readKrpanoView() || state);
+    ctx.restore();
+    return canvas.toDataURL("image/jpeg", SNAPSHOT_JPEG_QUALITY);
+  }
+
+  async function saveSnapshot() {
+    if (!snapshotButton) {
+      return;
+    }
+    snapshotButton.disabled = true;
+    const previousText = snapshotButton.textContent;
+    snapshotButton.textContent = "Saving...";
+    try {
+      const current = currentSessionState();
+      const imageData = await buildSnapshotDataUrl();
+      const payload = Object.assign({}, current, {
+        image_data: imageData,
+        reference: navigationState.reference || null,
+        frame_position: navigationState.frame_position || current.frame_position || state.frame_position || null
+      });
+      const response = await fetch("/api/snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(result && result.error ? result.error : `HTTP ${response.status}`);
+      }
+      const gpsStatus = result.gps_written
+        ? `GPS: ${result.gps_source || "written"}`
+        : "GPS: unavailable";
+      setNotice([`Snapshot saved: ${result.filename}`, gpsStatus]);
+      logDebug(`snapshot saved: ${result.path}`);
+    } catch (error) {
+      setNotice([`Snapshot failed: ${error}`]);
+      logDebug(`snapshot failed: ${error}`);
+    } finally {
+      snapshotButton.disabled = false;
+      snapshotButton.textContent = previousText;
+    }
   }
 
   function logDebug(message) {
@@ -2105,6 +2236,9 @@
   setupDebugLogToggle();
   setupRadarHudToggle();
   setupClickTargetProjection();
+  if (snapshotButton) {
+    snapshotButton.addEventListener("click", saveSnapshot);
+  }
   updateReadout(state);
   setupKrpano();
   window.setInterval(pollExternalNavigation, EXTERNAL_SESSION_POLL_INTERVAL_MS);

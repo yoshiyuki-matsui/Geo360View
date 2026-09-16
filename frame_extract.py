@@ -59,7 +59,7 @@ class FrameExtractMixin:
             f"{stem}_"
             f"frame_{int(frame_num):06d}_"
             f"w{int(getattr(self, 'viewer_max_width', 3072))}_"
-            f"q{int(getattr(self, 'viewer_jpeg_quality', 70))}_"
+            f"q{int(getattr(self, 'viewer_jpeg_quality', 90))}_"
             f"p{1 if getattr(self, 'viewer_progressive_jpeg', True) else 0}.jpg"
         )
         return os.path.join(self.viewerCacheDir(), cache_name)

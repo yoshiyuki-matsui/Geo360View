@@ -54,9 +54,12 @@ class ViewerControllerMixin:
         config_path = os.path.join(self.viewerDir(), "viewer_config.json")
         host = "127.0.0.1"
         port = 8181
-        jpeg_quality = 70
+        jpeg_quality = 90
         progressive_jpeg = True
         max_width = 3072
+        snapshot_jpeg_quality = 96
+        snapshot_max_width = 0
+        snapshot_output_scale = 2.0
         psv_min_fov_deg = 20.0
         psv_max_fov_deg = 120.0
         browser_app_window = True
@@ -71,6 +74,15 @@ class ViewerControllerMixin:
                 config.get("viewer_progressive_jpeg", progressive_jpeg)
             )
             max_width = max(0, int(config.get("viewer_max_width", max_width)))
+            snapshot_jpeg_quality = max(1, min(100, int(
+                config.get("viewer_snapshot_jpeg_quality", snapshot_jpeg_quality)
+            )))
+            snapshot_max_width = max(0, int(
+                config.get("viewer_snapshot_max_width", snapshot_max_width)
+            ))
+            snapshot_output_scale = max(1.0, min(3.0, float(
+                config.get("viewer_snapshot_output_scale", snapshot_output_scale)
+            )))
             psv_min_fov_deg = max(1.0, min(179.0, float(
                 config.get("viewer_psv_min_fov_deg", config.get("psv_min_fov_deg", config.get("min_fov", psv_min_fov_deg)))
             )))
@@ -88,6 +100,9 @@ class ViewerControllerMixin:
         self.viewer_jpeg_quality = jpeg_quality
         self.viewer_progressive_jpeg = progressive_jpeg
         self.viewer_max_width = max_width
+        self.viewer_snapshot_jpeg_quality = snapshot_jpeg_quality
+        self.viewer_snapshot_max_width = snapshot_max_width
+        self.viewer_snapshot_output_scale = snapshot_output_scale
         self.viewer_psv_min_fov_deg = psv_min_fov_deg
         self.viewer_psv_max_fov_deg = max(psv_min_fov_deg, psv_max_fov_deg)
         self.viewer_browser_app_window = browser_app_window
@@ -119,6 +134,9 @@ class ViewerControllerMixin:
             "viewer_jpeg_quality": viewer_config.jpeg_quality,
             "viewer_progressive_jpeg": viewer_config.progressive_jpeg,
             "viewer_max_width": viewer_config.max_width,
+            "viewer_snapshot_jpeg_quality": self.viewer_snapshot_jpeg_quality,
+            "viewer_snapshot_max_width": self.viewer_snapshot_max_width,
+            "viewer_snapshot_output_scale": self.viewer_snapshot_output_scale,
             "viewer_cache_dir": viewer_config.cache_dir,
             "viewer_camera_height_m": viewer_config.camera_height_m,
             "viewer_hud_height_scale": viewer_config.hud_height_scale,

@@ -270,7 +270,7 @@ def validate_viewer_config(raw: dict[str, Any]) -> tuple[ViewerConfig | None, li
     video_dir = _text(raw.get("video_dir"))
     session_json_path = _text(raw.get("session_json_path"))
     cache_dir = _text(raw.get("cache_dir"))
-    jpeg_quality = _int_value(raw.get("jpeg_quality", 70), "Viewer JPEG quality", errors, 70)
+    jpeg_quality = _int_value(raw.get("jpeg_quality", 90), "Viewer JPEG quality", errors, 90)
     progressive_jpeg = bool(raw.get("progressive_jpeg", True))
     max_width = _int_value(raw.get("max_width", 3072), "Viewer maximum width", errors, 3072)
     camera_height_m = _float_value(raw.get("camera_height_m", 1.5), "Viewer camera height", errors, 1.5)

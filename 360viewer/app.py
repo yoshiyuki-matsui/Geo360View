@@ -176,9 +176,12 @@ def load_config() -> dict[str, Any]:
         "video_dir": video_dir,
         "session_json_path": session_json_path,
         "command_json_path": command_json_path,
-        "viewer_jpeg_quality": max(1, min(100, int(raw.get("viewer_jpeg_quality", 70)))),
+        "viewer_jpeg_quality": max(1, min(100, int(raw.get("viewer_jpeg_quality", 90)))),
         "viewer_progressive_jpeg": parse_bool(raw.get("viewer_progressive_jpeg", True)),
         "viewer_max_width": max(0, int(raw.get("viewer_max_width", 3072))),
+        "viewer_snapshot_jpeg_quality": max(1, min(100, int(raw.get("viewer_snapshot_jpeg_quality", 96)))),
+        "viewer_snapshot_max_width": max(0, int(raw.get("viewer_snapshot_max_width", 0))),
+        "viewer_snapshot_output_scale": max(1.0, min(3.0, float(raw.get("viewer_snapshot_output_scale", 2.0)))),
         "viewer_cache_dir": viewer_cache_dir,
         "viewer_camera_height_m": normalize_camera_height(raw.get("viewer_camera_height_m")),
         "viewer_hud_height_scale": normalize_hud_height_scale(raw.get("viewer_hud_height_scale")),
@@ -1353,13 +1356,17 @@ def build_krpano_xml(
 """
 
 
-def viewer_cache_path(video: str, frame_index: int, cfg: dict[str, Any]) -> Path:
+def viewer_cache_path(video: str, frame_index: int, cfg: dict[str, Any], *, snapshot: bool = False) -> Path:
     """画質設定を含めたビューアJPEGキャッシュパスを作る。"""
+    quality = cfg["viewer_snapshot_jpeg_quality"] if snapshot else cfg["viewer_jpeg_quality"]
+    max_width = cfg["viewer_snapshot_max_width"] if snapshot else cfg["viewer_max_width"]
+    purpose = "snap" if snapshot else "view"
     cache_name = (
         f"{safe_cache_stem(video)}_"
         f"frame_{frame_index:06d}_"
-        f"w{cfg['viewer_max_width']}_"
-        f"q{cfg['viewer_jpeg_quality']}_"
+        f"{purpose}_"
+        f"w{max_width}_"
+        f"q{quality}_"
         f"p{1 if cfg['viewer_progressive_jpeg'] else 0}.jpg"
     )
     return cfg["viewer_cache_dir"] / cache_name
@@ -1379,12 +1386,12 @@ def resize_for_viewer(frame: Any, max_width: int, cv2: Any) -> Any:
     return cv2.resize(frame, resized_size, interpolation=cv2.INTER_AREA)
 
 
-def extract_frame_jpeg(video: str, frame_index: int) -> tuple[bytes, str]:
+def extract_frame_jpeg(video: str, frame_index: int, *, snapshot: bool = False) -> tuple[bytes, str]:
     """動画から指定フレームをJPEG抽出し、ビューアキャッシュも利用する。"""
     import cv2
 
     cfg = load_config()
-    cache_path = viewer_cache_path(video, frame_index, cfg)
+    cache_path = viewer_cache_path(video, frame_index, cfg, snapshot=snapshot)
     if cache_path.is_file():
         return cache_path.read_bytes(), "cache"
 
@@ -1404,10 +1411,12 @@ def extract_frame_jpeg(video: str, frame_index: int) -> tuple[bytes, str]:
     if not ok or frame is None:
         raise ApiError(422, f"Failed to read frame_index={frame_index} from {video}")
 
-    frame = resize_for_viewer(frame, cfg["viewer_max_width"], cv2)
+    max_width = cfg["viewer_snapshot_max_width"] if snapshot else cfg["viewer_max_width"]
+    quality = cfg["viewer_snapshot_jpeg_quality"] if snapshot else cfg["viewer_jpeg_quality"]
+    frame = resize_for_viewer(frame, max_width, cv2)
     encode_params = [
         int(cv2.IMWRITE_JPEG_QUALITY),
-        int(cfg["viewer_jpeg_quality"]),
+        int(quality),
     ]
     progressive_flag = getattr(cv2, "IMWRITE_JPEG_PROGRESSIVE", None)
     if progressive_flag is not None and cfg["viewer_progressive_jpeg"]:
@@ -1472,7 +1481,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 return
 
             if parsed.path.startswith("/frames/"):
-                self.handle_frame_image(parsed.path)
+                self.handle_frame_image(parsed.path, query)
                 return
 
             if parsed.path == "/api/session/viewer-state":
@@ -1627,6 +1636,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         )
         scene_query = f"/krpano-scene.xml?{scene_query_params}"
         scene_url = absolute_url(self, scene_query)
+        cfg = load_config()
 
         # bootstrapはviewer.jsがページ初期化時に参照する唯一の初期状態。
         bootstrap = {
@@ -1652,6 +1662,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
             "viewer_flat_vfov_deg": state["viewer_flat_vfov_deg"],
             "viewer_psv_min_fov_deg": state["viewer_psv_min_fov_deg"],
             "viewer_psv_max_fov_deg": state["viewer_psv_max_fov_deg"],
+            "viewer_snapshot_jpeg_quality": cfg["viewer_snapshot_jpeg_quality"],
+            "viewer_snapshot_output_scale": cfg["viewer_snapshot_output_scale"],
         }
 
         self.send_bytes(
@@ -1673,7 +1685,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         xml = build_krpano_xml(self, video, frame_index, view_state_from_query(query))
         self.send_bytes(xml.encode("utf-8"), "application/xml; charset=utf-8")
 
-    def handle_frame_image(self, path: str) -> None:
+    def handle_frame_image(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         """`/frames/<video>/<frame>.jpg` を処理し、抽出JPEGを返す。"""
         match = re.match(r"^/frames/([^/]+)/([0-9]+)\.jpg$", path)
         if not match:
@@ -1682,7 +1694,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
         video = safe_video_name(unquote(match.group(1)))
         frame_index = parse_frame_index(match.group(2))
         cfg = load_config()
-        jpeg, frame_source = extract_frame_jpeg(video, frame_index)
+        snapshot = query is not None and "snapshot" in query
+        jpeg, frame_source = extract_frame_jpeg(video, frame_index, snapshot=snapshot)
         self.send_bytes(
             jpeg,
             "image/jpeg",
@@ -1690,10 +1703,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 "Cache-Control": "no-store",
                 "X-Frame-Index": str(frame_index),
                 "X-Video": quote(video),
-                "X-JPEG-Quality": str(cfg["viewer_jpeg_quality"]),
+                "X-JPEG-Quality": str(cfg["viewer_snapshot_jpeg_quality"] if snapshot else cfg["viewer_jpeg_quality"]),
                 "X-JPEG-Progressive": "1" if cfg["viewer_progressive_jpeg"] else "0",
-                "X-Viewer-Max-Width": str(cfg["viewer_max_width"]),
+                "X-Viewer-Max-Width": str(cfg["viewer_snapshot_max_width"] if snapshot else cfg["viewer_max_width"]),
                 "X-Frame-Source": frame_source,
+                "X-Snapshot-Source": "1" if snapshot else "0",
             },
         )
 

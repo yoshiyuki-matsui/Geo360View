@@ -167,7 +167,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """QGIS ifaceと、セッション中に共有する状態を初期化する。"""
         super().__init__(parent)
         self.iface = iface
-        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "en")
+        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "ja")
         self.gpx_file = ""
         self.video_file = ""
         self.kp_file = ""
@@ -187,9 +187,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.viewer_browser_opened = False
         self.viewer_host = "127.0.0.1"
         self.viewer_port = 8181
-        self.viewer_jpeg_quality = 70
+        self.viewer_jpeg_quality = 90
         self.viewer_progressive_jpeg = True
         self.viewer_max_width = 3072
+        self.viewer_snapshot_jpeg_quality = 96
+        self.viewer_snapshot_max_width = 0
+        self.viewer_snapshot_output_scale = 2.0
         self.viewer_camera_height_m = 1.5
         self.viewer_camera_height_dirty = False
         self.viewer_hud_height_scale_value = 1.0

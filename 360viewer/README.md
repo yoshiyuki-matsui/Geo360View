@@ -189,7 +189,7 @@ frame_index,image_path
   "port": 8181,
   "video_dir": ".",
   "session_json_path": "session.json",
-  "viewer_jpeg_quality": 70,
+  "viewer_jpeg_quality": 90,
   "viewer_progressive_jpeg": true,
   "viewer_max_width": 3072,
   "viewer_psv_min_fov_deg": 20,
@@ -202,7 +202,7 @@ frame_index,image_path
 ```
 
 Relative paths are resolved from this prototype directory.
-`viewer_jpeg_quality` controls the on-the-fly JPEG returned by `/frames/...jpg`; lower values reduce browser decode and transfer cost. `viewer_progressive_jpeg` enables progressive JPEG encoding when the OpenCV build supports it. `viewer_max_width` downsizes extracted frames for interactive viewing; use `0` to keep the original width. `viewer_cache_dir` stores encoded viewer JPEGs so revisited frames do not require MP4 decoding again. `viewer_camera_height_m` is the default camera-center height used for standalone sessions; QGIS jobs store their value in `viewer_session.json`.
+`viewer_jpeg_quality` controls the on-the-fly JPEG returned by `/frames/...jpg`; the default is 90 to keep road-surface details readable while remaining practical for local review. `viewer_progressive_jpeg` enables progressive JPEG encoding when the OpenCV build supports it. `viewer_max_width` downsizes extracted frames for interactive viewing; use `0` to keep the original width. `viewer_cache_dir` stores encoded viewer JPEGs so revisited frames do not require MP4 decoding again. `viewer_camera_height_m` is the default camera-center height used for standalone sessions; QGIS jobs store their value in `viewer_session.json`.
 When QGIS opens the viewer, `viewer_browser_app_window` tries to launch Edge/Chrome as a standalone app window. `viewer_browser_path` can be set to a specific `msedge.exe` or `chrome.exe` path when automatic detection does not find the browser. If app-window launch fails, QGIS falls back to the system default browser.
 
 ## Run

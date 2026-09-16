@@ -33,6 +33,8 @@
   const GROUND_GRID_SAMPLE_COUNT = 64;
   const DEFAULT_PSV_MIN_FOV_DEG = 20;
   const DEFAULT_PSV_MAX_FOV_DEG = 120;
+  const SNAPSHOT_JPEG_QUALITY = Math.max(0.1, Math.min(1.0, Number(bootstrap.viewer_snapshot_jpeg_quality || 96) / 100));
+  const SNAPSHOT_OUTPUT_SCALE = Math.max(1, Math.min(3, Number(bootstrap.viewer_snapshot_output_scale || 2)));
   const PSV_CORE_JS_URL = bootstrap.psv_core_js_url || "/static/vendor/photo-sphere-viewer/core/index.module.js";
   const PSV_MARKERS_JS_URL = bootstrap.psv_markers_js_url || "/static/vendor/photo-sphere-viewer/markers-plugin/index.module.js";
 
@@ -866,8 +868,10 @@
 
   async function buildSnapshotDataUrl() {
     const stageRect = panoStage.getBoundingClientRect();
-    const width = Math.max(1, Math.round(stageRect.width));
-    const height = Math.max(1, Math.round(stageRect.height));
+    const cssWidth = Math.max(1, Math.round(stageRect.width));
+    const cssHeight = Math.max(1, Math.round(stageRect.height));
+    const width = Math.max(1, Math.round(cssWidth * SNAPSHOT_OUTPUT_SCALE));
+    const height = Math.max(1, Math.round(cssHeight * SNAPSHOT_OUTPUT_SCALE));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -878,7 +882,9 @@
     if (isFlatProjection()) {
       const rect = flatImageRect(stageRect);
       if (fallbackFrame.complete && fallbackFrame.naturalWidth > 0) {
-        ctx.drawImage(fallbackFrame, rect.left, rect.top, rect.width, rect.height);
+        const sx = width / cssWidth;
+        const sy = height / cssHeight;
+        ctx.drawImage(fallbackFrame, rect.left * sx, rect.top * sy, rect.width * sx, rect.height * sy);
       }
     } else {
       const sourceCanvas = pano.querySelector("canvas");
@@ -889,12 +895,18 @@
     }
 
     if (radarHudVisible) {
+      ctx.save();
+      ctx.scale(width / cssWidth, height / cssHeight);
       drawGroundRingsOnCanvas(ctx);
       drawLockGuideOnCanvas(ctx);
       drawTargetMarkers(ctx, stageRect);
+      ctx.restore();
     }
-    drawSnapshotFooter(ctx, width, height, readPsvView());
-    return canvas.toDataURL("image/jpeg", 0.92);
+    ctx.save();
+    ctx.scale(width / cssWidth, height / cssHeight);
+    drawSnapshotFooter(ctx, cssWidth, cssHeight, readPsvView());
+    ctx.restore();
+    return canvas.toDataURL("image/jpeg", SNAPSHOT_JPEG_QUALITY);
   }
 
   async function saveSnapshot() {
