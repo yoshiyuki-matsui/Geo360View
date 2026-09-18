@@ -1,44 +1,44 @@
-name: Operation report
-description: Report whether Geo360View worked with your camera and GPX data.
-title: "[Operation report]: "
+name: 動作報告
+description: Geo360Viewをお手元の360動画とGPXで試した結果を報告する
+title: "[動作報告]: "
 labels:
-  - operation-report
+  - 動作報告
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for trying Geo360View.
+        Geo360Viewを試していただきありがとうございます。
 
-        Please share the camera model, GPX source, and whether it worked.
-        Short reports such as "Insta360 X5 worked" are very helpful.
+        お手元の360動画＋GPXで「動いた／動かなかった」だけでも、とても助かります。
+        サポートは原則として日本語で行います。英語での報告も歓迎しますが、回答は日本語、または機械翻訳を併記した形になる場合があります。
 
   - type: input
     id: camera
     attributes:
-      label: Camera model
-      description: Which camera did you use?
-      placeholder: "Insta360 X5 / X4 / X3 / ONE RS / other"
+      label: カメラ機種
+      description: 撮影に使ったカメラ機種を教えてください。
+      placeholder: "Insta360 X5 / X4 / X3 / ONE RS / その他"
     validations:
       required: true
 
   - type: input
     id: gpx_source
     attributes:
-      label: GPX source
-      description: Where did the GPX file come from?
-      placeholder: "Insta360 app / GPS remote / Garmin / smartphone app / other"
+      label: GPXの出どころ
+      description: GPXファイルをどの機器・アプリ・サービスから取得したか教えてください。
+      placeholder: "Insta360アプリ / GPSリモコン / Garmin / スマートフォンアプリ / その他"
     validations:
       required: true
 
   - type: dropdown
     id: result
     attributes:
-      label: Result
-      description: Did Geo360View work with your data?
+      label: 動作結果
+      description: Geo360Viewで表示・同期できましたか？
       options:
-        - Worked
-        - Partially worked
-        - Did not work
+        - 動いた
+        - 一部動いた
+        - 動かなかった
     validations:
       required: true
 
@@ -46,14 +46,14 @@ body:
     id: os
     attributes:
       label: OS
-      placeholder: "Windows 11 / macOS / Ubuntu / other"
+      placeholder: "Windows 11 / macOS / Ubuntu / その他"
     validations:
       required: false
 
   - type: input
     id: qgis_version
     attributes:
-      label: QGIS version
+      label: QGISバージョン
       placeholder: "QGIS 3.40.x"
     validations:
       required: false
@@ -61,7 +61,7 @@ body:
   - type: input
     id: plugin_version
     attributes:
-      label: Geo360View version
+      label: Geo360Viewバージョン
       placeholder: "0.x.x"
     validations:
       required: false
@@ -69,8 +69,8 @@ body:
   - type: textarea
     id: notes
     attributes:
-      label: Notes
-      description: Please add any comments, error messages, screenshots, or sample data notes if available.
-      placeholder: "Example: The video opened, but GPX synchronization was shifted by about 2 seconds."
+      label: 補足
+      description: 気づいたこと、エラー内容、スクリーンショット、サンプルデータの特徴などがあればお願いします。
+      placeholder: "例: 動画は開けたが、GPXとの同期が約2秒ずれていました。"
     validations:
       required: false

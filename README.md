@@ -4,6 +4,19 @@
 
 Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map.
 
+## Japanese-first support
+
+Geo360 View is currently released as a trial version. The primary support language is Japanese.
+
+For installation, usage, operation reports, bug reports, and discussions, please start with the Japanese README:
+
+- [README_ja.md](README_ja.md)
+- [Operation report form](https://github.com/yoshiyuki-matsui/Geo360View/issues/new?template=operation-report.yml)
+- [Bug report form](https://github.com/yoshiyuki-matsui/Geo360View/issues/new?template=bug-report.yml)
+- [GitHub Discussions](https://github.com/yoshiyuki-matsui/Geo360View/discussions)
+
+Reports in English are welcome, but responses may be written in Japanese and/or machine-translated.
+
 It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
 
 Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
@@ -121,9 +134,15 @@ For 360-degree videos, cached frame images are equirectangular intermediate imag
 
 ## Contact
 
-For bugs and feature requests, please use GitHub Issues:
+For operation reports and bug reports, please use GitHub Issues:
 
 https://github.com/yoshiyuki-matsui/Geo360View/issues
+
+For questions, usage ideas, and use-case discussions, please use GitHub Discussions:
+
+https://github.com/yoshiyuki-matsui/Geo360View/discussions
+
+Support is primarily provided in Japanese. Reports in English are welcome, but responses may be written in Japanese and/or machine-translated.
 
 For business inquiries, custom workflows, automatic POI generation, object detection, or reporting, contact:
 

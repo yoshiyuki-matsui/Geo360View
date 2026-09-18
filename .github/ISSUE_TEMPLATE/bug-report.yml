@@ -1,50 +1,51 @@
-name: Bug report
-description: Report a reproducible problem in Geo360View.
-title: "[Bug]: "
+name: 不具合報告
+description: Geo360Viewで再現できる問題を報告する
+title: "[不具合]: "
 labels:
-  - bug
+  - 不具合
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for reporting a problem.
+        不具合報告ありがとうございます。
 
-        Please provide enough information to reproduce the issue.
+        できる範囲で構いませんので、再現手順と環境を教えてください。
+        サポートは原則として日本語で行います。英語での報告も歓迎しますが、回答は日本語、または機械翻訳を併記した形になる場合があります。
 
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What happened?
-      placeholder: "Describe the problem briefly."
+      label: 概要
+      description: 何が起きましたか？
+      placeholder: "問題の内容を簡単に書いてください。"
     validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: Steps to reproduce
-      description: What did you do before the problem occurred?
+      label: 再現手順
+      description: 問題が起きるまでに行った操作を教えてください。
       placeholder: |
-        1. Open QGIS
-        2. Load MP4 and GPX
-        3. Click ...
+        1. QGISを起動
+        2. MP4とGPXを読み込み
+        3. ...
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
-      description: What did you expect to happen?
+      label: 期待した動作
+      description: 本来どう動くことを期待していましたか？
     validations:
       required: false
 
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior
-      description: What actually happened? Please paste the error message if any.
+      label: 実際の動作
+      description: 実際に何が起きましたか？エラーメッセージがあれば貼り付けてください。
     validations:
       required: true
 
@@ -52,14 +53,14 @@ body:
     id: os
     attributes:
       label: OS
-      placeholder: "Windows 11 / macOS / Ubuntu / other"
+      placeholder: "Windows 11 / macOS / Ubuntu / その他"
     validations:
       required: false
 
   - type: input
     id: qgis_version
     attributes:
-      label: QGIS version
+      label: QGISバージョン
       placeholder: "QGIS 3.40.x"
     validations:
       required: false
@@ -67,7 +68,7 @@ body:
   - type: input
     id: plugin_version
     attributes:
-      label: Geo360View version
+      label: Geo360Viewバージョン
       placeholder: "0.x.x"
     validations:
       required: false
@@ -75,23 +76,23 @@ body:
   - type: input
     id: camera
     attributes:
-      label: Camera model
-      placeholder: "Insta360 X5 / X4 / X3 / other"
+      label: カメラ機種
+      placeholder: "Insta360 X5 / X4 / X3 / その他"
     validations:
       required: false
 
   - type: input
     id: gpx_source
     attributes:
-      label: GPX source
-      placeholder: "Insta360 app / GPS remote / Garmin / other"
+      label: GPXの出どころ
+      placeholder: "Insta360アプリ / GPSリモコン / Garmin / その他"
     validations:
       required: false
 
   - type: textarea
     id: logs
     attributes:
-      label: Logs or screenshots
-      description: Please paste relevant logs or attach screenshots if available.
+      label: ログ・スクリーンショット
+      description: 関連するログやスクリーンショットがあれば貼り付け、または添付してください。
     validations:
       required: false

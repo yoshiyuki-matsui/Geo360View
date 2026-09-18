@@ -4,6 +4,18 @@
 
 Geo360 Viewは、GPXと同期した360度動画および通常画角動画を、QGISの地図上から確認するためのQGISプラグインです。
 
+## 動作報告を募集しています
+
+Geo360 Viewは現在、試験公開版です。
+
+お手元の360動画＋GPXで試していただけた場合は、「カメラ機種」「GPXの出どころ」「動いた／動かなかった」を教えていただけると助かります。
+
+- 動作報告: [GitHub Issues - 動作報告](https://github.com/yoshiyuki-matsui/Geo360View/issues/new?template=operation-report.yml)
+- 不具合報告: [GitHub Issues - 不具合報告](https://github.com/yoshiyuki-matsui/Geo360View/issues/new?template=bug-report.yml)
+- 質問・使い方の相談・活用アイデア: [GitHub Discussions](https://github.com/yoshiyuki-matsui/Geo360View/discussions)
+
+サポートは原則として日本語で行います。英語での報告も歓迎しますが、回答は日本語、または機械翻訳を併記した形になる場合があります。
+
 MP4動画とGPX軌跡を同期し、フレームごとの撮影点を生成します。地図上の撮影点を選ぶと、対応するフレームをブラウザビューアで確認できます。任意の参照点CSVを指定すると、KP、電柱、橋梁、施設、点検対象点などのマスタ情報を撮影点に最近接マッチングし、実写と属性を重ねて確認できます。
 
 Geo360 Viewは単なる再生ビューアではありません。撮影点GeoPackage、フレームCSV、参照点マッチCSV、閲覧用キャッシュ画像、GPS EXIF付きスナップショットなど、GISで再利用できる中間成果物を生成します。
@@ -148,9 +160,11 @@ krpanoは同梱しません。ローカルで旧krpano経路を使う場合は�
 
 ## 問い合わせ
 
-バグの発見、機能の要望などはGitHubのIssuesまでお願いします:
+動作報告・不具合報告はGitHub Issuesへお願いします:
 https://github.com/yoshiyuki-matsui/Geo360View/issues
+
+質問、使い方の相談、活用アイデアはGitHub Discussionsへお願いします:
+https://github.com/yoshiyuki-matsui/Geo360View/discussions
 
 業務フローへの組み込み、自動POI生成、物体・損傷検出モデル、検出結果レイヤ出力、レイヤスタイル適用、報告書生成などのご依頼は下記までご連絡ください:
 rdcenter.nakashacreative@gmail.com
-
