@@ -1,0 +1,54 @@
+name: 動作報告
+description: Geo360Viewの動作確認結果を報告する
+title: "[動作報告]: "
+labels: ["動作報告"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Geo360Viewを試していただきありがとうございます。
+        分かる範囲で構いませんので、動作環境を教えてください。
+
+  - type: input
+    id: camera
+    attributes:
+      label: カメラ機種
+      placeholder: Insta360 X5 / X4 / X3 など
+    validations:
+      required: true
+
+  - type: input
+    id: gpx_source
+    attributes:
+      label: GPXの出どころ
+      placeholder: Insta360アプリ / GPSリモコン / Garmin / その他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: 結果
+      options:
+         - 動いた
+        - 一部動いた
+        - 動かなかった
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境
+      description: 分かる範囲で、OS、QGISバージョン、Geo360Viewバージョンを書いてください。
+      placeholder: Windows 11 / QGIS 3.xx / Geo360View 0.x.x
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足
+      description: 気づいたこと、エラー内容、スクリーンショットなどがあればお願いします。
+    validations:
+      required: false
