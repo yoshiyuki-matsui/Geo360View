@@ -1,54 +1,76 @@
-name: 動作報告
-description: Geo360Viewの動作確認結果を報告する
-title: "[動作報告]: "
-labels: ["動作報告"]
+name: Operation report
+description: Report whether Geo360View worked with your camera and GPX data.
+title: "[Operation report]: "
+labels:
+  - operation-report
 body:
   - type: markdown
     attributes:
       value: |
-        Geo360Viewを試していただきありがとうございます。
-        分かる範囲で構いませんので、動作環境を教えてください。
+        Thank you for trying Geo360View.
+
+        Please share the camera model, GPX source, and whether it worked.
+        Short reports such as "Insta360 X5 worked" are very helpful.
 
   - type: input
     id: camera
     attributes:
-      label: カメラ機種
-      placeholder: Insta360 X5 / X4 / X3 など
+      label: Camera model
+      description: Which camera did you use?
+      placeholder: "Insta360 X5 / X4 / X3 / ONE RS / other"
     validations:
       required: true
 
   - type: input
     id: gpx_source
     attributes:
-      label: GPXの出どころ
-      placeholder: Insta360アプリ / GPSリモコン / Garmin / その他
+      label: GPX source
+      description: Where did the GPX file come from?
+      placeholder: "Insta360 app / GPS remote / Garmin / smartphone app / other"
     validations:
       required: true
 
   - type: dropdown
     id: result
     attributes:
-      label: 結果
+      label: Result
+      description: Did Geo360View work with your data?
       options:
-         - 動いた
-        - 一部動いた
-        - 動かなかった
+        - Worked
+        - Partially worked
+        - Did not work
     validations:
       required: true
 
-  - type: textarea
-    id: environment
+  - type: input
+    id: os
     attributes:
-      label: 環境
-      description: 分かる範囲で、OS、QGISバージョン、Geo360Viewバージョンを書いてください。
-      placeholder: Windows 11 / QGIS 3.xx / Geo360View 0.x.x
+      label: OS
+      placeholder: "Windows 11 / macOS / Ubuntu / other"
+    validations:
+      required: false
+
+  - type: input
+    id: qgis_version
+    attributes:
+      label: QGIS version
+      placeholder: "QGIS 3.40.x"
+    validations:
+      required: false
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Geo360View version
+      placeholder: "0.x.x"
     validations:
       required: false
 
   - type: textarea
     id: notes
     attributes:
-      label: 補足
-      description: 気づいたこと、エラー内容、スクリーンショットなどがあればお願いします。
+      label: Notes
+      description: Please add any comments, error messages, screenshots, or sample data notes if available.
+      placeholder: "Example: The video opened, but GPX synchronization was shifted by about 2 seconds."
     validations:
       required: false

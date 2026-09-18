@@ -1,0 +1,97 @@
+name: Bug report
+description: Report a reproducible problem in Geo360View.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem.
+
+        Please provide enough information to reproduce the issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: "Describe the problem briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do before the problem occurred?
+      placeholder: |
+        1. Open QGIS
+        2. Load MP4 and GPX
+        3. Click ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Please paste the error message if any.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS / Ubuntu / other"
+    validations:
+      required: false
+
+  - type: input
+    id: qgis_version
+    attributes:
+      label: QGIS version
+      placeholder: "QGIS 3.40.x"
+    validations:
+      required: false
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Geo360View version
+      placeholder: "0.x.x"
+    validations:
+      required: false
+
+  - type: input
+    id: camera
+    attributes:
+      label: Camera model
+      placeholder: "Insta360 X5 / X4 / X3 / other"
+    validations:
+      required: false
+
+  - type: input
+    id: gpx_source
+    attributes:
+      label: GPX source
+      placeholder: "Insta360 app / GPS remote / Garmin / other"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Please paste relevant logs or attach screenshots if available.
+    validations:
+      required: false
