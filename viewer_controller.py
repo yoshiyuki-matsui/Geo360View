@@ -47,7 +47,7 @@ class ViewerControllerMixin:
         """ビューアが参照できる動画ディレクトリを返す。"""
         if self.video_file:
             return os.path.dirname(os.path.abspath(self.video_file))
-        return os.path.join(self.viewerDir(), "sample_videos")
+        return self.viewerDir()
 
     def loadViewerDefaults(self):
         """静的設定JSONからビューア既定値を読み込み、plugin状態へ反映する。"""

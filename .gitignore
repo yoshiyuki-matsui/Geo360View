@@ -10,6 +10,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Build artifacts
+dist/
+
 # QGIS/Geo360View runtime outputs
 360view_output/
 360viewer/viewer_config.qgis_runtime.json

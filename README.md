@@ -100,6 +100,11 @@ If the second command prints an OpenCV version, the QGIS Python environment can 
 - GPX track recorded during the same run.
 - Optional reference point CSV with latitude/longitude columns.
 
+For practical performance, copy MP4 files to a local SSD or other local disk
+before processing. Reading large MP4 files from NAS, SMB/NFS shares, cloud-sync
+folders, or VPN-mounted storage can make frame extraction and viewer navigation
+very slow because Geo360 View reads video frames on demand.
+
 Reference CSV files should be saved as UTF-8. When editing with Microsoft Excel, choose `CSV UTF-8 (Comma delimited) (*.csv)`. If Japanese text is garbled, reopen the CSV in a text editor such as Sakura Editor or VS Code and save it again as UTF-8.
 
 Minimal reference CSV example:
@@ -128,6 +133,7 @@ For 360-degree videos, cached frame images are equirectangular intermediate imag
 ## Known Limitations
 
 - Sample video data is not bundled because 360-degree video files are usually large and may contain privacy-sensitive content.
+- Network or VPN storage can be much slower than local disks for MP4 access. Local execution with local video files is recommended.
 - QGIS 4/Qt 6 compatibility is experimental.
 - Snapshot image quality depends on source video quality, cache image resolution, viewer rendering, and JPEG compression.
 - The krpano path is kept for local compatibility checks only. Photo Sphere Viewer is the preferred open distribution path.
