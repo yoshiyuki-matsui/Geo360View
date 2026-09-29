@@ -59,7 +59,7 @@ marking_bearing_deg = trajectory_heading_deg
 注意:
 
 - Detection Checkで補正量が復元された後にMarkingすると安全です。
-- 補正前に保存済みのMarking geometryは自動更新されません。
+- 旧バージョンで保存済みのMarking geometryは自動更新されません。新規Markingはgeometryを保存しません。
 - yaw補正を変えた場合、既存Markingは削除して新しくMarkingします。
 - `viewer_front_offset_deg` は同一videoのsessionでのみ継承します。別動画へ持ち越しません。
 
@@ -70,7 +70,7 @@ marking_bearing_deg = trajectory_heading_deg
 | Detection POIは合うがMarkingがずれる | `viewer_front_offset_deg` がsessionに無い、または古い |
 | 360ビューア視点は合うがレーダがずれる | レーダが `bearing_deg` でなく `target_yaw` を使っている |
 | QGIS再起動後も直らない | 360 viewerサーバまたはブラウザJSが古いまま残っている |
-| 保存済みMarkingがずれ続ける | geometry自体が補正前の方位で保存済み |
+| 旧保存済みMarkingがずれ続ける | 旧geometry自体が補正前の方位で保存済み |
 
 ## 確認手順
 

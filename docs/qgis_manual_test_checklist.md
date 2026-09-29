@@ -138,14 +138,15 @@
 ## 10. Marking
 
 - [ ] WEBビューア上で気になる対象をダブルクリックすると、Markingが保存される。
-- [ ] WEBビューア上で複数箇所をダブルクリックすると、クリック順の複数MarkingがQGIS地図上に緑の仮投影点として表示される。
+- [ ] WEBビューア上で複数箇所をダブルクリックすると、クリック順の複数Markingが保存され、Navの`Marking`で辿れる。
 - [ ] ダブルクリック後にWEBビューアのyaw/pitch/zoomを変更しても、WEB上のマーカーが同じ360球面位置に追従する。
-- [ ] `Geo360 Markings` レイヤが作成され、投影点の緯度経度と `video` / `frame` / `target_id` が属性テーブルへ保存される。
+- [ ] `Geo360 Markings` テーブルが作成され、`video` / `frame` / `target_id` / 視線方向 / 視点情報が属性として保存される。
+- [ ] `Geo360 Markings` は新規Markingを非geometryレコードとして保存し、地図上の正式POI点として表示されない。
 - [ ] 視点移動で `viewer_session.json` が更新されても、同じ `video` / `frame` / `target_id` のレコードが重複追加されない。
 - [ ] Markingを置いたフレームを再表示すると、保存済みMarkingがWEBビューア上に復元表示される。
 - [ ] 別動画由来の `geo360_markings` / `click_targets_360` 相当レイヤを同時に開いても、現在MP4と一致しない点は復元されない。
-- [ ] 投影点の方向がビューア内のクリック方向と整合する。
-- [ ] 投影点の距離が `CalFOV` / `CalDist` / `Scale` と連動する。
+- [ ] 復元されたMarkingマーカーの方向がビューア内のクリック方向と整合する。
+- [ ] QGIS地図上のMarking投影点が成果物として残らない。
 - [ ] 真横に近いクリックなど角度が大きい場合でもQGISが落ちない。
 - [ ] RubberBandの緑点・緑線は一時表示であり、`終了` 後に残らない。
 - [ ] `Geo360 Markings` は生成レイヤとして `tmp.gpkg` に保存され、`geo360_markings` レイヤとして再読込できる。

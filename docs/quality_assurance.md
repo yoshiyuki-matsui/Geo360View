@@ -197,11 +197,11 @@ QGIS実機で確認する主要観点:
 - 既存の地物登録プラグインのMapToolを邪魔せず、Geo360View操作パネルにフォーカスがあればキー操作できる。
 - `Exit` 後にレーダRubberBandが残らない。
 - WEBビューアの画像送りでyaw/pitch/zoomを継承する。
-- WEBビューアのダブルクリックMarkingがQGIS地図上の緑点として投影される。
-- WEBビューアの複数MarkingがQGIS地図上の複数緑点として投影される。
-- WEBビューアMarkingが `Geo360 Markings` レイヤの属性テーブルへ緯度経度付きで保存される。
+- WEBビューアのダブルクリックMarkingが、視点復元用の非geometryレコードとして保存される。
+- WEBビューアの複数Markingが保存され、地図上の正式POI点として残らない。
+- WEBビューアMarkingが `Geo360 Markings` テーブルの属性へ、緯度経度なしで保存される。
 - `tmp.gpkg` 内部レイヤ名が退避ファイル名 `tmp` ではなく、`video_gpx_points` / `geo360_markings` になる。
-- `CalFOV` / `CalDist` / `Scale` を変えた時、QGIS側垂線、Marking投影点、WEB HUDが同じ前提で変化する。
+- `CalFOV` / `CalDist` / `Scale` を変えた時、QGIS側垂線とWEB HUDが同じ前提で変化する。
 - `CamH` を変えた時、`viewer_session.json` への保存とWEB HUDの地面範囲円が更新される。
 - WEB HUDの1m破線補助グリッドが主円と同じHUD表示状態で切り替わり、QGIS地図側にも同じ1m補助円が出る。
 - `Follow` ON/OFFで地図再中心化の挙動が切り替わる。

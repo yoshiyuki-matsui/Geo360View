@@ -95,17 +95,12 @@ DEFAULT_VIEWER_FLAT_VFOV_DEG = 43.0
 
 VIEWER_TARGET_HIDDEN_COLUMNS = (
     "target_id",
-    "forward_m",
-    "bearing_deg",
     "yaw_delta",
     "target_yaw",
     "target_pitch",
     "view_yaw",
     "view_pitch",
     "view_zoom",
-    "source_lat",
-    "source_lon",
-    "projection",
 )
 
 VIEWER_TARGET_FIELD_DEFS = (
@@ -115,21 +110,12 @@ VIEWER_TARGET_FIELD_DEFS = (
     ("target_order", QVariant.Int),
     ("x_ratio", QVariant.Double),
     ("y_ratio", QVariant.Double),
-    ("latitude", QVariant.Double),
-    ("longitude", QVariant.Double),
-    ("distance_m", QVariant.Double),
-    ("forward_m", QVariant.Double),
-    ("bearing_deg", QVariant.Double),
     ("yaw_delta", QVariant.Double),
     ("target_yaw", QVariant.Double),
     ("target_pitch", QVariant.Double),
     ("view_yaw", QVariant.Double),
     ("view_pitch", QVariant.Double),
     ("view_zoom", QVariant.Double),
-    ("source_lat", QVariant.Double),
-    ("source_lon", QVariant.Double),
-    ("projection", QVariant.String),
-    ("quality", QVariant.String),
     ("created_at", QVariant.String),
 )
 
@@ -1659,7 +1645,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return False
         has_candidate_identity = any(
             fields.indexFromName(name) >= 0
-            for name in ("semantic_class", "target_source", "evidence_face", "detection_id")
+            for name in ("semantic_class", "candidate_id", "evidence_face", "detection_id")
         )
         return (
             fields.indexFromName("frame") >= 0
@@ -1757,9 +1743,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return best_layer, best_feature
 
     def selectViewerTargetFeature(self, frame_num):
-        """Picked pointナビ時に360 Click Targetsの該当点を選択して地図中心へ移動する。"""
+        """Markingナビ時にgeometry付き旧Markingだけ選択し、非geometryなら撮影点へ戻す。"""
         layer, feature = self.findViewerTargetFeatureByFrame(frame_num)
         if layer is None or feature is None:
+            return False
+        try:
+            geom = feature.geometry()
+        except Exception:
+            geom = None
+        if geom is None or geom.isEmpty():
             return False
         try:
             layer.removeSelection()
@@ -2028,6 +2020,46 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def applyViewerTargetHiddenColumns(self, layer):
         """360クリック点レイヤの監査用列を初期非表示にする。"""
         return self.applyHiddenColumns(layer, VIEWER_TARGET_HIDDEN_COLUMNS)
+
+    def applyViewerTargetMapHintStyle(self, layer):
+        """Marking補助座標を正式POI位置として主張しない非表示相当スタイルにする。"""
+        if layer is None:
+            return False
+        if self.layerFields(layer) is None:
+            return False
+        try:
+            symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        except Exception:
+            symbol = None
+        if symbol is None:
+            return False
+        try:
+            symbol.setSize(0.0)
+        except Exception:
+            pass
+        try:
+            transparent = QtGui.QColor(0, 0, 0, 0)
+            symbol.setColor(transparent)
+            for layer_index in range(symbol.symbolLayerCount()):
+                symbol_layer = symbol.symbolLayer(layer_index)
+                try:
+                    symbol_layer.setStrokeColor(transparent)
+                except Exception:
+                    pass
+                try:
+                    symbol_layer.setFillColor(transparent)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+            layer.setCustomProperty("geo360view/marking_geometry_role", "viewer_restore_hint")
+            layer.setCustomProperty("geo360view/marking_default_visible", False)
+            layer.triggerRepaint()
+            return True
+        except Exception:
+            return False
 
     def applyCandidateHiddenColumns(self, layer):
         """YOLO候補レイヤの証跡列を初期非表示にする。"""
@@ -2299,6 +2331,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         if target_layer is not None:
             self.applyViewerTargetHiddenColumns(target_layer)
+            self.applyViewerTargetMapHintStyle(target_layer)
             self.addLayerToGroup(target_layer, "Session", checked=False)
             self.created_layer_ids.append(target_layer.id())
             self.registerLoadedLayerForChangeTracking(target_layer)
@@ -2409,6 +2442,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             ):
                 self.ensureViewerTargetLayerFields(layer)
                 self.applyViewerTargetHiddenColumns(layer)
+                self.applyViewerTargetMapHintStyle(layer)
                 return layer
 
         for layer_id in reversed(self.created_layer_ids):
@@ -2421,6 +2455,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 self.target_layer_id = layer.id()
                 self.ensureViewerTargetLayerFields(layer)
                 self.applyViewerTargetHiddenColumns(layer)
+                self.applyViewerTargetMapHintStyle(layer)
+                return layer
+
+        for layer in reversed(list(project.mapLayers().values())):
+            if (
+                self.isViewerTargetLayer(layer)
+                and not self.isCandidateLayer(layer)
+                and self.isMemoryLayer(layer)
+                and self.isNamedViewerTargetLayer(layer)
+            ):
+                self.target_layer_id = layer.id()
+                if layer.id() not in self.created_layer_ids:
+                    self.created_layer_ids.append(layer.id())
+                self.ensureViewerTargetLayerFields(layer)
+                self.applyViewerTargetHiddenColumns(layer)
+                self.applyViewerTargetMapHintStyle(layer)
                 return layer
         return None
 
@@ -2440,15 +2490,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         layer.updateFields()
         self.markLayerSaveOnExit(layer)
         self.applyViewerTargetHiddenColumns(layer)
+        self.applyViewerTargetMapHintStyle(layer)
         return True
 
     def ensureViewerTargetLayer(self):
-        """360クリック投影点保存用のメモリレイヤを必要に応じて作成する。"""
+        """360視点Marking保存用の非geometryメモリレイヤを必要に応じて作成する。"""
         layer = self.viewerTargetLayer()
         if layer is not None:
             return layer
 
-        layer = QgsVectorLayer("Point?crs=EPSG:4326", MARKING_LAYER_DISPLAY_NAME, "memory")
+        layer = QgsVectorLayer("None", MARKING_LAYER_DISPLAY_NAME, "memory")
         pr = layer.dataProvider()
         pr.addAttributes([
             QgsField(field_name, field_type)
@@ -2456,7 +2507,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         ])
         layer.updateFields()
         self.applyViewerTargetHiddenColumns(layer)
-        QgsProject.instance().addMapLayer(layer)
+        self.applyViewerTargetMapHintStyle(layer)
+        self.addLayerToGroup(layer, "Session", checked=False)
         self.created_layer_ids.append(layer.id())
         self.markLayerSaveOnExit(layer)
         self.target_layer_id = layer.id()
@@ -4067,7 +4119,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return written_state if isinstance(written_state, dict) else restored_state
 
     def viewerTargetKey(self, video_name, frame_index, projection):
-        """同一クリック点の重複登録を避けるためのキーを返す。"""
+        """同一Markingの重複登録を避けるためのキーを返す。"""
         target_id = projection.get("id")
         if target_id is None:
             target_id = projection.get("order")
@@ -4077,11 +4129,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             except (TypeError, ValueError):
                 pass
 
-        point = projection.get("point")
-        lon = round(float(point.x()), 8) if point is not None else 0.0
-        lat = round(float(point.y()), 8) if point is not None else 0.0
         yaw = round(float(projection.get("target_yaw_to_camera_heading") or 0.0), 3)
-        return (str(video_name), int(frame_index), yaw, lon, lat)
+        pitch = round(float(projection.get("target_pitch_deg") or 0.0), 3)
+        return (str(video_name), int(frame_index), yaw, pitch)
 
     def registeredViewerTargetKeys(self, layer):
         """既存レイヤ内容から登録済みキー集合を復元する。"""
@@ -4106,9 +4156,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return keys
 
     def storeViewerTargetProjections(self, state, source_lat, source_lon, target_projections):
-        """360クリック投影点を緯度経度geometryと属性として自前レイヤへ保存する。"""
+        """360 Markingを地図geometryなしの視点ブックマークとして保存する。"""
         def is_user_click_projection(projection):
-            """候補表示由来ではなく、ユーザが明示保存したクリック点だけを保存対象にする。"""
+            """候補表示由来ではなく、ユーザが明示保存したMarkingだけを保存対象にする。"""
             target_source = str(projection.get("target_source") or "").strip().lower()
             if target_source and target_source not in ("viewer_marking", "viewer_click", "manual_click", "user_click"):
                 return False
@@ -4138,16 +4188,29 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         now_text = datetime.now().astimezone().isoformat(timespec="seconds")
 
         for projection in storable_projections:
-            point = projection.get("point")
-            if point is None:
-                continue
             key = self.viewerTargetKey(video_name, frame_index, projection)
             if key in existing_keys:
                 continue
             target_id = projection.get("id")
             target_order = projection.get("order", target_id)
+            state_yaw = _parse_float(state.get("yaw_to_camera_heading")) or 0.0
+            target_yaw = _parse_float(projection.get("target_yaw_to_camera_heading"))
+            yaw_delta = _parse_float(projection.get("yaw_delta_deg"))
+            if target_yaw is None and yaw_delta is not None:
+                target_yaw = (state_yaw + yaw_delta) % 360.0
+            view_yaw = _parse_float(projection.get("view_yaw_to_camera_heading"))
+            if view_yaw is None:
+                view_yaw = state_yaw
+            if yaw_delta is None and target_yaw is not None:
+                yaw_delta = self.signedAngleDelta(view_yaw, target_yaw)
+            view_pitch = _parse_float(projection.get("view_pitch"))
+            if view_pitch is None:
+                view_pitch = _parse_float(state.get("pitch"))
+            pitch_delta = _parse_float(projection.get("pitch_delta_deg"))
+            target_pitch = _parse_float(projection.get("target_pitch_deg"))
+            if target_pitch is None and view_pitch is not None and pitch_delta is not None:
+                target_pitch = max(-90.0, min(90.0, view_pitch + pitch_delta))
             feat = QgsFeature(layer.fields())
-            feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(point.x(), point.y())))
             values = {
                 "video": str(video_name),
                 "frame": int(frame_index),
@@ -4155,21 +4218,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "target_order": int(target_order) if target_order is not None else None,
                 "x_ratio": float(projection.get("x_ratio")) if projection.get("x_ratio") is not None else None,
                 "y_ratio": float(projection.get("y_ratio")) if projection.get("y_ratio") is not None else None,
-                "latitude": float(point.y()),
-                "longitude": float(point.x()),
-                "distance_m": float(projection.get("distance_m")) if projection.get("distance_m") is not None else None,
-                "forward_m": float(projection.get("forward_distance_m")) if projection.get("forward_distance_m") is not None else None,
-                "bearing_deg": float(projection.get("bearing")) if projection.get("bearing") is not None else None,
-                "yaw_delta": float(projection.get("yaw_delta_deg")) if projection.get("yaw_delta_deg") is not None else None,
-                "target_yaw": float(projection.get("target_yaw_to_camera_heading")) if projection.get("target_yaw_to_camera_heading") is not None else None,
-                "target_pitch": float(projection.get("target_pitch_deg")) if projection.get("target_pitch_deg") is not None else None,
-                "view_yaw": float(projection.get("view_yaw_to_camera_heading")) if projection.get("view_yaw_to_camera_heading") is not None else None,
-                "view_pitch": float(projection.get("view_pitch")) if projection.get("view_pitch") is not None else None,
+                "yaw_delta": float(yaw_delta) if yaw_delta is not None else None,
+                "target_yaw": float(target_yaw) if target_yaw is not None else None,
+                "target_pitch": float(target_pitch) if target_pitch is not None else None,
+                "view_yaw": float(view_yaw) if view_yaw is not None else None,
+                "view_pitch": float(view_pitch) if view_pitch is not None else None,
                 "view_zoom": float(projection.get("view_zoom")) if projection.get("view_zoom") is not None else None,
-                "source_lat": float(source_lat),
-                "source_lon": float(source_lon),
-                "projection": str(projection.get("projection") or "ground_plane"),
-                "quality": str(projection.get("quality") or ""),
                 "created_at": now_text,
             }
             feat.setAttributes([values.get(field.name()) for field in layer.fields()])

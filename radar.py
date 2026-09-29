@@ -133,22 +133,13 @@ class RadarMixin:
             print(f"Viewer radar update failed: {e}")
 
     def storeViewerTargetsFromSessionState(self, state, frame_index):
-        """viewer_session.jsonの手動クリック点を、レーダ描画とは独立してレイヤへ保存する。"""
-        if not self.viewerTargetPayloads(state):
-            return
-        lat, lon, _feature = self.framePosition(frame_index)
-        if lat is None or lon is None:
-            self.reportViewerTargetStoreStatus(f"skipped: no frame position for frame {frame_index}", warning=True)
-            return
-        heading, _trajectory_radius_m = self.radarHeadingAndRadius(frame_index)
-        state = self.persistViewerBearingOffsetForState(heading, state)
-        target_projections = self.viewerTargetProjections(lat, lon, heading, state)
-        if not target_projections:
-            self.reportViewerTargetStoreStatus(f"skipped: no projection for frame {frame_index}", warning=True)
+        """viewer_session.jsonの手動Markingを、地図投影せず視点情報として保存する。"""
+        target_payloads = self.viewerTargetPayloads(state)
+        if not target_payloads:
             return
         store_targets = getattr(self, "storeViewerTargetProjections", None)
         if callable(store_targets):
-            store_targets(state, lat, lon, target_projections)
+            store_targets(state, None, None, target_payloads)
 
     def reportViewerTargetStoreStatus(self, message, warning=False):
         """クリック点保存の診断を同じ内容で連発しないように表示する。"""
@@ -929,9 +920,6 @@ class RadarMixin:
             perpendicular_half_m
         )
         target_projections = self.viewerTargetProjections(lat, lon, heading, state)
-        store_targets = getattr(self, "storeViewerTargetProjections", None)
-        if callable(store_targets):
-            store_targets(state, lat, lon, target_projections)
 
         self.ensureRadarBands()
         self.setRadarMultiLine(self.radar_grid_band, grid_lines)

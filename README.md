@@ -17,7 +17,7 @@ For installation, usage, operation reports, bug reports, and discussions, please
 
 Reports in English are welcome, but responses may be written in Japanese and/or machine-translated.
 
-It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Double-clicking a target in the viewer stores a Marking with the frame, viewing direction, zoom, and a provisional map projection. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
+It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Double-clicking a target in the viewer stores a Marking with the frame, viewing direction, and zoom for restoring that viewer context. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
 
 Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, Marking layers, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
 
@@ -65,11 +65,11 @@ The Photo Sphere Viewer path reuses the same local HTTP API, image cache, and `v
 
 ## Marking
 
-Marking is a lightweight bookmark in 360 space. Double-click a point in the viewer to store the video name, `frame`, clicked direction, viewer center direction, `zoom`, and provisional map projection.
+Marking is a lightweight bookmark in 360 space. Double-click a point in the viewer to store the video name, `frame`, clicked direction, viewer center direction, and `zoom`.
 
 Saved Markings can be reviewed with the `Marking` navigation mode. Geo360 View restores the saved frame, view direction, and zoom, so the same target can be checked again later. Marking markers are also drawn into snapshots, allowing the GPKG Marking record and evidence image to be related by `frame`.
 
-Markings are review bookmarks, not deliverable POIs or survey-grade results. Classification, formal attributes, quality control, and final POI production are outside the scope of this public viewer.
+Markings are review bookmarks, not deliverable POIs or survey-grade results. New Markings are saved as non-geometry records for viewer restoration, not as asserted object locations. Classification, formal attributes, quality control, and final POI production are outside the scope of this public viewer.
 
 ## Scope
 
