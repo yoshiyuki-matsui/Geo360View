@@ -4,9 +4,9 @@ Last updated: 2026-09-11
 
 ## Purpose
 
-Geo360 View is a lightweight QGIS plugin for aligning MP4 videos with GPX tracks and viewing the corresponding frames from camera points on a map.
+Geo360 View is a lightweight QGIS plugin for aligning MP4 videos with GPX tracks, viewing corresponding frames from camera points on a map, and saving 360-space Markings for later review.
 
-The public scope is limited to video/position synchronization, camera-point layer creation, optional reference point matching, and visual review in a browser viewer. Automatic object detection, POI generation, semantic clustering, and model-review workflows are intentionally outside this repository.
+The public scope is limited to video/position synchronization, camera-point layer creation, optional reference point matching, browser-based visual review, Markings, and evidence snapshots. Automatic object detection, formal POI generation, semantic clustering, and model-review workflows are intentionally outside this repository.
 
 ## Architecture
 
@@ -52,6 +52,7 @@ The QGIS plugin and browser viewer are loosely coupled. QGIS starts a local HTTP
 5. QGIS creates the `Video GPX Points` layer.
 6. Optional reference point matching writes navigation CSV output.
 7. A camera-point click or navigation command opens the corresponding frame in the browser viewer.
+8. A viewer double-click saves a Marking that can restore the frame, view direction, and zoom later.
 
 ## Viewer Engines
 
@@ -80,8 +81,8 @@ Geo360 View does not include:
 
 - Automatic object detection.
 - YOLO/RF-DETR model execution.
-- POI candidate generation, aggregation, or management.
+- Formal POI candidate generation, aggregation, or management.
 - Semantic-class candidate layer review.
 - Model comparison and detection review workflows.
 
-Advanced workflows such as automatic object detection, POI generation, multi-frame ray intersection, clustering, and report generation are handled by GPXVideoProcessor and related commercial services.
+Markings are review bookmarks, not deliverable POIs or survey-grade results. Advanced workflows such as automatic object detection, formal POI generation, multi-frame ray intersection, clustering, quality control, and report generation are handled by GPXVideoProcessor and related commercial services.

@@ -81,9 +81,12 @@ from .viewer_controller import ViewerControllerMixin
 QAction = getattr(QtWidgets, "QAction", None) or QtGui.QAction
 
 GPKG_FRAME_LAYER_NAME = "video_gpx_points"
-GPKG_TARGET_LAYER_NAME = "click_targets_360"
+GPKG_MARKING_LAYER_NAME = "geo360_markings"
+GPKG_LEGACY_TARGET_LAYER_NAME = "click_targets_360"
+GPKG_TARGET_LAYER_NAME = GPKG_MARKING_LAYER_NAME
 GPKG_CANDIDATE_LAYER_NAME = "poi_candidates_360"
 GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
+MARKING_LAYER_DISPLAY_NAME = "Geo360 Markings"
 VIEWER_PROJECTION_SPHERE = "sphere"
 VIEWER_PROJECTION_FLAT = "flat"
 VIEWER_PROJECTION_VALUES = (VIEWER_PROJECTION_SPHERE, VIEWER_PROJECTION_FLAT)
@@ -341,6 +344,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return None
         return config
 
+    def isMarkingNavigationMode(self, mode):
+        """旧Pickedを含め、Marking系ナビゲーションモードかを返す。"""
+        return str(mode or "").strip().lower() in ("marking", "picked")
+
     def collectRadarConfig(self, show_errors=True):
         """レーダ距離校正入力をRadarConfigへ束ねる。"""
         config, errors = validate_radar_config({
@@ -532,6 +539,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.nav_mode.addItem("Frame step", "frame")
         self.nav_mode.addItem("Layer point", "layer")
         self.nav_mode.addItem("Reference matched", "kp")
+        self.nav_mode.addItem("Marking", "marking")
         self.nav_mode.currentIndexChanged.connect(self.onNavigationModeChanged)
         self.applyHelp("ui.help.nav_mode", self.nav_label, self.nav_mode)
         set_fixed_width(self.nav_mode, 146)
@@ -1172,7 +1180,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except Exception:
             nav_mode = None
         selected_picked_target = False
-        if nav_mode == "picked":
+        if self.isMarkingNavigationMode(nav_mode):
             selected_picked_target = self.selectViewerTargetFeature(frame_num)
         if feature is not None and self.frame_click_tool is not None:
             try:
@@ -2264,12 +2272,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return False
         job_metadata = self.readJobMetadataFromGpkg(gpkg_path)
         frame_source = self.gpkgLayer(gpkg_path, GPKG_FRAME_LAYER_NAME, "Video GPX Points")
-        target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, "360 Click Targets")
+        target_source = self.gpkgLayer(gpkg_path, GPKG_TARGET_LAYER_NAME, MARKING_LAYER_DISPLAY_NAME)
+        if target_source is None:
+            target_source = self.gpkgLayer(gpkg_path, GPKG_LEGACY_TARGET_LAYER_NAME, MARKING_LAYER_DISPLAY_NAME)
 
         candidate_sources = self.gpkgCandidateLayers(gpkg_path)
 
         frame_layer = self.cloneLayerToMemory(frame_source, "Video GPX Points") if frame_source is not None else None
-        target_layer = self.cloneLayerToMemory(target_source, "360 Click Targets") if target_source is not None else None
+        target_layer = self.cloneLayerToMemory(target_source, MARKING_LAYER_DISPLAY_NAME) if target_source is not None else None
         candidate_layers = [
             self.cloneLayerToMemory(source_layer, source_layer.name())
             for source_layer in candidate_sources
@@ -2343,7 +2353,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             else detection_frames[0] if detection_frames else self.firstFrameInLayer(frame_layer)
         )
         self.setCurrentFrame(first_frame)
-        self.setNavigationModeByData("picked" if picked_frames else "detect" if detection_frames else "layer")
+        self.setNavigationModeByData("marking" if picked_frames else "detect" if detection_frames else "layer")
         if "viewer_camera_height_m" not in job_metadata or "viewer_hud_height_scale" not in job_metadata:
             self.loadViewerSessionCameraHeight(force=True)
         self.writeViewerRuntimeConfig(show_error=False)
@@ -2438,7 +2448,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if layer is not None:
             return layer
 
-        layer = QgsVectorLayer("Point?crs=EPSG:4326", "360 Click Targets", "memory")
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", MARKING_LAYER_DISPLAY_NAME, "memory")
         pr = layer.dataProvider()
         pr.addAttributes([
             QgsField(field_name, field_type)
@@ -2481,7 +2491,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return str(source).split("|", 1)[0]
 
     def isCurrentGpkgTargetLayer(self, layer):
-        """現在ジョブのtmp.gpkg内click_targets_360レイヤかを判定する。"""
+        """現在ジョブのtmp.gpkg内Markingレイヤかを判定する。"""
         if not self.isViewerTargetLayer(layer) or self.isCandidateLayer(layer):
             return False
         source = ""
@@ -2489,12 +2499,17 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             source = str(layer.source())
         except Exception:
             source = ""
-        if GPKG_TARGET_LAYER_NAME not in source and GPKG_TARGET_LAYER_NAME not in str(layer.name()):
+        layer_text = f"{source}\n{layer.name()}".lower()
+        if (
+            GPKG_TARGET_LAYER_NAME.lower() not in layer_text
+            and GPKG_LEGACY_TARGET_LAYER_NAME.lower() not in layer_text
+            and MARKING_LAYER_DISPLAY_NAME.lower() not in layer_text
+        ):
             return False
         return self.normalizedPath(self.layerSourcePath(layer)) == self.normalizedPath(self.generatedLayerBackupPath())
 
     def isNamedViewerTargetLayer(self, layer):
-        """表示名/source上もclick_targets_360相当と判断できるか確認する。"""
+        """表示名/source上もMarking相当と判断できるか確認する。"""
         if not self.isViewerTargetLayer(layer) or self.isCandidateLayer(layer):
             return False
         try:
@@ -2506,7 +2521,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         except Exception:
             source = ""
         text = f"{name}\n{source}".lower()
-        return "360 click targets" in text or GPKG_TARGET_LAYER_NAME.lower() in text
+        return (
+            MARKING_LAYER_DISPLAY_NAME.lower() in text
+            or "360 click targets" in text
+            or GPKG_TARGET_LAYER_NAME.lower() in text
+            or GPKG_LEGACY_TARGET_LAYER_NAME.lower() in text
+        )
 
     def layerHasVideoFrameTarget(self, layer, video_name, frame_num=None):
         """指定動画/任意フレームのクリック点を持つレイヤか確認する。"""
@@ -2695,7 +2715,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         mode = str(mode or "")
         if mode in ("frame", "layer", "kp"):
             return self.activeFrameLayer()
-        if mode == "picked":
+        if self.isMarkingNavigationMode(mode):
             layer = self.viewerTargetLayer()
             if layer is not None:
                 return layer
@@ -3984,7 +4004,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if not isinstance(target, dict):
                 return False
             target_source = str(target.get("target_source") or "").strip().lower()
-            if target_source in ("viewer_click", "manual_click", "user_click"):
+            if target_source in ("viewer_marking", "viewer_click", "manual_click", "user_click"):
                 return True
             return (
                 target.get("candidate_id") in (None, "")
@@ -4090,7 +4110,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         def is_user_click_projection(projection):
             """候補表示由来ではなく、ユーザが明示保存したクリック点だけを保存対象にする。"""
             target_source = str(projection.get("target_source") or "").strip().lower()
-            if target_source and target_source not in ("viewer_click", "manual_click", "user_click"):
+            if target_source and target_source not in ("viewer_marking", "viewer_click", "manual_click", "user_click"):
                 return False
             if projection.get("candidate_id") not in (None, ""):
                 return False
@@ -4171,7 +4191,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.saved_viewer_target_keys = existing_keys
         notifier = getattr(self, "reportViewerTargetStoreStatus", None)
         if callable(notifier):
-            notifier(f"saved {len(added_features)} point(s) to 360 Click Targets")
+            notifier(f"saved {len(added_features)} marking(s) to Geo360 Markings")
 
     def matchedFrameCsvPaths(self):
         """参照点マッチ済みフレームCSVの探索候補パスを返す。"""
@@ -4329,7 +4349,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             target = frames[0] if direction < 0 else frames[-1]
             return target, self.findFeatureByFrame(target)
 
-        if mode == "picked":
+        if self.isMarkingNavigationMode(mode):
             frames = self.pickedFrames()
             if not frames:
                 self.notifyWarning("no_picked_frame", direction=edge_name)
@@ -4384,7 +4404,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 return None, None
             return target, self.findFeatureByFrame(target)
 
-        if mode == "picked":
+        if self.isMarkingNavigationMode(mode):
             if fast:
                 frames = self.pickedFrames()
                 if not frames:

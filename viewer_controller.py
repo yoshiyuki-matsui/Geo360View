@@ -521,7 +521,13 @@ class ViewerControllerMixin:
                 targets_payload = target_payload_getter(frame_num)
             except Exception as e:
                 self.viewerDebugPrint(f"360Viewer target restore payload failed: {e}")
-        if nav_mode in ("detect", "picked"):
+        is_marking_mode = False
+        try:
+            is_marking_mode = bool(self.isMarkingNavigationMode(nav_mode))
+        except Exception:
+            is_marking_mode = nav_mode == "picked"
+
+        if nav_mode == "detect" or is_marking_mode:
             # Explicitly clear stale targets when the active review mode has no
             # target on this frame. Otherwise a previous click/POI can flash.
             payload["targets"] = targets_payload
@@ -556,7 +562,7 @@ class ViewerControllerMixin:
                 if viewer_front_offset is not None:
                     payload["viewer_front_offset_deg"] = viewer_front_offset
 
-        if nav_mode == "picked":
+        if is_marking_mode:
             view_getter = getattr(self, "viewerViewForPickedFrame", None)
             if callable(view_getter):
                 try:

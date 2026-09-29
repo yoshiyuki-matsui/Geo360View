@@ -2,7 +2,7 @@
 
 [Japanese README](README_ja.md)
 
-Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map.
+Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map, with viewer-side Markings that can restore bookmarked directions later.
 
 ## Japanese-first support
 
@@ -17,9 +17,9 @@ For installation, usage, operation reports, bug reports, and discussions, please
 
 Reports in English are welcome, but responses may be written in Japanese and/or machine-translated.
 
-It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
+It aligns an MP4 video with a GPX track, creates frame-by-frame camera points, and opens selected frames in a browser-based viewer. Double-clicking a target in the viewer stores a Marking with the frame, viewing direction, zoom, and a provisional map projection. Optional reference point CSV data can be matched to camera points, so known KP markers, utility poles, bridges, facilities, or inspection points can be reviewed directly against the recorded scene.
 
-Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
+Geo360 View is more than a playback viewer. It produces reusable intermediate outputs such as camera-point GeoPackages, Marking layers, matched reference CSV files, cached frame images, and GPS-tagged snapshots.
 
 
 ![Geo360 View Geo360View](docs/images/Geo360Viewe.png)
@@ -46,6 +46,8 @@ Geo360 View is more than a playback viewer. It produces reusable intermediate ou
 - Display 360/equirectangular frames and normal-FOV frames.
 - Switch frames without exporting the whole video to images.
 - Preserve viewer yaw, pitch, and zoom while navigating.
+- Add Markings in 360 space and later restore the saved frame, view direction, and zoom.
+- Store Markings as a `geo360_markings` GeoPackage layer that can be related to snapshots and camera points by `frame`.
 - Show map-side and viewer-side HUD guides for orientation and distance cues.
 - Show matched reference attributes as an overlay in the viewer.
 - Save GPS-tagged snapshots with optional HUD/reference overlays.
@@ -61,9 +63,17 @@ Geo360 View currently supports two viewer paths:
 
 The Photo Sphere Viewer path reuses the same local HTTP API, image cache, and `viewer_session.json` state as the krpano path. This keeps the QGIS side independent from the browser viewer implementation.
 
+## Marking
+
+Marking is a lightweight bookmark in 360 space. Double-click a point in the viewer to store the video name, `frame`, clicked direction, viewer center direction, `zoom`, and provisional map projection.
+
+Saved Markings can be reviewed with the `Marking` navigation mode. Geo360 View restores the saved frame, view direction, and zoom, so the same target can be checked again later. Marking markers are also drawn into snapshots, allowing the GPKG Marking record and evidence image to be related by `frame`.
+
+Markings are review bookmarks, not deliverable POIs or survey-grade results. Classification, formal attributes, quality control, and final POI production are outside the scope of this public viewer.
+
 ## Scope
 
-This public-oriented plugin is limited to video/GPX synchronization and visual review. Automatic object detection, POI generation, semantic clustering, and model-review workflows are intentionally outside this repository.
+This public-oriented plugin is limited to video/GPX synchronization, visual review, Marking bookmarks, and evidence snapshots. Automatic object detection, POI generation, semantic clustering, formal POI management, and model-review workflows are intentionally outside this repository.
 
 ## Requirements
 
@@ -125,6 +135,7 @@ Geo360 View keeps the original video as the source of truth and writes practical
 - Frame-position CSV files.
 - Reference-matched CSV files.
 - Navigation JSON for the local viewer.
+- `geo360_markings` Marking layer.
 - On-demand viewer cache images.
 - GPS EXIF snapshots with optional HUD and reference overlays.
 

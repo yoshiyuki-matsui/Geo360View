@@ -107,6 +107,19 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.mode, "detect")
 
+    def test_navigation_config_accepts_marking_mode(self):
+        """保存済みMarking確認用のナビゲーションモードを許可する。"""
+        result, errors = config.validate_navigation_config({
+            "mode": "marking",
+            "step": 1,
+            "fast_step": 30,
+            "follow": True,
+        })
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mode, "marking")
+
     def test_radar_config_rejects_unusable_calibration(self):
         """FOV/距離/offsetの破綻値をレーダ描画へ渡さない。"""
         result, errors = config.validate_radar_config({

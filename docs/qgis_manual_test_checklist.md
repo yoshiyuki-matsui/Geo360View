@@ -97,7 +97,7 @@
 - [ ] `Esc` でクリックモードを解除できる。
 - [ ] 数値入力やコンボボックス編集中は、矢印キーが入力操作として扱われる。
 - [ ] 既存の地物登録プラグインがMapToolを持っている状態でも、操作パネルにフォーカスがあればナビゲーションできる。
-- [ ] `Nav` が `Frame step` / `Layer point` / `KP matched CSV` / `Detection check` の各モードで期待通り移動する。
+- [ ] `Nav` が `Frame step` / `Layer point` / `KP matched CSV` / `Marking` / `Detection check` の各モードで期待通り移動する。
 - [ ] `|<<` / `>>|` で、現在Nav対象の先頭/最後尾へ移動できる。
 - [ ] `KP matched CSV` がない状態で `KP matched CSV` モードを使うと、警告が出て `Frame step` へ自動的に戻る。
 - [ ] GPKG内に `poi_candidates_360` がある場合、`Detection check` がその候補フレームだけを辿る。
@@ -135,28 +135,31 @@
 - [ ] WEBビューアHUDの距離目安とQGIS側レーダの前提が一致する。
 - [ ] フレーム移動後もyaw/pitch/zoomが維持され、レーダ向きも継承される。
 
-## 10. 360クリック投影
+## 10. Marking
 
-- [ ] WEBビューア上でクリックすると、QGIS地図上に緑の投影点が表示される。
-- [ ] WEBビューア上で複数箇所をダブルクリックすると、クリック順の複数点がQGIS地図上に緑の投影点として表示される。
+- [ ] WEBビューア上で気になる対象をダブルクリックすると、Markingが保存される。
+- [ ] WEBビューア上で複数箇所をダブルクリックすると、クリック順の複数MarkingがQGIS地図上に緑の仮投影点として表示される。
 - [ ] ダブルクリック後にWEBビューアのyaw/pitch/zoomを変更しても、WEB上のマーカーが同じ360球面位置に追従する。
-- [ ] `360 Click Targets` レイヤが作成され、投影点の緯度経度と `video` / `frame` / `target_id` が属性テーブルへ保存される。
+- [ ] `Geo360 Markings` レイヤが作成され、投影点の緯度経度と `video` / `frame` / `target_id` が属性テーブルへ保存される。
 - [ ] 視点移動で `viewer_session.json` が更新されても、同じ `video` / `frame` / `target_id` のレコードが重複追加されない。
-- [ ] クリック点を置いたフレームを再表示すると、保存済み点がWEBビューア上に復元表示される。
-- [ ] 別動画由来の `click_targets_360` 相当レイヤを同時に開いても、現在MP4と一致しない点は復元されない。
+- [ ] Markingを置いたフレームを再表示すると、保存済みMarkingがWEBビューア上に復元表示される。
+- [ ] 別動画由来の `geo360_markings` / `click_targets_360` 相当レイヤを同時に開いても、現在MP4と一致しない点は復元されない。
 - [ ] 投影点の方向がビューア内のクリック方向と整合する。
 - [ ] 投影点の距離が `CalFOV` / `CalDist` / `Scale` と連動する。
 - [ ] 真横に近いクリックなど角度が大きい場合でもQGISが落ちない。
 - [ ] RubberBandの緑点・緑線は一時表示であり、`終了` 後に残らない。
-- [ ] `360 Click Targets` は生成レイヤとして `tmp.gpkg` に保存され、`click_targets_360` レイヤとして再読込できる。
+- [ ] `Geo360 Markings` は生成レイヤとして `tmp.gpkg` に保存され、`geo360_markings` レイヤとして再読込できる。
+- [ ] 旧GPKGの `click_targets_360` は互換レイヤとして再読込できる。
 - [ ] GPKG読込で `video_gpx_points` が `Video GPX Points` メモリレイヤへ読み替わり、ナビゲーション対象になる。
-- [ ] GPKG読込で `click_targets_360` が `360 Click Targets` メモリレイヤへ読み替わり、追加クリック点と同じレイヤで扱われる。
+- [ ] GPKG読込で `geo360_markings` が `Geo360 Markings` メモリレイヤへ読み替わり、追加Markingと同じレイヤで扱われる。
 - [ ] GPKG読込で、保存時のGPX/KP CSV由来パス、`Shift`、`KP tol`、`Range`、`Scale`、`Offset`、`CalFOV`、`CalDist`、`CamH` がパネルへ復元される。
 - [ ] GPKG読込で、保存時のMP4パスはファイル実体が存在する場合だけ動画パスとして復元される。
-- [ ] GPKG読込時、クリック点がある場合はナビゲーションモードが `Picked point` になり、クリック点があるフレームだけを前後移動できる。
-- [ ] `Picked point` 前後移動では、現在のユーザ視点ではなく保存済みの `view_yaw` / `view_pitch` / `view_zoom` が再現される。
+- [ ] GPKG読込時、Markingがある場合はナビゲーションモードが `Marking` になり、Markingがあるフレームだけを前後移動できる。
+- [ ] `Marking` 前後移動では、現在のユーザ視点ではなく保存済みの `view_yaw` / `view_pitch` / `view_zoom` が再現される。
+- [ ] Markingが表示された状態でスナップショットを保存すると、Markingマーカーが画像内に描かれる。
+- [ ] スナップショット画像と `Geo360 Markings` レコードを `frame` で対応付けできる。
 - [ ] GPKG読込後、GPX/MP4/KP/Outputの再選択、`Shift`、`KP tol`、`全件処理`、別GPKG読込が無効化される。
-- [ ] GPKG読込後に追加したクリック点が、`終了` 後に同じ `tmp.gpkg` の `click_targets_360` へ保存される。
+- [ ] GPKG読込後に追加したMarkingが、`終了` 後に同じ `tmp.gpkg` の `geo360_markings` へ保存される。
 
 ## 11. 他プラグインとの共存
 
@@ -190,7 +193,7 @@
 - [ ] QGISテーブル上で候補/クラスタfeatureを削除して `終了` した場合、同じ `poi_candidates...` / `poi_clusters...` レイヤ名へ変更が書き戻る。
 - [ ] 候補/クラスタレイヤの属性変更やジオメトリ変更後に `終了` した場合、変更済みレイヤだけが保存対象になる。
 - [ ] 保存後、生成レイヤがQGISプロジェクトから削除される。
-- [ ] `tmp.gpkg` 内の撮影点レイヤ名が `video_gpx_points`、クリック点レイヤ名が `click_targets_360` になっている。
+- [ ] `tmp.gpkg` 内の撮影点レイヤ名が `video_gpx_points`、Markingレイヤ名が `geo360_markings` になっている。
 - [ ] `tmp.gpkg` を再読込し、`frame` など主要属性が保持されている。
 - [ ] `viewer_cache/` は一時キャッシュ、`images/` は成果品予定パスとして混同しない。
 - [ ] 表示異常時に、`images/` への抽出、`viewer_cache/` 生成、WEBビューア表示のどこで止まっているかを切り分けられる。

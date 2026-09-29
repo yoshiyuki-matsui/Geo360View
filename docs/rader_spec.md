@@ -218,7 +218,7 @@ FOVが90度の場合、`tan(45deg)=1` なので、視野幅10mを基準にする
 
 ただし、Detection Checkで表示するPOIにはGPKG由来の `bearing_deg` と `target_yaw` があるため、
 QGIS側はそこから元MP4正面の補正量を `viewer_front_offset_deg` として復元できます。
-`viewer_front_offset_deg` がsessionにある場合、レーダ表示とPickedPoint投影ではこの値を
+`viewer_front_offset_deg` がsessionにある場合、レーダ表示とMarking投影ではこの値を
 UIの `Offset` より優先します。UIの `Offset` は補正情報が無い通常ビューや手動確認の
 フォールバックです。
 
@@ -435,21 +435,21 @@ HUD表示はWEBビューアの `HUD` ボタンで切り替えます。`HUD` OFF�
 
 線の色、太さ、破線間隔は成果物データではなく見た目の調整値です。運用中の視認性調整は `360viewer/static/viewer.css` の `.ground-ring-grid`, `.ground-ring-inner`, `.ground-ring-outer` で行います。
 
-## 360クリック点の平面投影
+## Markingの平面投影
 
-WEBビューア上のクリック点を、撮影中心から見た地図平面上の仮想点として描画できます。
+WEBビューア上でダブルクリックしたMarkingを、撮影中心から見た地図平面上の仮想点として描画できます。Markingは360空間上のしおりであり、最終的なPOIや測量成果ではありません。
 
-クリック点は、WEBビューア側でHUD範囲円と同じ地面投影から推定した `ground_distance_m` を優先して地図平面へ投影します。これは単眼360画像から任意対象物までの実距離を自動復元するものではなく、地表面上の点、たとえばコーン接地点、標識柱の根元、路面標示、縁石、マンホールなどをクリックする前提の補助投影です。`ground_distance_m` が無い古いセッションや、推定に失敗したクリックだけ、保存した球面pitchと `CamH * HudH` の実効カメラ高から地面平面との交点を求めます。pitchが水平線以上、または地面交差に使えない場合だけ、従来の中心距離平面投影へフォールバックします。
+Markingは、WEBビューア側でHUD範囲円と同じ地面投影から推定した `ground_distance_m` を優先して地図平面へ投影します。これは単眼360画像から任意対象物までの実距離を自動復元するものではなく、地表面上の点、たとえばコーン接地点、標識柱の根元、路面標示、縁石、マンホールなどをクリックする前提の補助投影です。`ground_distance_m` が無い古いセッションや、推定に失敗したクリックだけ、保存した球面pitchと `CamH * HudH` の実効カメラ高から地面平面との交点を求めます。pitchが水平線以上、または地面交差に使えない場合だけ、従来の中心距離平面投影へフォールバックします。
 
-単クリックは従来互換の単一 `target` を更新します。ダブルクリックは複数メモ点として `targets` に追加し、QGIS側は `targets` がある場合に全点を緑の仮点・仮線として描画します。`targets` がない場合だけ、従来の単一 `target` を描画します。WEBビューア上のマーカーは保存時の画面座標ではなく、保存した絶対yaw/pitchを現在視点へ再投影して表示します。
+単クリックは従来互換の単一 `target` を更新します。ダブルクリックは複数Markingとして `targets` に追加し、QGIS側は `targets` がある場合に全点を緑の仮点・仮線として描画します。`targets` がない場合だけ、従来の単一 `target` を描画します。WEBビューア上のマーカーは保存時の画面座標ではなく、保存した絶対yaw/pitchを現在視点へ再投影して表示します。
 
-クリック時に保存する主な値:
+Marking時に保存する主な値:
 
-- `target_yaw_to_camera_heading`: 動画正面からクリック点までの絶対yaw
-- `target_pitch_deg`: クリック点の360球面上の絶対pitch
-- `view_yaw_to_camera_heading`: クリック時のビューア中心yaw
-- `yaw_delta_deg`: クリック点の中心視線からの相対yaw
-- `view_zoom`: クリック時のzoom
+- `target_yaw_to_camera_heading`: 動画正面からMarking点までの絶対yaw
+- `target_pitch_deg`: Marking点の360球面上の絶対pitch
+- `view_yaw_to_camera_heading`: Marking時のビューア中心yaw
+- `yaw_delta_deg`: Marking点の中心視線からの相対yaw
+- `view_zoom`: Marking時のzoom
 - `ground_distance_m`: HUD範囲円と同じ投影から推定した撮影点からの水平距離
 
 QGIS側では、通常はWEBビューアが送った `ground_distance_m` をそのまま撮影点からの水平距離として使います。
@@ -474,7 +474,7 @@ target_distance_m = forward_distance_m / cos(yaw_delta_deg)
 ```
 
 地図上の方位は、移動軌跡heading、sessionの `viewer_front_offset_deg`、
-クリック点絶対yawから求めます。`viewer_front_offset_deg` が無い場合だけUIの `Offset` を使います。
+Marking点絶対yawから求めます。`viewer_front_offset_deg` が無い場合だけUIの `Offset` を使います。
 
 ```text
 target_bearing = (heading + viewer_front_offset_deg + target_yaw_to_camera_heading) % 360
@@ -482,15 +482,15 @@ target_bearing = (heading + viewer_front_offset_deg + target_yaw_to_camera_headi
 
 最後に、撮影点から `target_bearing` 方向へ `target_distance_m` だけ方位距離投影し、QGIS上に一時RubberBandとして線と点を描きます。複数点の場合は、それぞれのクリック点について同じ計算を行い、1つのMultiLine/MultiPoint RubberBandとしてまとめて描画します。
 
-クリック点には距離帯による運用品質を付与します。5m以内は `trusted`、5m超から10m以内は `usable`、10m超は `far` です。オンザフライ表示では `trusted` を緑、`usable` を黄、`far` を赤系のRubberBandへ分けます。保存レイヤにも `quality` 属性として残します。
+Markingには距離帯による運用品質を付与します。5m以内は `trusted`、5m超から10m以内は `usable`、10m超は `far` です。オンザフライ表示では `trusted` を緑、`usable` を黄、`far` を赤系のRubberBandへ分けます。保存レイヤにも `quality` 属性として残します。
 
-### クリック投影点の保存レイヤ
+### Markingの保存レイヤ
 
-QGIS側は、WEBビューアの `targets` を読んで地図平面へ投影できた点を、`360 Click Targets` という自前のメモリポイントレイヤへ追記します。このレイヤは「この辺にこれがあった」という作業メモの保存先であり、最終的な地物台帳レイヤではありません。単クリックの `target` は互換用の一時表示として扱い、保存対象にはしません。
+QGIS側は、WEBビューアの `targets` を読んで地図平面へ投影できた点を、`Geo360 Markings` という自前のメモリポイントレイヤへ追記します。このレイヤは「この辺をあとで見直す」というしおりの保存先であり、最終的な地物台帳レイヤではありません。単クリックの `target` は互換用の一時表示として扱い、保存対象にはしません。
 
-現在の `viewer_session.json` にあるダブルクリック点を、QGIS側ポーリング時に地図平面へ投影し、緯度経度geometryと属性テーブルへ保存します。
+現在の `viewer_session.json` にあるダブルクリックMarkingを、QGIS側ポーリング時に地図平面へ投影し、緯度経度geometryと属性テーブルへ保存します。
 
-同一 `video` / `frame` / `target_id` の点は重複登録しません。視点移動によって `viewer_session.json` が更新された場合でも、既に登録済みのクリック点は増殖しない扱いです。
+同一 `video` / `frame` / `target_id` の点は重複登録しません。視点移動によって `viewer_session.json` が更新された場合でも、既に登録済みのMarkingは増殖しない扱いです。
 
 主な属性:
 
@@ -502,19 +502,19 @@ QGIS側は、WEBビューアの `targets` を読んで地図平面へ投影で�
 - `source_lat`, `source_lon`
 - `projection`, `quality`, `created_at`
 
-セッション終了時は、既存の生成メモリレイヤと同じく `tmp.gpkg` へ保存します。GeoPackage内では、撮影点レイヤを `video_gpx_points`、クリック点レイヤを `click_targets_360` という固定レイヤ名で保存します。`tmp.gpkg` は退避ファイル名であり、内部レイヤ名には使いません。
+セッション終了時は、既存の生成メモリレイヤと同じく `tmp.gpkg` へ保存します。GeoPackage内では、撮影点レイヤを `video_gpx_points`、Markingレイヤを `geo360_markings` という固定レイヤ名で保存します。旧バージョンの `click_targets_360` は読み込み互換として扱います。`tmp.gpkg` は退避ファイル名であり、内部レイヤ名には使いません。
 
-### クリック投影点の復元表示
+### Markingの復元表示
 
-QGIS側でフレームを表示する際、`360 Click Targets` または読み戻した `click_targets_360` 相当レイヤに同じ `video` / `frame` のレコードがあれば、保存済み属性から `targets` を再構成してWEBビューアへ渡します。WEBビューアのPrev/Nextだけでフレーム移動した場合も、QGIS側ポーリング時に現在sessionへ点が無ければ同じ復元処理で `viewer_session.json` へ補完します。
+QGIS側でフレームを表示する際、`Geo360 Markings`、読み戻した `geo360_markings`、または旧 `click_targets_360` 相当レイヤに同じ `video` / `frame` のレコードがあれば、保存済み属性から `targets` を再構成してWEBビューアへ渡します。WEBビューアのPrev/Nextだけでフレーム移動した場合も、QGIS側ポーリング時に現在sessionへ点が無ければ同じ復元処理で `viewer_session.json` へ補完します。
 
 復元参照先は、プロジェクト上の全レイヤをスキーマだけで無条件に拾うのではなく、以下に限定します。
 
-- 現在セッションで作成した自前メモリレイヤ `360 Click Targets`
-- 現在動画の出力フォルダにある `tmp.gpkg` の `click_targets_360`
-- レイヤ名またはsourceが `click_targets_360` 相当で、かつ `video` 属性が現在のMP4名と一致するレイヤ
+- 現在セッションで作成した自前メモリレイヤ `Geo360 Markings`
+- 現在動画の出力フォルダにある `tmp.gpkg` の `geo360_markings`
+- 旧互換として、レイヤ名またはsourceが `click_targets_360` 相当で、かつ `video` 属性が現在のMP4名と一致するレイヤ
 
-新規クリック点の書き込み先は自前メモリレイヤのみです。読み戻したGPKGレイヤへ直接追記しないことで、復元参照用レイヤと作業中の一時レイヤを混同しないようにします。
+新規Markingの書き込み先は自前メモリレイヤのみです。読み戻したGPKGレイヤへ直接追記しないことで、復元参照用レイヤと作業中の一時レイヤを混同しないようにします。
 
 復元に使う主な属性:
 
@@ -523,17 +523,18 @@ QGIS側でフレームを表示する際、`360 Click Targets` または読み�
 - `view_yaw`, `view_pitch`, `view_zoom`
 - `yaw_delta`, `projection`
 
-WEBビューア側は、保存時の画面座標ではなく `target_yaw` / `target_pitch` を現在の視点へ再投影してマーカーを表示します。この復元は「どの画像上のどの方向へ点を置いたか」を確認するための作業継続表示であり、厳密な画像計測結果の再現ではありません。
+WEBビューア側は、保存時の画面座標ではなく `target_yaw` / `target_pitch` を現在の視点へ再投影してマーカーを表示します。この復元は「どの画像上のどの方向へMarkingを置いたか」を確認するための作業継続表示であり、厳密な画像計測結果の再現ではありません。
 
 ### GPKGからの作業状態読込
 
-パネルのGPKG読込では、GeoPackage内の `video_gpx_points` と `click_targets_360` を直接編集せず、標準のメモリレイヤへコピーします。
+パネルのGPKG読込では、GeoPackage内の `video_gpx_points` と `geo360_markings` を直接編集せず、標準のメモリレイヤへコピーします。旧GPKGの `click_targets_360` も同じMarking互換レイヤとして読み込みます。
 
 - `video_gpx_points` -> `Video GPX Points`
-- `click_targets_360` -> `360 Click Targets`
+- `geo360_markings` -> `Geo360 Markings`
+- `click_targets_360` -> `Geo360 Markings` 旧互換
 
-読込後は、プラグイン内部のフレーム参照レイヤを読み込んだ `Video GPX Points` へ、クリック点保存レイヤを読み込んだ `360 Click Targets` へ差し替えます。
-作業中の追加クリック点もメモリレイヤへ追記し、終了時に `tmp.gpkg` の同じ内部レイヤ名へ保存します。
+読込後は、プラグイン内部のフレーム参照レイヤを読み込んだ `Video GPX Points` へ、Marking保存レイヤを読み込んだ `Geo360 Markings` へ差し替えます。
+作業中の追加Markingもメモリレイヤへ追記し、終了時に `tmp.gpkg` の `geo360_markings` へ保存します。
 GPKGから読み込んだレイヤは、閲覧だけなら再保存しません。
 feature追加、削除、属性変更、ジオメトリ変更が入ったレイヤだけ終了時保存対象にします。
 
@@ -541,7 +542,7 @@ feature追加、削除、属性変更、ジオメトリ変更が入ったレイ�
 
 GPKG読込後は復元作業モードとして扱い、GPX/MP4/KP/Outputの再選択、`Shift`、`KP tol`、`全件処理`、別GPKG読込を無効化します。撮影条件や入力データを差し替える場合は段取り替えとして一度セッションを終了します。
 
-クリック点があるGPKGを読んだ場合、ナビゲーションモードは `Picked point` を既定にします。このモードでは `360 Click Targets` の `frame` だけを前後移動し、ブックマークのように地物を置いたフレームだけを見直せます。移動時は現在ユーザが見ている視点ではなく、保存済みの `view_yaw` / `view_pitch` / `view_zoom` を再現します。同一フレームに複数点がある場合は、クリック順で最後の点を代表視点として使います。
+MarkingがあるGPKGを読んだ場合、ナビゲーションモードは `Marking` を既定にします。このモードでは `Geo360 Markings` の `frame` だけを前後移動し、ブックマークのようにMarkingを置いたフレームだけを見直せます。移動時は現在ユーザが見ている視点ではなく、保存済みの `view_yaw` / `view_pitch` / `view_zoom` を再現します。同一フレームに複数点がある場合は、クリック順で最後の点を代表視点として使います。
 
 この段階ではGPKGを本体DBとして直接編集するのではなく、GPKGは作業状態の読込元・終了時バックアップ先として扱います。
 ただしQGISテーブル上で候補レイヤを削除・編集した場合は、その作業用メモリレイヤを書き戻すことで

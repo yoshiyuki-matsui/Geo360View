@@ -1251,6 +1251,117 @@
     }
   }
 
+  function nextTargetId() {
+    return displayTargets().reduce((maxId, target) => {
+      return Math.max(maxId, Number(target.id) || Number(target.order) || 0);
+    }, 0) + 1;
+  }
+
+  function flatScreenClickTarget(event, stageRect, current) {
+    const imageRect = flatImageRect(stageRect);
+    const xRatio = clamp((event.clientX - stageRect.left - imageRect.left) / imageRect.width, 0, 1);
+    const yRatio = clamp((event.clientY - stageRect.top - imageRect.top) / imageRect.height, 0, 1);
+    const zoom = normalizeZoom(current.zoom);
+    const horizontalFovDeg = clamp(Number(state.viewer_flat_hfov_deg || bootstrap.viewer_flat_hfov_deg || 70) / zoom, 1, 179);
+    const verticalFovDeg = clamp(Number(state.viewer_flat_vfov_deg || bootstrap.viewer_flat_vfov_deg || 43) / zoom, 1, 179);
+    const xNdc = (xRatio - 0.5) * 2;
+    const yNdc = (yRatio - 0.5) * 2;
+    const yawDeltaDeg = Math.atan(xNdc * Math.tan((horizontalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
+    const pitchDeltaDeg = -Math.atan(yNdc * Math.tan((verticalFovDeg / 2) * Math.PI / 180)) * 180 / Math.PI;
+    return {
+      x_ratio: xRatio,
+      y_ratio: yRatio,
+      yaw_delta_deg: normalizeSignedYaw(yawDeltaDeg),
+      pitch_delta_deg: pitchDeltaDeg,
+      target_yaw_to_camera_heading: normalizeYaw(Number(current.yaw_to_camera_heading) + yawDeltaDeg),
+      target_pitch_deg: normalizePitch(Number(current.pitch) + pitchDeltaDeg),
+      view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
+      view_pitch: normalizePitch(current.pitch),
+      view_zoom: zoom,
+      projection: "ground_plane"
+    };
+  }
+
+  function sphereScreenClickTarget(event, stageRect, current) {
+    if (!viewer || !viewer.dataHelper || typeof viewer.dataHelper.viewerCoordsToSphericalCoords !== "function") {
+      return null;
+    }
+    const point = {
+      x: event.clientX - stageRect.left,
+      y: event.clientY - stageRect.top
+    };
+    const sphere = viewer.dataHelper.viewerCoordsToSphericalCoords(point);
+    if (!sphere) {
+      return null;
+    }
+    const targetYaw = normalizeYaw(radiansToDegrees(sphere.yaw));
+    const targetPitch = psvPitchToKrpanoPitch(radiansToDegrees(sphere.pitch));
+    return {
+      x_ratio: clamp(point.x / stageRect.width, 0, 1),
+      y_ratio: clamp(point.y / stageRect.height, 0, 1),
+      yaw_delta_deg: normalizeSignedYaw(targetYaw - normalizeYaw(current.yaw_to_camera_heading)),
+      pitch_delta_deg: normalizePitch(targetPitch) - normalizePitch(current.pitch),
+      target_yaw_to_camera_heading: targetYaw,
+      target_pitch_deg: normalizePitch(targetPitch),
+      view_yaw_to_camera_heading: normalizeYaw(current.yaw_to_camera_heading),
+      view_pitch: normalizePitch(current.pitch),
+      view_zoom: normalizeZoom(current.zoom),
+      projection: "ground_plane"
+    };
+  }
+
+  function screenMarkingTarget(event) {
+    if (!panoStage) {
+      return null;
+    }
+    const stageRect = panoStage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) {
+      return null;
+    }
+    const current = readPsvView() || state;
+    if (isFlatProjection()) {
+      return flatScreenClickTarget(event, stageRect, current);
+    }
+    return sphereScreenClickTarget(event, stageRect, current);
+  }
+
+  async function appendMarkingTarget(target) {
+    const id = nextTargetId();
+    const savedTarget = Object.assign({}, target, {
+      id,
+      order: id,
+      target_source: "viewer_marking"
+    });
+    const targets = displayTargets();
+    targets.push(savedTarget);
+    state.targets = targets.slice(-MAX_CLICK_TARGETS);
+    state.target = savedTarget;
+    updateMarkers();
+    updateReadout();
+    const posted = await postViewerState(true);
+    if (posted) {
+      setNotice([`Saved marking #${id}`]);
+    }
+    logDebug(`marking dblclick #${id} yaw=${savedTarget.target_yaw_to_camera_heading.toFixed(2)} delta=${savedTarget.yaw_delta_deg.toFixed(2)}`);
+  }
+
+  function setupMarkingProjection() {
+    if (!panoStage) {
+      return;
+    }
+    panoStage.addEventListener("dblclick", (event) => {
+      if (event.defaultPrevented || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      const target = screenMarkingTarget(event);
+      if (!target) {
+        return;
+      }
+      appendMarkingTarget(target);
+    }, true);
+  }
+
   function readPsvView() {
     if (isFlatProjection() || !viewer || typeof viewer.getPosition !== "function") {
       return state;
@@ -1659,6 +1770,7 @@
   setupRadarHudToggle();
   setupViewHoldToggle();
   setupFlatInteractions();
+  setupMarkingProjection();
   setupNavigation();
   setupSnapshot();
   await setupPhotoSphereViewer();

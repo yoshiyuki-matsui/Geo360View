@@ -1001,7 +1001,7 @@
       return false;
     }
     const targetSource = String(target.target_source || "").trim().toLowerCase();
-    if (targetSource === "viewer_click" || targetSource === "manual_click" || targetSource === "user_click") {
+    if (targetSource === "viewer_marking" || targetSource === "viewer_click" || targetSource === "manual_click" || targetSource === "user_click") {
       return true;
     }
     return (
@@ -1626,7 +1626,7 @@
       const savedTarget = Object.assign({}, target, {
         id,
         order: id,
-        target_source: "viewer_click"
+        target_source: "viewer_marking"
       });
       const targets = normalizedClickTargets();
       targets.push(savedTarget);
@@ -1635,7 +1635,7 @@
       updateReadout(readKrpanoView() || state);
       const posted = await postViewerState(true);
       if (posted) {
-        showTransientNotice(`Saved picked point #${id}`);
+        showTransientNotice(`Saved marking #${id}`);
         flashSavedClickTargetMarker();
       }
       logDebug(`target dblclick #${id} yaw=${savedTarget.target_yaw_to_camera_heading.toFixed(2)} delta=${savedTarget.yaw_delta_deg.toFixed(2)}`);

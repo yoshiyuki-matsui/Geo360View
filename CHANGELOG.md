@@ -2,6 +2,22 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.0 - 2026-09-29
+
+### Added
+
+- Added viewer-side Marking as a 360-space bookmark workflow.
+- Added `Marking` navigation mode for revisiting saved Marking frames.
+- Saved Markings to the `geo360_markings` GeoPackage layer with frame, view direction, zoom, and provisional map projection attributes.
+- Added Marking creation in both the krpano-compatible viewer path and the Photo Sphere Viewer path.
+- Restored saved Marking view direction and zoom when navigating back to a Marking frame.
+- Included Marking markers in viewer snapshots, allowing evidence images and GPKG Marking records to be related by `frame`.
+
+### Changed
+
+- Renamed the user-facing clicked-point workflow to Marking, while keeping `click_targets_360` readable as a legacy layer.
+- Updated README and manual test documentation around Marking, snapshots, and the public viewer/business-workflow boundary.
+
 ## 0.3.0 - 2026-09-04
 
 ### Added

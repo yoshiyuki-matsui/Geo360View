@@ -219,7 +219,7 @@ http://127.0.0.1:8181/viewer?video=your-video.mp4&frame_index=0&yaw_to_camera_he
 
 When view parameters are specified, the viewer uses them for the initial krpano view. When they are omitted, the viewer restores `yaw_to_camera_heading`, `pitch`, and `zoom` from the session file.
 
-When another frame is loaded through browser navigation, the viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` into the new frame. When QGIS navigation provides explicit view values, such as `Picked point` restore, those values are applied instead.
+When another frame is loaded through browser navigation, the viewer carries the latest `yaw_to_camera_heading`, `pitch`, and `zoom` into the new frame. When QGIS navigation provides explicit view values, such as `Marking` restore, those values are applied instead.
 
 ## Endpoints
 
@@ -262,5 +262,5 @@ Example:
 - Left/Right arrow keys perform the same Prev/Next navigation while the browser viewer has focus.
 - The debug log is collapsed by default. Use the `Log` toolbar button to show or hide it.
 - The range HUD is shown by default when QGIS provides radar values. Use `HUD` to show or hide the range HUD and 1 m dashed auxiliary grid together.
-- Clicking the panorama marks the clicked screen position and updates `target`; double-clicking appends ordered `targets` for QGIS-side multi-point projection.
+- Clicking the panorama marks the clicked screen position and updates `target`; double-clicking appends ordered `targets` as Markings for QGIS-side projection, persistence, and later view restoration.
 - If krpano is missing, the page reports the missing file and shows a non-interactive extracted image fallback if the video exists.

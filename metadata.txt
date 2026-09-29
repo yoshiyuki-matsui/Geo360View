@@ -1,10 +1,10 @@
 [general]
 name=Geo360 View
-version=0.3.0
+version=0.5.0
 qgisMinimumVersion=3.40
 qgisMaximumVersion=3.99
-description=Review GPX-synchronized 360-degree and normal field videos in QGIS.
-about=Geo360 View aligns MP4 videos with GPX tracks, creates camera-point layers, matches optional reference CSV data, and opens selected frames in a local viewer. It supports 360/equirectangular and normal-FOV videos, HUD overlays, reference labels, and GPS-tagged snapshots.
+description=Review GPX-synchronized videos and save 360-space Markings in QGIS.
+about=Geo360 View aligns MP4 videos with GPX tracks, creates camera-point layers, matches optional reference CSV data, and opens selected frames in a local viewer. It supports 360/equirectangular and normal-FOV videos, HUD overlays, reference labels, 360-space Markings, view restoration, and GPS-tagged snapshots.
 author=Ninja Engineer at Nakasha Creative Co., Ltd.
 email=rdcenter.nakashacreative@gmail.com
 homepage=https://github.com/yoshiyuki-matsui/Geo360View
@@ -12,7 +12,7 @@ repository=https://github.com/yoshiyuki-matsui/Geo360View
 tracker=https://github.com/yoshiyuki-matsui/Geo360View/issues
 license=GPL-2.0-or-later
 category=Plugins
-tags=360 video,gpx,panorama,equirectangular,photo sphere viewer,field survey,reference points,kilo post
+tags=360 video,gpx,panorama,equirectangular,photo sphere viewer,marking,snapshot,field survey,reference points,kilo post
 icon=icons/shuriken_black.png
 experimental=True
 deprecated=False

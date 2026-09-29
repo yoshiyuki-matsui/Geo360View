@@ -193,6 +193,7 @@ class ViewerAppValidationTests(unittest.TestCase):
                     "target_pitch_deg": 6,
                     "target_yaw_to_camera_heading": 7,
                     "view_zoom": 1,
+                    "target_source": "viewer_marking",
                 },
                 {
                     "id": 8,
@@ -210,6 +211,7 @@ class ViewerAppValidationTests(unittest.TestCase):
         self.assertEqual(state["targets"][0]["id"], 1)
         self.assertEqual(state["targets"][0]["order"], 1)
         self.assertEqual(state["targets"][0]["target_pitch_deg"], 6.0)
+        self.assertEqual(state["targets"][0]["target_source"], "viewer_marking")
         self.assertEqual(state["targets"][1]["id"], 8)
         self.assertEqual(state["targets"][1]["order"], 8)
         self.assertEqual(state["target"], state["targets"][1])
