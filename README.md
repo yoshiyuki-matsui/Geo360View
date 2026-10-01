@@ -83,7 +83,17 @@ This public-oriented plugin is limited to video/GPX synchronization, visual revi
 
 ## Install
 
-Install the plugin directory into your QGIS Python plugin folder and restart QGIS.
+For normal use, install the release ZIP from GitHub Releases.
+
+1. Download a release ZIP such as `Geo360View-0.5.0.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
+2. Open QGIS.
+3. Open `Plugins` -> `Manage and Install Plugins`.
+4. Choose `Install from ZIP` and select the downloaded ZIP file.
+5. Restart QGIS after installation.
+
+The ZIP downloaded from GitHub's `Code > Download ZIP` button is a source archive and may have a folder name/layout that differs from a QGIS plugin distribution ZIP. For normal installation, use the ZIP attached to a GitHub Release.
+
+For development builds, install the plugin directory into your QGIS Python plugin folder and restart QGIS.
 
 On Windows, the default user plugin folder is typically:
 
@@ -98,17 +108,41 @@ If QGIS reports that `cv2` is not available, install OpenCV into the Python envi
 For OSGeo4W/QGIS on Windows, open **OSGeo4W Shell** from the Start menu and run:
 
 ```bash
-python -m pip install "opencv-python>=4.8"
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade --only-binary=:all: "opencv-python>=4.8"
+python -m pip check
 python -c "import cv2; print(cv2.__version__)"
 ```
 
 If the second command prints an OpenCV version, the QGIS Python environment can import `cv2`.
+
+After installing OpenCV, **fully quit and restart QGIS**. Python packages installed from OSGeo4W Shell are not loaded into an already running QGIS process.
+
+Useful checks:
+
+```bash
+python -c "import sys; print(sys.executable)"
+python -c "import numpy; print('numpy', numpy.__version__)"
+python -c "import cv2; print('opencv', cv2.__version__)"
+```
+
+Notes:
+
+- Avoid upgrading `numpy` manually unless you have to. QGIS, GDAL, and OSGeo4W packages share the same Python environment, and an unnecessary `numpy` upgrade may create binary compatibility issues.
+- Prefer installing/updating `opencv-python` first, then run `python -m pip check`.
+- To keep a record before changing the environment:
+
+```bash
+python -m pip freeze > qgis_python_packages_before.txt
+```
 
 ## Input Data
 
 - MP4 video recorded along a route.
 - GPX track recorded during the same run.
 - Optional reference point CSV with latitude/longitude columns.
+
+Sample MP4/GPX data is not bundled. 360-degree videos are large and may contain privacy-sensitive information such as people, vehicles, and surrounding properties. Please try Geo360 View with your own MP4 and GPX recorded during the same run, for example from Insta360, RICOH THETA, GoPro MAX, or similar cameras.
 
 For practical performance, copy MP4 files to a local SSD or other local disk
 before processing. Reading large MP4 files from NAS, SMB/NFS shares, cloud-sync

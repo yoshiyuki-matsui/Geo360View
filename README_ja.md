@@ -92,7 +92,17 @@ Markingは位置確認や申し送りのためのブックマークであり、�
 
 ## インストール
 
-プラグインディレクトリをQGISのPythonプラグインフォルダへ配置し、QGISを再起動してください。
+通常は、GitHub Releasesで配布しているZIPを使ってインストールしてください。
+
+1. [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases) から `Geo360View-0.5.0.zip` などの配布ZIPをダウンロードします。
+2. QGISを起動します。
+3. `プラグイン` → `プラグインの管理とインストール` を開きます。
+4. `ZIPからインストール` を選び、ダウンロードしたZIPを指定します。
+5. インストール後、QGISを再起動します。
+
+GitHubの `Code > Download ZIP` で取得したソースZIPは、フォルダ名や階層がQGISプラグイン配布ZIPと異なる場合があります。通常利用ではReleasesの配布ZIPを使ってください。
+
+開発版を手動配置する場合は、プラグインディレクトリをQGISのPythonプラグインフォルダへ配置し、QGISを再起動してください。
 
 Windowsの標準的な配置先は以下です。
 
@@ -100,13 +110,39 @@ Windowsの標準的な配置先は以下です。
 C:\Users\<user>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\Geo360View
 ```
 
+### OpenCV / cv2 のセットアップ
+
 QGISで`cv2`が見つからない場合は、通常のWindows PythonやCondaではなく、QGISが使っているPython環境にOpenCVを入れてください。
 
-OSGeo4W/QGIS on Windowsの場合:
+WindowsのOSGeo4W/QGIS環境では、スタートメニューから **OSGeo4W Shell** を起動して、次の順に実行します。
 
 ```bash
-python -m pip install "opencv-python>=4.8"
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade --only-binary=:all: "opencv-python>=4.8"
+python -m pip check
 python -c "import cv2; print(cv2.__version__)"
+```
+
+`cv2`のバージョンが表示されれば、OSGeo4W Shell側のPythonではOpenCVを読み込めています。
+
+その後、**QGISを完全に終了してから再起動**してください。QGIS起動中にOSGeo4W ShellでPythonライブラリを追加した場合、起動中のQGISプロセスには反映されません。プラグイン画面だけを閉じても反映されない場合があります。
+
+トラブル確認用:
+
+```bash
+python -c "import sys; print(sys.executable)"
+python -c "import numpy; print('numpy', numpy.__version__)"
+python -c "import cv2; print('opencv', cv2.__version__)"
+```
+
+注意:
+
+- `pip install --upgrade numpy` は最終手段にしてください。QGIS/GDAL/OSGeo4WのPython環境では、`numpy`を不用意に上げると他のライブラリと不整合になることがあります。
+- まずは `opencv-python` を入れ、`python -m pip check` で不整合が残っていないか確認してください。
+- インストール前の状態を残したい場合は、次のコマンドでパッケージ一覧を保存できます。
+
+```bash
+python -m pip freeze > qgis_python_packages_before.txt
 ```
 
 ## 入力データ
@@ -114,6 +150,8 @@ python -c "import cv2; print(cv2.__version__)"
 - 同一路線・同一走行で撮影したMP4動画
 - 同じ走行時に取得したGPX軌跡
 - 任意の参照点CSV
+
+サンプルMP4/GPXは同梱していません。360度動画は容量が大きく、人物・車両・周辺環境などのプライバシー情報を含む可能性があるためです。まずは、お手元のInsta360、RICOH THETA、GoPro MAXなどで撮影したMP4と、同じ移動時に取得したGPXでお試しください。
 
 実用上は、MP4動画をローカルSSDなどのローカルディスクへコピーしてから処理することを推奨します。NAS、SMB/NFS共有、クラウド同期フォルダ、VPN越しのストレージ上にある大容量MP4を直接読むと、フレーム抽出やビューア上のフレーム移動が非常に遅くなる場合があります。
 
