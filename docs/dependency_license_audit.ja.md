@@ -1,8 +1,8 @@
-# 依存関係・ライセンス確認メモ
+# 依存関係・ライセンス・セキュリティ確認メモ
 
 作成日: 2026-09-07
 
-Geo360Viewを公開リポジトリまたはQGIS Plugin Repositoryへ出す前の、依存関係と同梱OSSの確認メモです。
+Geo360Viewを公開リポジトリまたはQGIS Plugin Repositoryへ出す前の、依存関係、同梱OSS、セキュリティ確認メモです。
 
 ## Python実行時依存
 
@@ -95,6 +95,78 @@ Geo360Viewを公開リポジトリまたはQGIS Plugin Repositoryへ出す前の
 - Photo Sphere Viewer/threeはnpm実行時依存ではなく、同梱済みvendorファイルとして扱うことを明記する。
 - krpanoは同梱しない。ローカル利用する場合は、ユーザがライセンスに従って配置する。
 
+## セキュリティ確認の考え方
+
+Geo360Viewは、QGIS/PyQt、QGIS Python環境、OpenCV、Photo Sphere Viewer、three.jsに依存します。
+公開前および依存更新時には、少なくとも次を確認します。
+
+### Python依存
+
+対象:
+
+- `360viewer/requirements.txt`
+- `opencv-python>=4.8`
+- ユーザ環境のQGIS Python / OSGeo4W Python
+
+確認コマンド例:
+
+```bash
+python -m pip check
+python -c "import cv2; print(cv2.__version__)"
+python -c "import numpy; print(numpy.__version__)"
+```
+
+`pip-audit` を使う場合は、QGIS/OSGeo4W本体環境へ監査ツールを直接入れるより、別Python環境でrequirementsだけを見る方が安全です。
+
+```bash
+python -m pip install pip-audit
+python -m pip-audit -r 360viewer/requirements.txt
+```
+
+注意:
+
+- QGIS/OSGeo4W環境では `numpy` を不用意にupgradeしない。
+- OpenCV導入後はQGISを完全に再起動する。
+- `pip check` で不整合が残る場合は、READMEのOpenCV手順を見直す。
+
+### ブラウザ側vendor
+
+対象:
+
+- `@photo-sphere-viewer/core` 5.15.1
+- `@photo-sphere-viewer/markers-plugin` 5.15.1
+- `three` 0.185.1
+
+これらはnpm installで取得する実行時依存ではなく、公開ZIPに同梱するvendorファイルです。
+そのため、npm auditを直接適用するより、次の運用を基本とします。
+
+- `package.json` のバージョンを記録する。
+- 上流リリースと既知脆弱性情報を定期的に確認する。
+- 重要な脆弱性が見つかった場合は、vendorファイルを更新してReleaseを作り直す。
+- `LICENSE` と `package.json` をZIPから削除しない。
+
+### ローカルHTTPビューア
+
+Geo360Viewのブラウザビューアはローカル利用を前提とします。
+
+- 通常は `localhost` で利用する。
+- ローカルHTTPビューアのポートを信頼できないネットワークへ公開しない。
+- 動画、GPX、CSV、GPKG、GPS EXIF付きスナップショットは機微情報を含み得る。
+- 公開Issueへ個人情報や位置情報を含むデータを添付しない。
+
+### 配布ZIP
+
+配布ZIPは `scripts/build_plugin_zip.py` で作成し、GitHub ReleasesのAssetとして公開します。
+
+確認項目:
+
+- `.git/` を含めない。
+- `__pycache__/` や `.pyc` を含めない。
+- `360view_output/` や runtime config を含めない。
+- krpano runtimeを含めない。
+- Photo Sphere Viewer / three.js の `LICENSE` を含める。
+- `metadata.txt` のversionとRelease tagを揃える。
+
 ## ライセンス上の要確認事項
 
 ### プラグイン本体ライセンス
@@ -116,3 +188,5 @@ MITライセンスのPhoto Sphere Viewer、MarkersPlugin、three.jsは、著作�
 - `360viewer/static/vendor/krpano/` が公開パッケージへ入らないことを確認する。
 - `README.md` にOpenCV導入、QGIS前提、Photo Sphere Viewer同梱、krpano非同梱方針を追記する。
 - `metadata.txt` の `about`, `homepage`, `tracker`, `repository` を公開方針に合わせて見直す。
+- `SECURITY.md` を追加し、脆弱性・プライバシー報告の窓口を明記する。
+- READMEにSecurity/Privacy章を追加する。

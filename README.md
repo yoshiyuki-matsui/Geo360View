@@ -75,6 +75,18 @@ Markings are review bookmarks, not deliverable POIs or survey-grade results. New
 
 This public-oriented plugin is limited to video/GPX synchronization, visual review, Marking bookmarks, and evidence snapshots. Automatic object detection, POI generation, semantic clustering, formal POI management, and model-review workflows are intentionally outside this repository.
 
+## Security and Privacy
+
+Geo360 View is a local QGIS plugin intended to run on the user's machine. It does not intentionally upload MP4, GPX, CSV, Marking, or snapshot data to an external server.
+
+However, 360-degree videos, GPX tracks, reference CSV files, GeoPackages, and GPS-tagged snapshots may contain sensitive information such as people, vehicles, addresses, facilities, and travel routes. Review data carefully before sharing it publicly, attaching it to issues, or using it as sample data.
+
+The local browser viewer is intended for `localhost` use. Do not expose the local viewer port to untrusted networks.
+
+Download release ZIP files from GitHub Releases. Do not install plugin ZIP files from untrusted sources.
+
+For vulnerability or privacy reports, do not post sensitive details in public issues. See [SECURITY.md](SECURITY.md).
+
 ## Requirements
 
 - QGIS 3.40 or later.
