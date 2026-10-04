@@ -73,7 +73,8 @@ class NotSupportedError(DefusedXmlException):
 
 
 def _apply_defusing(defused_mod):
-    assert defused_mod is sys.modules[defused_mod.__name__]
+    if defused_mod is not sys.modules[defused_mod.__name__]:
+        raise NotSupportedError("defused module is not loaded as expected")
     stdlib_name = defused_mod.__origin__
     __import__(stdlib_name, {}, {}, ["*"])
     stdlib_mod = sys.modules[stdlib_name]
