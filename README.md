@@ -97,7 +97,7 @@ For vulnerability or privacy reports, do not post sensitive details in public is
 
 For normal use, install the release ZIP from GitHub Releases.
 
-1. Download a release ZIP such as `Geo360View-0.5.1.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
+1. Download a release ZIP such as `Geo360View-0.5.2.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
 2. Open QGIS.
 3. Open `Plugins` -> `Manage and Install Plugins`.
 4. Choose `Install from ZIP` and select the downloaded ZIP file.

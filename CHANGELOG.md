@@ -2,7 +2,7 @@
 
 This file records user-visible changes for Geo360 View.
 
-## 0.5.1 - 2026-10-04
+## 0.5.2 - 2026-10-04
 
 ### Security
 
