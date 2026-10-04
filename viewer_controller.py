@@ -14,6 +14,7 @@ from qgis.PyQt.QtCore import QProcess, QProcessEnvironment, QTimer, QUrl
 
 from .common import _looks_like_python_launcher
 from .constants import PLUGIN_TITLE
+from .qt_compat import QT_PROCESS_NOT_RUNNING
 
 
 class ViewerControllerMixin:
@@ -248,7 +249,7 @@ class ViewerControllerMixin:
         """このプラグインが起動したQProcessが生存しているか返す。"""
         if self.viewer_process is None:
             return False
-        return self.viewer_process.state() != QProcess.NotRunning
+        return self.viewer_process.state() != QT_PROCESS_NOT_RUNNING
 
     def checkViewerDependencies(self):
         """ビューア起動に必要なPythonモジュールがQGIS Pythonへ入っているか確認する。"""

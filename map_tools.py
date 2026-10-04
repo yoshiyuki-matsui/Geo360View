@@ -1,11 +1,17 @@
 """QGIS地図クリックでフレームを選択するMapTool。"""
 
 from qgis.PyQt import QtGui
-from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsWkbTypes
 from qgis.gui import QgsMapToolIdentifyFeature, QgsRubberBand
 
-from .qt_compat import QT_KEY_ESCAPE, QT_KEY_LEFT, QT_KEY_RIGHT, QT_KEY_SPACE, QT_SHIFT_MODIFIER
+from .qt_compat import (
+    QGIS_IDENTIFY_TOP_DOWN_STOP_AT_FIRST,
+    QT_KEY_ESCAPE,
+    QT_KEY_LEFT,
+    QT_KEY_RIGHT,
+    QT_KEY_SPACE,
+    QT_SHIFT_MODIFIER,
+)
 
 class FrameIdentifyTool(QgsMapToolIdentifyFeature):
     """`Video GPX Points` をクリックし、対応フレームをプラグインへ通知する。"""
@@ -26,7 +32,7 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
                 event.x(),
                 event.y(),
                 [self.layer],
-                QgsMapToolIdentifyFeature.TopDownStopAtFirst
+                QGIS_IDENTIFY_TOP_DOWN_STOP_AT_FIRST
             )
             if not results:
                 self.plugin.notifyWarning("no_frame_point_found")

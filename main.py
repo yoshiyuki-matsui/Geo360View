@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
-    QEvent, QSettings, QTimer, QVariant, Qt
+    QSettings, QTimer, QVariant, Qt
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
@@ -62,6 +62,7 @@ from .qt_compat import (
     QT_ALIGN_CENTER,
     QT_DISPLAY_ROLE,
     QT_EDIT_ROLE,
+    QT_EVENT_KEY_PRESS,
     QT_KEY_ESCAPE,
     QT_KEY_LEFT,
     QT_KEY_RIGHT,
@@ -74,6 +75,7 @@ from .qt_compat import (
     QT_TEXT_SELECTABLE_BY_MOUSE,
     QT_USER_ROLE,
     QT_WINDOW_STAYS_ON_TOP_HINT,
+    QGIS_VECTOR_WRITER_NO_ERROR,
 )
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
@@ -884,7 +886,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def eventFilter(self, watched, event):
         """MapToolへ届かないキー操作も、クリックモード中だけ補助的に処理する。"""
-        if event.type() == QEvent.KeyPress and self.frameKeyboardNavigationActive():
+        if event.type() == QT_EVENT_KEY_PRESS and self.frameKeyboardNavigationActive():
             if self.shouldIgnoreNavigationKeyTarget():
                 return False
 
@@ -4688,7 +4690,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
         error_code = result[0] if isinstance(result, tuple) else result
         message = result[1] if isinstance(result, tuple) and len(result) > 1 else ""
-        if error_code != QgsVectorFileWriter.NoError:
+        if error_code != QGIS_VECTOR_WRITER_NO_ERROR:
             raise RuntimeError(message or f"QgsVectorFileWriter error code: {error_code}")
 
     def saveGeneratedLayers(self):

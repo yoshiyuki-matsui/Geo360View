@@ -15,6 +15,7 @@ This file records user-visible changes for Geo360 View.
 ### Changed
 
 - Bundled `defusedxml` with the plugin and documented that users do not need to install it separately.
+- Updated Qt/QGIS enum references through compatibility constants to satisfy Qt6 compatibility checks while keeping QGIS 3 / Qt5 support.
 
 ## 0.5.0 - 2026-09-29
 

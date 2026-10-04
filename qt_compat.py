@@ -1,7 +1,9 @@
 """Qt5/Qt6で移動したenum値を吸収する互換定義。"""
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QEvent, QProcess, Qt
 from qgis.PyQt.QtWidgets import QMessageBox, QSizePolicy
+from qgis.core import QgsVectorFileWriter, QgsWkbTypes
+from qgis.gui import QgsMapToolIdentifyFeature
 
 
 def qt_enum(group_name, name):
@@ -24,6 +26,16 @@ def widget_enum(widget_class, group_name, name):
     return getattr(widget_class, name)
 
 
+def object_enum(owner, group_name, name):
+    """Qt6/QGIS4形式のenum groupを優先し、Qt5/QGIS3の直下定義へフォールバックする。"""
+    group = getattr(owner, group_name, None)
+    if group is not None:
+        value = getattr(group, name, None)
+        if value is not None:
+            return value
+    return getattr(owner, name)
+
+
 QT_ACTIVE_WINDOW_FOCUS_REASON = qt_enum("FocusReason", "ActiveWindowFocusReason")
 QT_ALIGN_CENTER = qt_enum("AlignmentFlag", "AlignCenter")
 QT_DISPLAY_ROLE = qt_enum("ItemDataRole", "DisplayRole")
@@ -37,10 +49,23 @@ QT_KEEP_ASPECT_RATIO = qt_enum("AspectRatioMode", "KeepAspectRatio")
 QT_SHIFT_MODIFIER = qt_enum("KeyboardModifier", "ShiftModifier")
 QT_SMOOTH_TRANSFORMATION = qt_enum("TransformationMode", "SmoothTransformation")
 QT_TEXT_SELECTABLE_BY_MOUSE = qt_enum("TextInteractionFlag", "TextSelectableByMouse")
+QT_UTC = qt_enum("TimeSpec", "UTC")
 QT_USER_ROLE = qt_enum("ItemDataRole", "UserRole")
 QT_WINDOW_STAYS_ON_TOP_HINT = qt_enum("WindowType", "WindowStaysOnTopHint")
 
+QT_EVENT_KEY_PRESS = object_enum(QEvent, "Type", "KeyPress")
 QT_MESSAGE_BOX_NO = widget_enum(QMessageBox, "StandardButton", "No")
 QT_MESSAGE_BOX_YES = widget_enum(QMessageBox, "StandardButton", "Yes")
+QT_PROCESS_NOT_RUNNING = object_enum(QProcess, "ProcessState", "NotRunning")
 QT_SIZE_POLICY_IGNORED = widget_enum(QSizePolicy, "Policy", "Ignored")
 QT_SIZE_POLICY_PREFERRED = widget_enum(QSizePolicy, "Policy", "Preferred")
+
+QGIS_IDENTIFY_TOP_DOWN_STOP_AT_FIRST = object_enum(
+    QgsMapToolIdentifyFeature,
+    "IdentifyMode",
+    "TopDownStopAtFirst",
+)
+QGIS_WKB_LINE_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "LineGeometry")
+QGIS_WKB_POINT_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "PointGeometry")
+QGIS_WKB_POLYGON_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "PolygonGeometry")
+QGIS_VECTOR_WRITER_NO_ERROR = object_enum(QgsVectorFileWriter, "WriterError", "NoError")

@@ -5,16 +5,15 @@ import os
 import re
 import unicodedata
 
-from qgis.PyQt.QtCore import QDate, QDateTime, QTime, Qt
+from qgis.PyQt.QtCore import QDate, QDateTime, QTime
 
 from .constants import FRAME_IMAGE_FOLDER_SIZE
+from .qt_compat import QT_UTC
 
 
 def _utc_time_spec():
     """QGIS/PyQtのバージョン差を吸収してUTC指定値を返す。"""
-    if hasattr(Qt, "TimeSpec"):
-        return Qt.TimeSpec.UTC
-    return Qt.UTC
+    return QT_UTC
 
 
 def _to_qdatetime(value):

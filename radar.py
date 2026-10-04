@@ -5,7 +5,7 @@ import math
 import os
 
 from qgis.PyQt import QtGui
-from qgis.PyQt.QtCore import QTimer, Qt
+from qgis.PyQt.QtCore import QTimer
 try:
     from qgis.PyQt import sip
 except ImportError:  # pragma: no cover - QGIS配布差異への保険
@@ -16,12 +16,16 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsProject,
-    QgsWkbTypes,
 )
 from qgis.gui import QgsRubberBand
 
 from .common import _parse_float
-from .qt_compat import QT_DOT_LINE
+from .qt_compat import (
+    QGIS_WKB_LINE_GEOMETRY,
+    QGIS_WKB_POINT_GEOMETRY,
+    QGIS_WKB_POLYGON_GEOMETRY,
+    QT_DOT_LINE,
+)
 
 
 RADAR_TRAJECTORY_WINDOW_FRAMES = 10
@@ -524,28 +528,28 @@ class RadarMixin:
         """レーダ描画用のRubberBandを必要に応じて生成する。"""
         canvas = self.iface.mapCanvas()
         if self.radar_sector_band is None:
-            self.radar_sector_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_sector_band = QgsRubberBand(canvas, QGIS_WKB_POLYGON_GEOMETRY)
             self.radar_sector_band.setColor(QtGui.QColor(255, 180, 0, 180))
             if hasattr(self.radar_sector_band, "setFillColor"):
                 self.radar_sector_band.setFillColor(QtGui.QColor(255, 200, 0, 70))
             self.radar_sector_band.setWidth(2)
 
         if self.radar_circle_band is None:
-            self.radar_circle_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_circle_band = QgsRubberBand(canvas, QGIS_WKB_POLYGON_GEOMETRY)
             self.radar_circle_band.setColor(QtGui.QColor(0, 190, 255, 190))
             if hasattr(self.radar_circle_band, "setFillColor"):
                 self.radar_circle_band.setFillColor(QtGui.QColor(0, 190, 255, 0))
             self.radar_circle_band.setWidth(1)
 
         if self.radar_outer_circle_band is None:
-            self.radar_outer_circle_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self.radar_outer_circle_band = QgsRubberBand(canvas, QGIS_WKB_POLYGON_GEOMETRY)
             self.radar_outer_circle_band.setColor(QtGui.QColor(0, 130, 255, 160))
             if hasattr(self.radar_outer_circle_band, "setFillColor"):
                 self.radar_outer_circle_band.setFillColor(QtGui.QColor(0, 130, 255, 0))
             self.radar_outer_circle_band.setWidth(1)
 
         if self.radar_grid_band is None:
-            self.radar_grid_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_grid_band = QgsRubberBand(canvas, QGIS_WKB_LINE_GEOMETRY)
             # RADAR_GRID_STEP_Mごとに描く補助線は、主線より薄い色で点線にする。お好みで調整してください。
             # シアン系
             #self.radar_grid_band.setColor(QtGui.QColor(0, 255, 255, 150))
@@ -561,12 +565,12 @@ class RadarMixin:
                 self.radar_grid_band.setLineStyle(QT_DOT_LINE)   #破線
 
         if self.radar_direction_band is None:
-            self.radar_direction_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_direction_band = QgsRubberBand(canvas, QGIS_WKB_LINE_GEOMETRY)
             self.radar_direction_band.setColor(QtGui.QColor(255, 70, 40, 230))
             self.radar_direction_band.setWidth(3)
 
         if self.radar_perpendicular_band is None:
-            self.radar_perpendicular_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+            self.radar_perpendicular_band = QgsRubberBand(canvas, QGIS_WKB_LINE_GEOMETRY)
             self.radar_perpendicular_band.setColor(QtGui.QColor(255, 255, 255, 230))
             self.radar_perpendicular_band.setWidth(2)
 
@@ -592,12 +596,12 @@ class RadarMixin:
         for quality in RADAR_TARGET_QUALITY_ORDER:
             color = colors[quality]
             if line_bands.get(quality) is None:
-                line_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+                line_band = QgsRubberBand(canvas, QGIS_WKB_LINE_GEOMETRY)
                 line_band.setColor(color)
                 line_band.setWidth(2)
                 line_bands[quality] = line_band
             if point_bands.get(quality) is None:
-                point_band = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                point_band = QgsRubberBand(canvas, QGIS_WKB_POINT_GEOMETRY)
                 point_band.setColor(color)
                 point_band.setWidth(5)
                 if hasattr(point_band, "setIconSize"):
@@ -620,7 +624,7 @@ class RadarMixin:
         """複数のWGS84ラインを1つのRubberBandへ反映する。"""
         if not line_points:
             rubber_band.hide()
-            rubber_band.reset(QgsWkbTypes.LineGeometry)
+            rubber_band.reset(QGIS_WKB_LINE_GEOMETRY)
             return
         transformed = [
             [self.canvasPoint(point.x(), point.y()) for point in points]
@@ -639,7 +643,7 @@ class RadarMixin:
         """複数のWGS84点を1つのPoint RubberBandへ反映する。"""
         if not points:
             rubber_band.hide()
-            rubber_band.reset(QgsWkbTypes.PointGeometry)
+            rubber_band.reset(QGIS_WKB_POINT_GEOMETRY)
             return
         transformed = [self.canvasPoint(point.x(), point.y()) for point in points]
         rubber_band.setToGeometry(QgsGeometry.fromMultiPointXY(transformed), None)
@@ -675,8 +679,8 @@ class RadarMixin:
     def hideRadarTargetBands(self):
         """クリック投影点がない場合、投影点用RubberBandだけを非表示にする。"""
         for attr_name, geometry_type in (
-            ("radar_target_line_band", QgsWkbTypes.LineGeometry),
-            ("radar_target_point_band", QgsWkbTypes.PointGeometry),
+            ("radar_target_line_band", QGIS_WKB_LINE_GEOMETRY),
+            ("radar_target_point_band", QGIS_WKB_POINT_GEOMETRY),
         ):
             rubber_band = getattr(self, attr_name, None)
             if rubber_band is None:
@@ -687,8 +691,8 @@ class RadarMixin:
             except Exception as e:
                 _geo360_ignored_error = e
         for bands, geometry_type in (
-            (getattr(self, "radar_target_quality_line_bands", {}), QgsWkbTypes.LineGeometry),
-            (getattr(self, "radar_target_quality_point_bands", {}), QgsWkbTypes.PointGeometry),
+            (getattr(self, "radar_target_quality_line_bands", {}), QGIS_WKB_LINE_GEOMETRY),
+            (getattr(self, "radar_target_quality_point_bands", {}), QGIS_WKB_POINT_GEOMETRY),
         ):
             if not isinstance(bands, dict):
                 continue
@@ -938,14 +942,14 @@ class RadarMixin:
         """地図上のレーダRubberBandと前回値をすべて破棄する。"""
         canvas = self.iface.mapCanvas()
         band_types = {
-            "radar_grid_band": QgsWkbTypes.LineGeometry,
-            "radar_circle_band": QgsWkbTypes.PolygonGeometry,
-            "radar_outer_circle_band": QgsWkbTypes.PolygonGeometry,
-            "radar_sector_band": QgsWkbTypes.PolygonGeometry,
-            "radar_direction_band": QgsWkbTypes.LineGeometry,
-            "radar_perpendicular_band": QgsWkbTypes.LineGeometry,
-            "radar_target_line_band": QgsWkbTypes.LineGeometry,
-            "radar_target_point_band": QgsWkbTypes.PointGeometry,
+            "radar_grid_band": QGIS_WKB_LINE_GEOMETRY,
+            "radar_circle_band": QGIS_WKB_POLYGON_GEOMETRY,
+            "radar_outer_circle_band": QGIS_WKB_POLYGON_GEOMETRY,
+            "radar_sector_band": QGIS_WKB_POLYGON_GEOMETRY,
+            "radar_direction_band": QGIS_WKB_LINE_GEOMETRY,
+            "radar_perpendicular_band": QGIS_WKB_LINE_GEOMETRY,
+            "radar_target_line_band": QGIS_WKB_LINE_GEOMETRY,
+            "radar_target_point_band": QGIS_WKB_POINT_GEOMETRY,
         }
         removed_any = False
         for attr_name, geometry_type in band_types.items():
@@ -974,8 +978,8 @@ class RadarMixin:
                 setattr(self, attr_name, None)
                 removed_any = True
         for dict_name, geometry_type in (
-            ("radar_target_quality_line_bands", QgsWkbTypes.LineGeometry),
-            ("radar_target_quality_point_bands", QgsWkbTypes.PointGeometry),
+            ("radar_target_quality_line_bands", QGIS_WKB_LINE_GEOMETRY),
+            ("radar_target_quality_point_bands", QGIS_WKB_POINT_GEOMETRY),
         ):
             bands = getattr(self, dict_name, None)
             if not isinstance(bands, dict):
