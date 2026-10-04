@@ -45,8 +45,18 @@ Geo360Viewを公開リポジトリまたはQGIS Plugin Repositoryへ出す前の
 - `time`
 - `urllib`
 - `uuid`
-- `xml.etree.ElementTree`
-- `xml.sax.saxutils`
+- XMLの直接処理は、標準ライブラリではなく同梱 `defusedxml.ElementTree` を使用する。
+
+### defusedxml
+
+- 種別: Python同梱OSS
+- 同梱場所: `defusedxml/`
+- バージョン: `0.7.1` 相当
+- ライセンス: Python Software Foundation License
+- 用途: GPX XMLを安全に読み込むための `ElementTree` 互換API
+- 備考:
+  - QGIS Python環境に `defusedxml` が入っていない場合でもプラグインを起動できるよう、Geo360Viewに最小構成を同梱する。
+  - Geo360Viewで使用するのは `defusedxml.ElementTree` のみ。標準ライブラリ全体をmonkey patchする `defuse_stdlib()` は同梱版では無効化している。
 
 ## ブラウザ側同梱OSS
 

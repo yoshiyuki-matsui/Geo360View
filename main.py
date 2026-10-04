@@ -86,6 +86,17 @@ GPKG_LEGACY_TARGET_LAYER_NAME = "click_targets_360"
 GPKG_TARGET_LAYER_NAME = GPKG_MARKING_LAYER_NAME
 GPKG_CANDIDATE_LAYER_NAME = "poi_candidates_360"
 GPKG_JOB_METADATA_TABLE = "gpx_video_processor_job_metadata"
+GPKG_JOB_METADATA_CREATE_SQL = """
+CREATE TABLE IF NOT EXISTS gpx_video_processor_job_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+"""
+GPKG_JOB_METADATA_DELETE_SQL = "DELETE FROM gpx_video_processor_job_metadata"
+GPKG_JOB_METADATA_INSERT_SQL = (
+    "INSERT INTO gpx_video_processor_job_metadata (key, value) VALUES (?, ?)"
+)
+GPKG_JOB_METADATA_SELECT_SQL = "SELECT key, value FROM gpx_video_processor_job_metadata"
 MARKING_LAYER_DISPLAY_NAME = "Geo360 Markings"
 VIEWER_PROJECTION_SPHERE = "sphere"
 VIEWER_PROJECTION_FLAT = "flat"
@@ -1171,8 +1182,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if feature is not None and self.frame_click_tool is not None:
             try:
                 self.frame_click_tool.highlightFeature(feature)
-            except Exception:
-                pass
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                self.notifyDebugText(f"Frame highlight could not be updated: {e}")
         if not selected_picked_target:
             self.centerMapOnFeature(feature)
         self.showFrameInViewer(frame_num)
@@ -1390,8 +1401,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if cap is not None:
                 try:
                     cap.release()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
 
     def inferViewerProjectionFromVideo(self, video_path):
         """動画サイズから投影方式の初期候補を返す。最終判断はUI選択値を保存する。"""
@@ -1556,8 +1567,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
-            except OSError:
-                pass
+            except OSError as e:
+                _geo360_ignored_error = e
 
     def writeViewerCommandState(self, state):
         """QGIS側で補完したビューア表示指示をviewer_command.jsonへ原子的に書き込む。"""
@@ -1697,7 +1708,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 if value is None:
                     continue
                 frames.append(int(value))
-            except Exception:
+            except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
         return sorted(set(frames))
 
@@ -1712,7 +1723,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             try:
                 if int(feature["frame"]) == target:
                     return feature
-            except Exception:
+            except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
         return None
 
@@ -1756,13 +1767,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         try:
             layer.removeSelection()
             layer.selectByIds([feature.id()])
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         try:
             if hasattr(self.iface, "setActiveLayer"):
                 self.iface.setActiveLayer(layer)
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         self.centerMapOnFeature(feature, layer=layer)
         return True
 
@@ -1868,8 +1879,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             authid = source_layer.crs().authid()
             if authid:
                 crs_authid = authid
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
 
         layer = QgsVectorLayer(f"Point?crs={crs_authid}", display_name, "memory")
         pr = layer.dataProvider()
@@ -1905,8 +1916,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             feature = QgsFeature(layer.fields())
             try:
                 feature.setGeometry(source_feature.geometry())
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
             attributes = []
             for field in layer.fields():
                 attributes.append(self.targetFeatureValue(source_feature, field.name()))
@@ -1922,8 +1933,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 layer.setCustomProperty("tenkaku.semantic_class", inferred_class)
                 layer.setCustomProperty("tenkaku.semantic_class_key", self.semanticClassKey(inferred_class))
                 layer.setName(self.candidateLayerDisplayNameWithAlias(layer.name(), inferred_class))
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return layer
 
     def createLayerSpatialIndex(self, layer):
@@ -1978,15 +1989,15 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 "gpx_video_processor/hidden_columns",
                 json.dumps(sorted(hidden), ensure_ascii=False),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
 
         try:
             config = layer.attributeTableConfig()
             try:
                 config.update(layer.fields())
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
             columns = config.columns()
             for column in columns:
                 name = str(getattr(column, "name", "") or "")
@@ -1995,12 +2006,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 try:
                     column.hidden = name in hidden
                     applied = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
             config.setColumns(columns)
             layer.setAttributeTableConfig(config)
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
 
         if QgsEditorWidgetSetup is not None:
             for column in hidden:
@@ -2013,8 +2024,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 try:
                     layer.setEditorWidgetSetup(index, QgsEditorWidgetSetup("Hidden", {}))
                     applied = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
         return applied
 
     def applyViewerTargetHiddenColumns(self, layer):
@@ -2035,8 +2046,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             return False
         try:
             symbol.setSize(0.0)
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         try:
             transparent = QtGui.QColor(0, 0, 0, 0)
             symbol.setColor(transparent)
@@ -2044,14 +2055,14 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 symbol_layer = symbol.symbolLayer(layer_index)
                 try:
                     symbol_layer.setStrokeColor(transparent)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 try:
                     symbol_layer.setFillColor(transparent)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    _geo360_ignored_error = e
+        except Exception as e:
+            _geo360_ignored_error = e
         try:
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
             layer.setCustomProperty("geo360view/marking_geometry_role", "viewer_restore_hint")
@@ -2106,17 +2117,10 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """GPKG内のプラグイン専用テーブルへジョブ状態を保存する。"""
         payload = self.jobMetadataPayload()
         with sqlite3.connect(gpkg_path) as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {GPKG_JOB_METADATA_TABLE} (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(f"DELETE FROM {GPKG_JOB_METADATA_TABLE}")
+            conn.execute(GPKG_JOB_METADATA_CREATE_SQL)
+            conn.execute(GPKG_JOB_METADATA_DELETE_SQL)
             conn.executemany(
-                f"INSERT INTO {GPKG_JOB_METADATA_TABLE} (key, value) VALUES (?, ?)",
+                GPKG_JOB_METADATA_INSERT_SQL,
                 [(str(key), json.dumps(value, ensure_ascii=False)) for key, value in payload.items()],
             )
             conn.commit()
@@ -2125,9 +2129,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """GPKG内のジョブメタデータを読む。未対応GPKGでは空dictを返す。"""
         try:
             with sqlite3.connect(gpkg_path) as conn:
-                rows = conn.execute(
-                    f"SELECT key, value FROM {GPKG_JOB_METADATA_TABLE}"
-                ).fetchall()
+                rows = conn.execute(GPKG_JOB_METADATA_SELECT_SQL).fetchall()
         except sqlite3.Error:
             return {}
 
@@ -2239,7 +2241,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         for directory in search_dirs:
             try:
                 names = os.listdir(directory)
-            except OSError:
+            except OSError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
             for name in names:
                 if not name.lower().endswith(".mp4"):
@@ -2275,7 +2277,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     point = feature.geometry().asPoint()
                     lon = float(point.x())
                     lat = float(point.y())
-                except Exception:
+                except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                     continue
             self.frame_position_by_frame[int(frame_value)] = (float(lat), float(lon))
 
@@ -2781,7 +2783,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 try:
                     if str(layer.subsetString() or "").strip():
                         return layer
-                except Exception:
+                except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                     continue
             active = self.activeCandidateLayer()
             if active is not None:
@@ -2802,22 +2804,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if hasattr(self.iface, "setActiveLayer"):
                 self.iface.setActiveLayer(layer)
                 changed = True
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         try:
             tree_view = self.iface.layerTreeView() if hasattr(self.iface, "layerTreeView") else None
             if tree_view is not None and hasattr(tree_view, "setCurrentLayer"):
                 tree_view.setCurrentLayer(layer)
                 changed = True
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         try:
             canvas = self.iface.mapCanvas()
             if canvas is not None and hasattr(canvas, "setCurrentLayer"):
                 canvas.setCurrentLayer(layer)
                 changed = True
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         return changed
 
     def syncNavigationLayerForMode(self, mode=None):
@@ -2870,13 +2872,13 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     root.insertChildNode(0, clone)
                     root.removeChildNode(group)
                     group = clone
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         if group is not None:
             try:
                 group.setExpanded(False)
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return group
 
     def addLayerToGroup(self, layer, group_name, checked=False):
@@ -2901,8 +2903,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if node is not None:
             try:
                 node.setItemVisibilityChecked(bool(checked))
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return node
 
     def removeLayerTreeGroupIfEmpty(self, group_name):
@@ -3125,8 +3127,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if ok:
             try:
                 layer.triggerRepaint()
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return ok
 
     def layerFieldDistinctValues(self, layer, field_name, limit=3):
@@ -3323,8 +3325,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 key = str(semantic_class or "")
                 hue = (sum((pos + 1) * ord(char) for pos, char in enumerate(key)) + int(index) * 47) % 360
                 symbol.setColor(QtGui.QColor.fromHsv(hue, 180, 220))
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return symbol
 
     def applySingleSymbolFromMap(self, layer, symbol_map, semantic_class=""):
@@ -3356,8 +3358,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if len(class_values) == 1:
             try:
                 layer.setName(self.candidateLayerDisplayNameWithAlias(layer.name(), class_values[0]))
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
             return self.applySingleSymbolFromMap(layer, symbol_map, class_values[0])
 
         categories = []
@@ -3373,7 +3375,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     symbol.clone() if hasattr(symbol, "clone") else symbol,
                     self.semanticClassDisplayName(semantic_class),
                 ))
-            except Exception:
+            except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
         if not categories:
             return False
@@ -3422,8 +3424,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     value = attr()
                     if value not in (None, ""):
                         return str(value)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
         data = getattr(node, "data", None)
         if callable(data):
             for role in (QT_DISPLAY_ROLE, QT_EDIT_ROLE, QT_USER_ROLE):
@@ -3431,7 +3433,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     value = data(role)
                     if value not in (None, ""):
                         return str(value)
-                except Exception:
+                except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                     continue
         return ""
 
@@ -3444,7 +3446,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if callable(attr):
                 try:
                     candidate = attr()
-                except Exception:
+                except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                     continue
                 if candidate is None:
                     continue
@@ -3454,8 +3456,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                         layer = layer_attr()
                         if layer is not None:
                             return layer
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _geo360_ignored_error = e
                 if self.isCandidateLayer(candidate):
                     return candidate
         return None
@@ -3610,8 +3612,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             if callable(method):
                 try:
                     return bool(method())
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
         return True
 
     def layerSelectedFeatureIds(self, layer):
@@ -3640,8 +3642,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             expression = QgsExpression(subset)
             if not expression.hasParserError():
                 request.setFilterExpression(subset)
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         return request
 
     def candidateFeatures(self, layer, selected_only=False):
@@ -4038,8 +4040,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 try:
                     if int(target.get(key)) > 0:
                         return True
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as e:
+                    _geo360_ignored_error = e
             return False
 
         targets = state.get("targets")
@@ -4126,8 +4128,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if target_id is not None:
             try:
                 return (str(video_name), int(frame_index), int(target_id))
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as e:
+                _geo360_ignored_error = e
 
         yaw = round(float(projection.get("target_yaw_to_camera_heading") or 0.0), 3)
         pitch = round(float(projection.get("target_pitch_deg") or 0.0), 3)
@@ -4150,7 +4152,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     int(feature.attribute(frame_idx)),
                     int(feature.attribute(target_idx)),
                 ))
-            except Exception:
+            except Exception:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
         self.saved_viewer_target_keys = keys
         return keys
@@ -4592,8 +4594,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             try:
                 signal = getattr(layer, signal_name)
                 signal.connect(lambda *args, layer=layer: self.markLayerSaveOnExit(layer))
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         return True
 
     def shouldSaveLayerOnExit(self, layer_id, layer):

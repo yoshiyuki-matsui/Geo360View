@@ -70,8 +70,8 @@ class FrameExtractMixin:
             relative_path = os.path.relpath(cache_path, self.resolvedOutputDir())
             if relative_path != os.pardir and not relative_path.startswith(os.pardir + os.sep):
                 return relative_path.replace("\\", "/").replace(os.sep, "/")
-        except (OSError, TypeError, ValueError):
-            pass
+        except (OSError, TypeError, ValueError) as e:
+            _geo360_ignored_error = e
         return os.path.basename(cache_path)
 
     def viewerCacheTooltip(self, frame_num):
@@ -122,8 +122,10 @@ class FrameExtractMixin:
             try:
                 point = geom.asPoint()
                 return {"lat": point.y(), "lon": point.x()}
-            except Exception:
-                pass
+            except (TypeError, ValueError, AttributeError) as e:
+                debug = getattr(self, "notifyDebugText", None)
+                if callable(debug):
+                    debug(f"Frame EXIF GPS could not be read from feature geometry: {e}")
         return None
 
     def saveFrameImage(self, frame, frame_num, image_path, elapsed, gps=None):

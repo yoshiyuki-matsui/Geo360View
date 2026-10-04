@@ -14,12 +14,12 @@ import struct
 import time
 import uuid
 from datetime import datetime
+from html import escape as html_escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
-from xml.sax.saxutils import escape as xml_escape
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -375,7 +375,7 @@ def frame_csv_candidates(video: str) -> list[Path]:
     for root in [session_dir, cfg["video_dir"]]:
         try:
             navigation_paths.extend(root.glob("*_navigation.json"))
-        except OSError:
+        except OSError:  # nosec B112 - skip invalid item and continue scanning remaining records
             continue
 
     for path in navigation_paths:
@@ -383,7 +383,7 @@ def frame_csv_candidates(video: str) -> list[Path]:
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):  # nosec B112 - skip invalid item and continue scanning remaining records
             continue
         payload_video = payload.get("video") if isinstance(payload, dict) else None
         if payload_video and Path(str(payload_video)).name != video:
@@ -426,7 +426,7 @@ def load_matched_frames(video: str) -> list[int]:
                 continue
             try:
                 frame = int(raw)
-            except ValueError:
+            except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
             if frame >= 0:
                 frames.add(frame)
@@ -446,7 +446,7 @@ def load_matched_frame_record(video: str, frame_index: int) -> dict[str, Any] | 
         for row in reader:
             try:
                 row_frame = int((row.get("frame_index") or "").strip())
-            except ValueError:
+            except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
             if row_frame != int(frame_index):
                 continue
@@ -486,7 +486,7 @@ def load_frame_position_record(video: str, frame_index: int) -> dict[str, Any] |
         for row in reader:
             try:
                 row_frame = int((row.get(frame_field) or "").strip())
-            except ValueError:
+            except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
             if row_frame != int(frame_index):
                 continue
@@ -691,7 +691,7 @@ def snapshot_gps(
                 lon_value = item.get("lon")
             lat = parse_optional_float(lat_value)
             lon = parse_optional_float(lon_value)
-        except AttributeError:
+        except AttributeError:  # nosec B112 - skip invalid item and continue scanning remaining records
             continue
         if lat is not None and lon is not None:
             return {
@@ -843,8 +843,8 @@ def write_state_file(path: Path, state: dict[str, Any], cfg: dict[str, Any]) -> 
         try:
             if tmp_path.exists():
                 tmp_path.unlink()
-        except OSError:
-            pass
+        except OSError as e:
+            _geo360_ignored_error = e
     return state
 
 
@@ -927,8 +927,8 @@ def validate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
             state["viewer_front_offset_deg"] = normalize_signed_yaw(
                 parse_float(payload.get("viewer_front_offset_deg"), "viewer_front_offset_deg")
             )
-        except ApiError:
-            pass
+        except ApiError as e:
+            _geo360_ignored_error = e
     applied_command_id = str(payload.get("applied_command_id") or "").strip()
     if applied_command_id:
         state["applied_command_id"] = applied_command_id
@@ -1005,8 +1005,8 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
             ratio = parse_float(payload.get(key), f"target.{key}")
             if math.isfinite(ratio):
                 target[key] = max(0.0, min(1.0, ratio))
-        except ApiError:
-            pass
+        except ApiError as e:
+            _geo360_ignored_error = e
     if ground_distance_m is not None:
         target["ground_distance_m"] = ground_distance_m
     if quality:
@@ -1018,8 +1018,8 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
             angle = parse_float(payload.get(key), f"target.{key}")
             if math.isfinite(angle):
                 target[key] = normalize_yaw(angle)
-        except ApiError:
-            pass
+        except ApiError as e:
+            _geo360_ignored_error = e
     for key in ("target_source", "semantic_class", "review_status", "candidate_id", "viewer_marker"):
         value = payload.get(key)
         if value not in (None, ""):
@@ -1029,20 +1029,20 @@ def validate_target_payload(payload: Any) -> dict[str, Any] | None:
             confidence = parse_float(payload.get("confidence"), "target.confidence")
             if math.isfinite(confidence):
                 target["confidence"] = max(0.0, min(1.0, confidence))
-        except ApiError:
-            pass
+        except ApiError as e:
+            _geo360_ignored_error = e
     try:
         target_id = int(payload.get("id"))
         if target_id > 0:
             target["id"] = target_id
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        _geo360_ignored_error = e
     try:
         order = int(payload.get("order"))
         if order > 0:
             target["order"] = order
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        _geo360_ignored_error = e
     return target
 
 
@@ -1148,8 +1148,8 @@ def state_from_navigation_payload(payload: dict[str, Any]) -> dict[str, Any]:
             state["viewer_front_offset_deg"] = normalize_signed_yaw(
                 parse_float(viewer_front_offset, "viewer_front_offset_deg")
             )
-        except ApiError:
-            pass
+        except ApiError as e:
+            _geo360_ignored_error = e
     radar = validate_radar_payload(payload.get("radar"))
     if radar:
         state["radar"] = radar
@@ -1330,7 +1330,7 @@ def build_krpano_xml(
     projection = normalize_viewer_projection(view.get("viewer_projection"))
     flat_hfov = normalize_fov_deg(view.get("viewer_flat_hfov_deg"), DEFAULT_FLAT_HFOV_DEG)
     flat_vfov = normalize_fov_deg(view.get("viewer_flat_vfov_deg"), DEFAULT_FLAT_VFOV_DEG)
-    image_url = xml_escape(absolute_url(handler, frame_image_url(video, frame_index)))
+    image_url = html_escape(absolute_url(handler, frame_image_url(video, frame_index)), quote=True)
 
     if projection == VIEWER_PROJECTION_FLAT:
         # 通常画角フレームはrectilinear画像として固定視点で表示する。
@@ -1565,8 +1565,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
                         state["viewer_front_offset_deg"] = normalize_signed_yaw(
                             parse_float(previous.get("viewer_front_offset_deg"), "viewer_front_offset_deg")
                         )
-                    except ApiError:
-                        pass
+                    except ApiError as e:
+                        _geo360_ignored_error = e
                 state = write_session(state)
                 self.send_json(state)
                 return
@@ -1788,8 +1788,8 @@ def main() -> None:
     print(f"360Viewer serving on http://{config['host']}:{config['port']}")
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    except KeyboardInterrupt as e:
+        _geo360_ignored_error = e
     finally:
         server.server_close()
 

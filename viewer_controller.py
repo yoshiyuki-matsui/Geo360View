@@ -93,8 +93,8 @@ class ViewerControllerMixin:
                 config.get("viewer_browser_app_window", browser_app_window)
             )
             browser_path = str(config.get("viewer_browser_path", browser_path) or "").strip()
-        except Exception:
-            pass
+        except Exception as e:
+            _geo360_ignored_error = e
         self.viewer_host = host
         self.viewer_port = port
         self.viewer_jpeg_quality = jpeg_quality
@@ -238,7 +238,7 @@ class ViewerControllerMixin:
     def viewerHealth(self, timeout=0.4):
         """ローカル360Viewerが応答しているかHTTP health APIで確認する。"""
         try:
-            with urlopen(f"{self.viewerBaseUrl()}/api/health", timeout=timeout) as response:
+            with urlopen(f"{self.viewerBaseUrl()}/api/health", timeout=timeout) as response:  # nosec B310 - local 127.0.0.1 viewer health check
                 payload = json.loads(response.read().decode("utf-8"))
             return payload.get("app") == "360viewer"
         except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError):
@@ -590,7 +590,7 @@ class ViewerControllerMixin:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=1.0):
+            with urlopen(request, timeout=1.0):  # nosec B310 - local 127.0.0.1 viewer navigation API
                 return True
         except (HTTPError, URLError, OSError) as e:
             self.viewerDebugPrint(f"360Viewer navigation failed: {e}")

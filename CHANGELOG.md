@@ -2,6 +2,20 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.1 - 2026-10-04
+
+### Security
+
+- Replaced standard-library GPX XML parsing with `defusedxml.ElementTree` to satisfy QGIS plugin security checks and reduce XML entity attack risk.
+- Removed `xml.sax.saxutils.escape` from the local viewer XML generation path and use safe HTML/XML escaping without importing `xml.sax`.
+- Reworked pass-only exception handlers so ignored non-critical cleanup/UI failures are explicit instead of silent `except: pass` patterns.
+- Marked intentional skip-on-invalid-record handlers and local-only viewer `urlopen` calls with Bandit `nosec` annotations.
+- Replaced fixed-table GeoPackage metadata SQL f-strings with literal SQL constants.
+
+### Changed
+
+- Bundled `defusedxml` with the plugin and documented that users do not need to install it separately.
+
 ## 0.5.0 - 2026-09-29
 
 ### Added

@@ -97,7 +97,7 @@ For vulnerability or privacy reports, do not post sensitive details in public is
 
 For normal use, install the release ZIP from GitHub Releases.
 
-1. Download a release ZIP such as `Geo360View-0.5.0.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
+1. Download a release ZIP such as `Geo360View-0.5.1.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
 2. Open QGIS.
 3. Open `Plugins` -> `Manage and Install Plugins`.
 4. Choose `Install from ZIP` and select the downloaded ZIP file.
@@ -126,7 +126,7 @@ python -m pip check
 python -c "import cv2; print(cv2.__version__)"
 ```
 
-If the second command prints an OpenCV version, the QGIS Python environment can import `cv2`.
+If the command prints an OpenCV version, the QGIS Python environment can import `cv2`.
 
 After installing OpenCV, **fully quit and restart QGIS**. Python packages installed from OSGeo4W Shell are not loaded into an already running QGIS process.
 
@@ -141,6 +141,7 @@ python -c "import cv2; print('opencv', cv2.__version__)"
 Notes:
 
 - Avoid upgrading `numpy` manually unless you have to. QGIS, GDAL, and OSGeo4W packages share the same Python environment, and an unnecessary `numpy` upgrade may create binary compatibility issues.
+- Geo360 View bundles `defusedxml` for safer GPX XML parsing, so users do not need to install it separately.
 - Prefer installing/updating `opencv-python` first, then run `python -m pip check`.
 - To keep a record before changing the environment:
 

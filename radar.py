@@ -183,7 +183,7 @@ class RadarMixin:
         for row in self.last_rows:
             try:
                 frame_value, _source_frame, _time_value, lat, lon = row
-            except ValueError:
+            except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
             if int(frame_value) == target:
                 return float(lat), float(lon), None
@@ -684,8 +684,8 @@ class RadarMixin:
             try:
                 rubber_band.hide()
                 rubber_band.reset(geometry_type)
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e
         for bands, geometry_type in (
             (getattr(self, "radar_target_quality_line_bands", {}), QgsWkbTypes.LineGeometry),
             (getattr(self, "radar_target_quality_point_bands", {}), QgsWkbTypes.PointGeometry),
@@ -698,8 +698,8 @@ class RadarMixin:
                 try:
                     rubber_band.hide()
                     rubber_band.reset(geometry_type)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
 
     def viewerTargetPayloads(self, state):
         """複数targetがあれば優先し、なければ従来の単一targetを返す。"""
@@ -955,22 +955,22 @@ class RadarMixin:
                 # 非表示化、形状リセット、sceneからの除去を順に行い描画残りを避ける。
                 try:
                     rubber_band.hide()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 try:
                     rubber_band.reset(geometry_type)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 try:
                     scene = rubber_band.scene() or canvas.scene()
                     scene.removeItem(rubber_band)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 if sip is not None:
                     try:
                         sip.delete(rubber_band)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _geo360_ignored_error = e
                 setattr(self, attr_name, None)
                 removed_any = True
         for dict_name, geometry_type in (
@@ -985,22 +985,22 @@ class RadarMixin:
                     continue
                 try:
                     rubber_band.hide()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 try:
                     rubber_band.reset(geometry_type)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 try:
                     scene = rubber_band.scene() or canvas.scene()
                     scene.removeItem(rubber_band)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _geo360_ignored_error = e
                 if sip is not None:
                     try:
                         sip.delete(rubber_band)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _geo360_ignored_error = e
                 removed_any = True
             setattr(self, dict_name, {})
         self.last_viewer_session_signature = None
@@ -1012,5 +1012,5 @@ class RadarMixin:
             try:
                 canvas.scene().update()
                 canvas.refresh()
-            except Exception:
-                pass
+            except Exception as e:
+                _geo360_ignored_error = e

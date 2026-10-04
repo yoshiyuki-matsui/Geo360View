@@ -106,7 +106,7 @@ Geo360 Viewは、ユーザのPC上でローカルに動作するQGISプラグイ
 
 通常は、GitHub Releasesで配布しているZIPを使ってインストールしてください。
 
-1. [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases) から `Geo360View-0.5.0.zip` などの配布ZIPをダウンロードします。
+1. [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases) から `Geo360View-0.5.1.zip` などの配布ZIPをダウンロードします。
 2. QGISを起動します。
 3. `プラグイン` → `プラグインの管理とインストール` を開きます。
 4. `ZIPからインストール` を選び、ダウンロードしたZIPを指定します。
@@ -150,6 +150,7 @@ python -c "import cv2; print('opencv', cv2.__version__)"
 注意:
 
 - `pip install --upgrade numpy` は最終手段にしてください。QGIS/GDAL/OSGeo4WのPython環境では、`numpy`を不用意に上げると他のライブラリと不整合になることがあります。
+- `defusedxml` はGPX XMLを安全に読むため、Geo360 Viewに同梱しています。ユーザが別途インストールする必要はありません。
 - まずは `opencv-python` を入れ、`python -m pip check` で不整合が残っていないか確認してください。
 - インストール前の状態を残したい場合は、次のコマンドでパッケージ一覧を保存できます。
 
@@ -232,3 +233,6 @@ https://github.com/yoshiyuki-matsui/Geo360View/discussions
 
 業務フローへの組み込み、自動POI生成、物体・損傷検出モデル、検出結果レイヤ出力、レイヤスタイル適用、報告書生成などのご依頼は下記までご連絡ください:
 rdcenter.nakashacreative@gmail.com
+
+本プロジェクトは予告なく公開範囲、配布方法、保守方針を変更する場合があります。
+ただし、公開済みのOSSライセンスに基づく利用・fork・再配布を取り消すものではありません。

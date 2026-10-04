@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 import math
 import re
 import unicodedata
-import xml.etree.ElementTree as ET
+try:
+    from ..defusedxml import ElementTree as ET
+except ImportError:
+    from defusedxml import ElementTree as ET
 
 
 TIME_FIELD_NAMES = {
@@ -245,7 +248,7 @@ def _parse_gpx_time(value):
 
     try:
         return _to_utc_naive(datetime.fromisoformat(value))
-    except ValueError:
+    except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
         for fmt in (
             "%Y-%m-%d %H:%M:%S.%f",
             "%Y-%m-%dT%H:%M:%S.%f",
@@ -258,7 +261,7 @@ def _parse_gpx_time(value):
         ):
             try:
                 return datetime.strptime(value, fmt)
-            except ValueError:
+            except ValueError:  # nosec B112 - skip invalid item and continue scanning remaining records
                 continue
     return None
 
@@ -284,7 +287,7 @@ def read_gpx(gpx_path, diagnostics=False):
         try:
             lat = float(point.get("lat"))
             lon = float(point.get("lon"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # nosec B112 - skip invalid item and continue scanning remaining records
             continue
 
         candidates = _time_candidates(point)
