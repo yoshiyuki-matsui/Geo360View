@@ -4918,7 +4918,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             layer.updateFields()
 
             features = []
-            for row_index, (frame_num, source_frame, time, lat, lon) in enumerate(rows):
+            for row_index, (frame_num, source_frame, timestamp, lat, lon) in enumerate(rows):
                 match = matches[row_index]
                 aligned_lat = match["lat"] if match else lat
                 aligned_lon = match["lon"] if match else lon
@@ -4928,7 +4928,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                     frame_num,
                     source_frame,
                     self.processFrameShiftValue(),
-                    _to_qdatetime(time),
+                    _to_qdatetime(timestamp),
                     lat,
                     lon,
                     aligned_lat,
@@ -5024,7 +5024,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 writer.writeheader()
 
                 frame_shift = self.processFrameShiftValue()
-                for row_index, (frame_num, source_frame, time, lat, lon) in enumerate(rows):
+                for row_index, (frame_num, source_frame, timestamp, lat, lon) in enumerate(rows):
                     match = matches[row_index]
                     aligned_lat = match["lat"] if match else lat
                     aligned_lon = match["lon"] if match else lon
@@ -5035,7 +5035,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                         "source_frame": source_frame,
                         "frame_shift": frame_shift,
                         "image_path": image_path,
-                        "timestamp": _format_timestamp(time),
+                        "timestamp": _format_timestamp(timestamp),
                         "latitude": f"{lat:.9f}",
                         "longitude": f"{lon:.9f}",
                         "aligned_latitude": f"{aligned_lat:.9f}",
@@ -5058,7 +5058,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                             "source_frame": source_frame,
                             "frame_shift": frame_shift,
                             "image_path": image_path,
-                            "timestamp": _format_timestamp(time),
+                            "timestamp": _format_timestamp(timestamp),
                             "kp": match["kp"],
                             "reference_id": match.get("reference_id", ""),
                             "reference_name": match.get("reference_name", ""),

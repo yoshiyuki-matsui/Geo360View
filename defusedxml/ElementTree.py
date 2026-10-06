@@ -61,12 +61,12 @@ def _get_py3_cls():
         elif hasattr(etree_pkg, "ElementTree"):
             del etree_pkg.ElementTree
 
-    _XMLParser = pure_pymod.XMLParser
-    _iterparse = pure_pymod.iterparse
+    xml_parser_class = pure_pymod.XMLParser
+    iterparse_function = pure_pymod.iterparse
     # patch pure module to use ParseError from C extension
     pure_pymod.ParseError = ParseError
 
-    return _XMLParser, _iterparse
+    return xml_parser_class, iterparse_function
 
 
 if PY3:

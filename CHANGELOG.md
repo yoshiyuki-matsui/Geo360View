@@ -2,6 +2,13 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.3 - 2026-10-06
+
+### Changed
+
+- Cleaned up informational QGIS repository checks by removing shadowed variable names in frame export code.
+- Adjusted bundled `defusedxml` file permissions and local variable names to avoid packaging and lint warnings.
+
 ## 0.5.2 - 2026-10-04
 
 ### Security
