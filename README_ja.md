@@ -106,7 +106,7 @@ Geo360 Viewは、ユーザのPC上でローカルに動作するQGISプラグイ
 
 通常は、GitHub Releasesで配布しているZIPを使ってインストールしてください。
 
-1. [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases) から `Geo360View-0.5.3.zip` などの配布ZIPをダウンロードします。
+1. [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases) から `Geo360View-0.5.4.zip` などの配布ZIPをダウンロードします。
 2. QGISを起動します。
 3. `プラグイン` → `プラグインの管理とインストール` を開きます。
 4. `ZIPからインストール` を選び、ダウンロードしたZIPを指定します。

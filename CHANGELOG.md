@@ -2,6 +2,12 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.4 - 2026-10-06
+
+### Changed
+
+- Removed the remaining Python 2 compatibility aliases from bundled `defusedxml.ElementTree` to clear repository informational lint warnings.
+
 ## 0.5.3 - 2026-10-06
 
 ### Changed

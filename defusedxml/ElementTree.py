@@ -14,13 +14,7 @@ from xml.etree.ElementTree import TreeBuilder as _TreeBuilder  # nosec B405 - ve
 from xml.etree.ElementTree import parse as _parse  # nosec B405 - vendored defusedxml wrapper
 from xml.etree.ElementTree import tostring  # nosec B405 - vendored defusedxml wrapper
 
-from .common import PY3
-
-if PY3:
-    import importlib
-else:
-    from xml.etree.ElementTree import XMLParser as _XMLParser  # nosec B405 - vendored defusedxml wrapper
-    from xml.etree.ElementTree import iterparse as _iterparse  # nosec B405 - vendored defusedxml wrapper
+import importlib
 
 
 from .common import (
@@ -69,14 +63,13 @@ def _get_py3_cls():
     return xml_parser_class, iterparse_function
 
 
-if PY3:
-    _XMLParser, _iterparse = _get_py3_cls()
+_BASE_XML_PARSER, _BASE_ITERPARSE = _get_py3_cls()
 
 
 _sentinel = object()
 
 
-class DefusedXMLParser(_XMLParser):
+class DefusedXMLParser(_BASE_XML_PARSER):
     def __init__(
         self,
         html=_sentinel,
@@ -86,8 +79,7 @@ class DefusedXMLParser(_XMLParser):
         forbid_entities=True,
         forbid_external=True,
     ):
-        # Python 2.x old style class
-        _XMLParser.__init__(self, target=target, encoding=encoding)
+        _BASE_XML_PARSER.__init__(self, target=target, encoding=encoding)
         if html is not _sentinel:
             # the 'html' argument has been deprecated and ignored in all
             # supported versions of Python. Python 3.8 finally removed it.
@@ -103,10 +95,7 @@ class DefusedXMLParser(_XMLParser):
         self.forbid_dtd = forbid_dtd
         self.forbid_entities = forbid_entities
         self.forbid_external = forbid_external
-        if PY3:
-            parser = self.parser
-        else:
-            parser = self._parser
+        parser = self.parser
         if self.forbid_dtd:
             parser.StartDoctypeDeclHandler = self.defused_start_doctype_decl
         if self.forbid_entities:
@@ -136,7 +125,7 @@ class DefusedXMLParser(_XMLParser):
 XMLTreeBuilder = XMLParse = XMLParser = DefusedXMLParser
 
 parse, iterparse, fromstring = _generate_etree_functions(
-    DefusedXMLParser, _TreeBuilder, _parse, _iterparse
+    DefusedXMLParser, _TreeBuilder, _parse, _BASE_ITERPARSE
 )
 XML = fromstring
 
