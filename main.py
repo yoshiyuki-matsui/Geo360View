@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox
 )
 from qgis.PyQt.QtCore import (
-    QSettings, QTimer, QVariant, Qt
+    QSettings, QTimer, Qt
 )
 from qgis.core import (
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY,
@@ -58,6 +58,10 @@ from .map_tools import FrameIdentifyTool
 from .messages import message_text, ui_text
 from .processor import Geo360View
 from .qt_compat import (
+    QT_FIELD_DATETIME,
+    QT_FIELD_DOUBLE,
+    QT_FIELD_INT,
+    QT_FIELD_STRING,
     QT_ACTIVE_WINDOW_FOCUS_REASON,
     QT_ALIGN_CENTER,
     QT_DISPLAY_ROLE,
@@ -117,19 +121,19 @@ VIEWER_TARGET_HIDDEN_COLUMNS = (
 )
 
 VIEWER_TARGET_FIELD_DEFS = (
-    ("video", QVariant.String),
-    ("frame", QVariant.Int),
-    ("target_id", QVariant.Int),
-    ("target_order", QVariant.Int),
-    ("x_ratio", QVariant.Double),
-    ("y_ratio", QVariant.Double),
-    ("yaw_delta", QVariant.Double),
-    ("target_yaw", QVariant.Double),
-    ("target_pitch", QVariant.Double),
-    ("view_yaw", QVariant.Double),
-    ("view_pitch", QVariant.Double),
-    ("view_zoom", QVariant.Double),
-    ("created_at", QVariant.String),
+    ("video", QT_FIELD_STRING),
+    ("frame", QT_FIELD_INT),
+    ("target_id", QT_FIELD_INT),
+    ("target_order", QT_FIELD_INT),
+    ("x_ratio", QT_FIELD_DOUBLE),
+    ("y_ratio", QT_FIELD_DOUBLE),
+    ("yaw_delta", QT_FIELD_DOUBLE),
+    ("target_yaw", QT_FIELD_DOUBLE),
+    ("target_pitch", QT_FIELD_DOUBLE),
+    ("view_yaw", QT_FIELD_DOUBLE),
+    ("view_pitch", QT_FIELD_DOUBLE),
+    ("view_zoom", QT_FIELD_DOUBLE),
+    ("created_at", QT_FIELD_STRING),
 )
 
 VIEWER_CANDIDATE_HIDDEN_COLUMNS = (
@@ -4898,22 +4902,22 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             pr = layer.dataProvider()
 
             pr.addAttributes([
-                QgsField("frame", QVariant.Int),
-                QgsField("source_frame", QVariant.Int),
-                QgsField("frame_shift", QVariant.Int),
-                QgsField("timestamp", QVariant.DateTime),
-                QgsField("latitude", QVariant.Double),
-                QgsField("longitude", QVariant.Double),
-                QgsField("aligned_latitude", QVariant.Double),
-                QgsField("aligned_longitude", QVariant.Double),
-                QgsField("kp", QVariant.String),
-                QgsField("reference_id", QVariant.String),
-                QgsField("reference_name", QVariant.String),
-                QgsField("reference_label", QVariant.String),
-                QgsField("kp_distance_m", QVariant.Double),
-                QgsField("kp_latitude", QVariant.Double),
-                QgsField("kp_longitude", QVariant.Double),
-                QgsField("kp_match", QVariant.Int),
+                QgsField("frame", QT_FIELD_INT),
+                QgsField("source_frame", QT_FIELD_INT),
+                QgsField("frame_shift", QT_FIELD_INT),
+                QgsField("timestamp", QT_FIELD_DATETIME),
+                QgsField("latitude", QT_FIELD_DOUBLE),
+                QgsField("longitude", QT_FIELD_DOUBLE),
+                QgsField("aligned_latitude", QT_FIELD_DOUBLE),
+                QgsField("aligned_longitude", QT_FIELD_DOUBLE),
+                QgsField("kp", QT_FIELD_STRING),
+                QgsField("reference_id", QT_FIELD_STRING),
+                QgsField("reference_name", QT_FIELD_STRING),
+                QgsField("reference_label", QT_FIELD_STRING),
+                QgsField("kp_distance_m", QT_FIELD_DOUBLE),
+                QgsField("kp_latitude", QT_FIELD_DOUBLE),
+                QgsField("kp_longitude", QT_FIELD_DOUBLE),
+                QgsField("kp_match", QT_FIELD_INT),
             ])
             layer.updateFields()
 

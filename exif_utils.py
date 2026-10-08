@@ -1,5 +1,6 @@
 """外部EXIFライブラリに依存せず、JPEGへ最小EXIFを埋め込むヘルパー。"""
 
+import math
 import struct
 
 from .constants import PLUGIN_TITLE
@@ -24,8 +25,25 @@ def _decimal_to_dms_rationals(value):
     ]
 
 
+def _valid_gps(gps):
+    """有限かつWGS84の範囲内にある緯度経度だけをEXIFへ渡す。"""
+    if gps is None:
+        return None
+    try:
+        lat = float(gps["lat"])
+        lon = float(gps["lon"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return None
+    return {"lat": lat, "lon": lon}
+
+
 def _minimal_exif_payload(tags, gps=None):
     """ImageDescription/Software/DateTime/GPSだけを持つEXIF payloadを作る。"""
+    gps = _valid_gps(gps)
     entries = []
     data = bytearray()
 

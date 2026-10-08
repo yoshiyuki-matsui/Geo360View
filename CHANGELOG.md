@@ -2,6 +2,29 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.5 - 2026-10-08
+
+### Changed
+
+- Declare QGIS 4 / Qt6 support up to the verified version 4.2.2 with qgisMaximumVersion=4.2.2 while retaining QGIS 3.40 compatibility.
+- Use QMetaType field types and Qgis.GeometryType for layer creation and radar overlays.
+- Set experimental=False for the regular 0.5.5 release after user validation on QGIS 3.40 and 4.2.2.
+
+### Fixed
+
+- Fix map-click frame selection on Qt6 by reading QgsMapMouseEvent.originalPixelPoint() instead of the removed x()/y() shortcuts.
+- Reject non-finite numeric attributes and omit invalid GPS EXIF coordinates so missing Marking geometry does not prevent JPEG saving.
+- Report the failing extraction stage and print the full traceback instead of suggesting a video codec problem for every frame-display error.
+
+### Validation
+
+- Added regressions for Qt6 enum handling, field schemas, keyboard events, map clicks, non-finite GPS values, and Marking navigation boundaries; 56 Python unit tests pass.
+- The user confirmed that ZIP-installed 0.5.5 runs on Windows with QGIS 4.2.2.
+- The user also confirmed Marking creation and saving, view restoration, and snapshot saving on QGIS 4.2.2.
+- The user confirmed that tmp.gpkg is created and saved when closing the plugin after video/track alignment.
+- After the numeric/GPS fixes, the user confirmed that neither the NaN warning nor the misleading codec message appears during the tested operations.
+- The user confirmed operation on QGIS 3.40 with no apparent regressions.
+
 ## 0.5.4 - 2026-10-06
 
 ### Changed

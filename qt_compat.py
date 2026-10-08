@@ -1,8 +1,8 @@
 """Qt5/Qt6で移動したenum値を吸収する互換定義。"""
 
-from qgis.PyQt.QtCore import QEvent, QProcess, Qt
+from qgis.PyQt.QtCore import QEvent, QMetaType, QProcess, Qt
 from qgis.PyQt.QtWidgets import QMessageBox, QSizePolicy
-from qgis.core import QgsVectorFileWriter, QgsWkbTypes
+from qgis.core import Qgis, QgsVectorFileWriter, QgsWkbTypes
 from qgis.gui import QgsMapToolIdentifyFeature
 
 
@@ -36,6 +36,20 @@ def object_enum(owner, group_name, name):
     return getattr(owner, name)
 
 
+def geometry_enum(name):
+    """Qgis.GeometryTypeを優先し、旧QgsWkbTypesへフォールバックする。"""
+    group = getattr(Qgis, "GeometryType", None)
+    if group is not None:
+        return getattr(group, name)
+    return object_enum(QgsWkbTypes, "GeometryType", name + "Geometry")
+
+
+QT_FIELD_STRING = object_enum(QMetaType, "Type", "QString")
+QT_FIELD_INT = object_enum(QMetaType, "Type", "Int")
+QT_FIELD_DOUBLE = object_enum(QMetaType, "Type", "Double")
+QT_FIELD_DATETIME = object_enum(QMetaType, "Type", "QDateTime")
+
+
 QT_ACTIVE_WINDOW_FOCUS_REASON = qt_enum("FocusReason", "ActiveWindowFocusReason")
 QT_ALIGN_CENTER = qt_enum("AlignmentFlag", "AlignCenter")
 QT_DISPLAY_ROLE = qt_enum("ItemDataRole", "DisplayRole")
@@ -65,7 +79,7 @@ QGIS_IDENTIFY_TOP_DOWN_STOP_AT_FIRST = object_enum(
     "IdentifyMode",
     "TopDownStopAtFirst",
 )
-QGIS_WKB_LINE_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "LineGeometry")
-QGIS_WKB_POINT_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "PointGeometry")
-QGIS_WKB_POLYGON_GEOMETRY = object_enum(QgsWkbTypes, "GeometryType", "PolygonGeometry")
+QGIS_WKB_LINE_GEOMETRY = geometry_enum("Line")
+QGIS_WKB_POINT_GEOMETRY = geometry_enum("Point")
+QGIS_WKB_POLYGON_GEOMETRY = geometry_enum("Polygon")
 QGIS_VECTOR_WRITER_NO_ERROR = object_enum(QgsVectorFileWriter, "WriterError", "NoError")

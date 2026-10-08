@@ -3,6 +3,7 @@
 import os
 import re
 import time
+import traceback
 from datetime import datetime
 
 from qgis.PyQt import QtGui
@@ -10,7 +11,7 @@ from qgis.PyQt.QtCore import Qt
 
 from .common import _parse_float
 from .constants import PLUGIN_TITLE
-from .exif_utils import _insert_exif, _minimal_exif_payload
+from .exif_utils import _insert_exif, _minimal_exif_payload, _valid_gps
 from .qt_compat import QT_KEEP_ASPECT_RATIO, QT_SMOOTH_TRANSFORMATION
 
 
@@ -114,14 +115,15 @@ class FrameExtractMixin:
             if feature.fields().indexFromName(lat_name) >= 0 and feature.fields().indexFromName(lon_name) >= 0:
                 lat = _parse_float(feature[lat_name])
                 lon = _parse_float(feature[lon_name])
-                if lat is not None and lon is not None:
-                    return {"lat": lat, "lon": lon}
+                gps = _valid_gps({"lat": lat, "lon": lon})
+                if gps is not None:
+                    return gps
 
         geom = feature.geometry()
         if geom and not geom.isEmpty():
             try:
                 point = geom.asPoint()
-                return {"lat": point.y(), "lon": point.x()}
+                return _valid_gps({"lat": point.y(), "lon": point.x()})
             except (TypeError, ValueError, AttributeError) as e:
                 debug = getattr(self, "notifyDebugText", None)
                 if callable(debug):
@@ -130,6 +132,7 @@ class FrameExtractMixin:
 
     def saveFrameImage(self, frame, frame_num, image_path, elapsed, gps=None):
         """OpenCVフレームをJPEG化し、最小EXIFを付けて保存する。"""
+        gps = _valid_gps(gps)
         try:
             import cv2
         except ImportError as e:
@@ -211,6 +214,7 @@ class FrameExtractMixin:
             return
 
         cap = None
+        stage = self.uiText("ui.preview.stage.open")
         try:
             open_start = time.perf_counter()
             cap = cv2.VideoCapture(video_file)
@@ -219,6 +223,7 @@ class FrameExtractMixin:
                 return
             open_elapsed = time.perf_counter() - open_start
 
+            stage = self.uiText("ui.preview.stage.read")
             seek_start = time.perf_counter()
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
             ok, frame = cap.read()
@@ -227,6 +232,7 @@ class FrameExtractMixin:
                 self.notifyWarning("frame_read_failed", frame=frame_num)
                 return
 
+            stage = self.uiText("ui.preview.stage.save")
             save_start = time.perf_counter()
             self.saveFrameImage(
                 frame,
@@ -237,7 +243,8 @@ class FrameExtractMixin:
             )
             save_elapsed = time.perf_counter() - save_start
         except Exception as e:
-            self.notifyWarning("frame_extract_failed", error=e)
+            traceback.print_exc()
+            self.notifyWarning("frame_extract_failed_at_stage", frame=frame_num, stage=stage, error=e)
             return
         finally:
             if cap is not None:

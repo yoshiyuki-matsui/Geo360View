@@ -4,9 +4,11 @@
 
 Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map, with viewer-side Markings that can restore bookmarked directions later.
 
+Version **0.5.5** adds QGIS **4 / Qt6** support up to **4.2.2** and fixes map-click frame selection on Qt6. QGIS 3.40 and later 3.x versions remain supported.
+
 ## Japanese-first support
 
-Geo360 View is currently released as a trial version. The primary support language is Japanese.
+Version 0.5.5 is prepared as a regular release, with operation confirmed by the user on QGIS 3.40 and 4.2.2. The primary support language is Japanese.
 
 For installation, usage, operation reports, bug reports, and discussions, please start with the Japanese README:
 
@@ -89,7 +91,7 @@ For vulnerability or privacy reports, do not post sensitive details in public is
 
 ## Requirements
 
-- QGIS 3.40 or later.
+- QGIS 3.40 or later in the 3.x series, or QGIS 4 up to 4.2.2 (Qt6).
 - QGIS Python with OpenCV (`cv2`) available.
 - A browser that can open the local viewer, preferably Edge or Chrome.
 
@@ -97,7 +99,7 @@ For vulnerability or privacy reports, do not post sensitive details in public is
 
 For normal use, install the release ZIP from GitHub Releases.
 
-1. Download a release ZIP such as `Geo360View-0.5.4.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
+1. Download a release ZIP such as `Geo360View-0.5.5.zip` from [GitHub Releases](https://github.com/yoshiyuki-matsui/Geo360View/releases).
 2. Open QGIS.
 3. Open `Plugins` -> `Manage and Install Plugins`.
 4. Choose `Install from ZIP` and select the downloaded ZIP file.
@@ -192,7 +194,7 @@ For 360-degree videos, cached frame images are equirectangular intermediate imag
 
 - Sample video data is not bundled because 360-degree video files are usually large and may contain privacy-sensitive content.
 - Network or VPN storage can be much slower than local disks for MP4 access. Local execution with local video files is recommended.
-- QGIS 4/Qt 6 compatibility is experimental.
+- QGIS 4/Qt6 support starts with 0.5.5; ZIP installation and operation have been confirmed by the user on Windows with QGIS 4.2.2. The compatibility maximum is 4.2.2 and will be raised after testing newer versions.
 - Snapshot image quality depends on source video quality, cache image resolution, viewer rendering, and JPEG compression.
 - The krpano path is kept for local compatibility checks only. Photo Sphere Viewer is the preferred open distribution path.
 

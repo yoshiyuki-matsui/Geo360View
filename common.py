@@ -1,6 +1,7 @@
 """Geo360View全体で共有する小さな変換・入出力ヘルパー。"""
 
 import csv
+import math
 import os
 import re
 import unicodedata
@@ -109,13 +110,16 @@ def _looks_like_python_launcher(path):
 
 
 def _parse_float(value):
-    """CSV/JSON/QGIS属性から来た値を安全にfloat化する。失敗時はNone。"""
-    value = unicodedata.normalize("NFKC", str(value or "")).strip()
+    """CSV/JSON/QGIS属性を有限のfloatへ変換する。欠損・不正値はNone。"""
+    if value is None:
+        return None
+    value = unicodedata.normalize("NFKC", str(value)).strip()
     value = value.replace(",", "")
     if not value:
         return None
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except ValueError:
         return None
 

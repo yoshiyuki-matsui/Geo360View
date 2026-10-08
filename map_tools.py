@@ -28,9 +28,10 @@ class FrameIdentifyTool(QgsMapToolIdentifyFeature):
     def canvasReleaseEvent(self, event):
         """クリック位置の最前面フレーム点を検索し、ビューア表示を更新する。"""
         try:
+            pixel_point = event.originalPixelPoint()
             results = self.identify(
-                event.x(),
-                event.y(),
+                pixel_point.x(),
+                pixel_point.y(),
                 [self.layer],
                 QGIS_IDENTIFY_TOP_DOWN_STOP_AT_FIRST
             )

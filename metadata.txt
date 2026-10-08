@@ -1,8 +1,8 @@
 [general]
 name=Geo360 View
-version=0.5.4
+version=0.5.5
 qgisMinimumVersion=3.40
-qgisMaximumVersion=3.99
+qgisMaximumVersion=4.2.2
 description=Review GPX-synchronized videos and save 360-space Markings in QGIS.
 about=Geo360 View aligns MP4 videos with GPX tracks, creates camera-point layers, matches optional reference CSV data, and opens selected frames in a local viewer. It supports 360/equirectangular and normal-FOV videos, HUD overlays, reference labels, 360-space Markings, view restoration, and GPS-tagged snapshots.
 author=Ninja Engineer at Nakasha Creative Co., Ltd.
@@ -14,6 +14,6 @@ license=GPL-2.0-or-later
 category=Plugins
 tags=360 video,gpx,panorama,equirectangular,photo sphere viewer,marking,snapshot,field survey,reference points,kilo post
 icon=icons/shuriken_black.png
-experimental=True
+experimental=False
 deprecated=False
 server=False
