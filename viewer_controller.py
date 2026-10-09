@@ -15,6 +15,7 @@ from qgis.PyQt.QtCore import QProcess, QProcessEnvironment, QTimer, QUrl
 from .common import _looks_like_python_launcher
 from .constants import PLUGIN_TITLE
 from .qt_compat import QT_PROCESS_NOT_RUNNING
+from .viewer_runtime import matching_server
 
 
 class ViewerControllerMixin:
@@ -236,13 +237,23 @@ class ViewerControllerMixin:
                     return True
         return QtGui.QDesktopServices.openUrl(QUrl(url))
 
-    def viewerHealth(self, timeout=0.4):
-        """ローカル360Viewerが応答しているかHTTP health APIで確認する。"""
+    def viewerHealthPayload(self, timeout=0.4):
+        """Read server identity without adopting an unrelated or stale process."""
         try:
             with urlopen(f"{self.viewerBaseUrl()}/api/health", timeout=timeout) as response:  # nosec B310 - local 127.0.0.1 viewer health check
                 payload = json.loads(response.read().decode("utf-8"))
-            return payload.get("app") == "360viewer"
+            return payload if isinstance(payload, dict) else None
         except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError):
+            return None
+
+    def viewerHealth(self, timeout=0.4):
+        """Confirm the responding server belongs to this instance and build."""
+        try:
+            return self.viewerProcessRunning() and matching_server(
+                self.viewerHealthPayload(timeout), self.viewerAppPath(),
+                self.viewerRuntimeConfigPath(), getattr(self, "_viewer_owner_token", None),
+            )
+        except OSError:
             return False
 
     def viewerProcessRunning(self):
@@ -343,6 +354,16 @@ class ViewerControllerMixin:
     def ensureViewerStarted(self):
         """ビューア設定を書き出し、必要ならローカルHTTPサーバを起動する。"""
         self.loadViewerSessionCameraHeight()
+        payload = self.viewerHealthPayload()
+        if payload is not None and not self.viewerHealth():
+            self.iface.messageBar().pushWarning(
+                PLUGIN_TITLE,
+                f"The viewer port is occupied by an old or separately started server: "
+                f"{self.viewerBaseUrl()} (PID {payload.get('pid', 'unknown')}, "
+                f"config {payload.get('config', 'unknown')}). "
+                "Close its owning QGIS instance or identify and stop that server, then retry."
+            )
+            return False
         if not self.writeViewerRuntimeConfig():
             return False
         if self.viewerHealth():
@@ -371,6 +392,11 @@ class ViewerControllerMixin:
         self.viewer_process = QProcess(self)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("VIEWER_CONFIG", self.viewerRuntimeConfigPath())
+        self._viewer_owner_token = uuid.uuid4().hex
+        environment.insert("VIEWER_OWNER_TOKEN", self._viewer_owner_token)
+        # Windows comparison build: isolate parent-pipe monitoring from the
+        # existing QProcess launch path. Native verification is still pending.
+        environment.insert("VIEWER_WATCH_STDIN", "0" if os.name == "nt" else "1")
         self.viewer_process.setProcessEnvironment(environment)
         self.viewer_process.setWorkingDirectory(self.viewerDir())
         self.viewer_process.readyReadStandardError.connect(self.logViewerStderr)
@@ -629,10 +655,18 @@ class ViewerControllerMixin:
             return
 
         process = self.viewer_process
-        process.terminate()
+        process.closeWriteChannel()
         if not process.waitForFinished(2000):
-            process.kill()
-            process.waitForFinished(1000)
+            process.terminate()
+            if not process.waitForFinished(2000):
+                process.kill()
+                if not process.waitForFinished(1000):
+                    self.iface.messageBar().pushWarning(
+                        PLUGIN_TITLE,
+                        f"360Viewer could not be stopped (PID {process.processId()}). "
+                        "Identify the process before stopping it manually."
+                    )
+                    return
         if self.viewer_process is process:
             self.viewer_process = None
         self.viewer_browser_opened = False

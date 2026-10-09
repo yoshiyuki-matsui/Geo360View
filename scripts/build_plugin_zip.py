@@ -32,9 +32,12 @@ EXCLUDE_PREFIXES = (
 )
 
 REQUIRED_FILES = {
+    f"{PLUGIN_DIR_NAME}/environment_diagnostics.py",
+    f"{PLUGIN_DIR_NAME}/viewer_runtime.py",
     f"{PLUGIN_DIR_NAME}/metadata.txt",
     f"{PLUGIN_DIR_NAME}/__init__.py",
     f"{PLUGIN_DIR_NAME}/LICENSE",
+    f"{PLUGIN_DIR_NAME}/video_frames.py",
 }
 
 FORBIDDEN_MARKERS = (
@@ -161,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
     zip_path = args.output_dir / f"{PLUGIN_DIR_NAME}-{version}.zip"
     tracked_files = run_git_ls_files(root)
     package_files = [path for path in tracked_files if should_include(path)]
+    # Required runtime modules must also be included in pre-commit test ZIPs.
+    package_files = sorted(set(package_files) | {path.split("/", 1)[1] for path in REQUIRED_FILES})
 
     with tempfile.TemporaryDirectory(prefix="geo360view-package-") as tmp:
         stage_root = Path(tmp)

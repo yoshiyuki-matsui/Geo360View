@@ -92,8 +92,10 @@ For vulnerability or privacy reports, do not post sensitive details in public is
 ## Requirements
 
 - QGIS 3.40 or later in the 3.x series, or QGIS 4 up to 4.2.2 (Qt6).
-- QGIS Python with OpenCV (`cv2`) available.
+- QGIS Python with OpenCV (`cv2`) available; OpenCV 4.8 or newer with FFmpeg support is recommended.
 - A browser that can open the local viewer, preferably Edge or Chrome.
+
+**Ubuntu 24.04:** the standard `python3-opencv` package supplied OpenCV 4.6 in our tested environment. Geo360View's decoder thread limit requires OpenCV 4.8 or newer; see [Ubuntu setup](#opencv-setup-for-ubuntu-2404). OpenCV 4.6 can still work, but some video/environment combinations return incorrect frames when seeking.
 
 ## Install
 
@@ -116,6 +118,14 @@ C:\Users\<user>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\Geo36
 ```
 
 ## OpenCV Setup For Windows/QGIS
+
+For bug reports, the development version provides a [Python-console environment diagnostic](docs/environment_diagnostics.ja.md) for both the QGIS and running Web viewer processes:
+
+```python
+from Geo360View.environment_diagnostics import print_environment_report; print_environment_report()
+```
+
+The development version opens videos with the FFmpeg backend and a maximum of eight decoder threads using `CAP_PROP_N_THREADS`. This applies to QGIS previews, video metadata reads, and the Web viewer. Older builds such as OpenCV 4.6 retain their existing read path with a warning; they cannot enforce the limit through this API. See [decoder thread setup and verification](docs/opencv_decoder_threads.ja.md). Published 0.5.5 does not contain this change.
 
 If QGIS reports that `cv2` is not available, install OpenCV into the Python environment used by QGIS. Installing OpenCV into a normal Windows Python, Conda, or another virtual environment may not make it available from QGIS.
 
@@ -150,6 +160,40 @@ Notes:
 ```bash
 python -m pip freeze > qgis_python_packages_before.txt
 ```
+
+## OpenCV Setup for Ubuntu 24.04
+
+The following setup was verified with QGIS 3.44.7, Python 3.12, NumPy 1.26.4, and Geo360View 0.5.6. It installs OpenCV 4.8.1 in a dedicated user directory while preserving Ubuntu's OpenCV and NumPy packages. The eight-thread decoder limit is a 0.5.6 feature; installing a newer OpenCV does not add it to published 0.5.5.
+
+Check the existing environment first:
+
+```bash
+/usr/bin/python3 -c "import cv2, numpy; print(cv2.__version__, cv2.__file__); print('NumPy:', numpy.__version__)"
+apt-cache policy python3-opencv
+```
+
+If `/usr/bin/python3 -m pip --version` reports that pip is missing, install it with `sudo apt install python3-pip`. Then run:
+
+```bash
+geo360_cv_dir="$HOME/.local/share/Geo360View/opencv-4.8.1"
+/usr/bin/python3 -m pip install --target "$geo360_cv_dir" \
+  --no-deps --only-binary=:all: "opencv-python-headless==4.8.1.78"
+PYTHONPATH="$geo360_cv_dir${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -c \
+  "import cv2, numpy; print(cv2.__version__, cv2.__file__); print('NumPy:', numpy.__version__); print('Thread API:', hasattr(cv2, 'CAP_PROP_N_THREADS'))"
+```
+
+Expect OpenCV 4.8.1 from the dedicated directory, NumPy 1.26.4, and `Thread API: True`. This pinned build was tested with NumPy 1.26.4; use a compatible build if your environment uses a different NumPy version.
+
+Close QGIS and any existing viewer server, then launch from the same terminal:
+
+```bash
+env -u LD_PRELOAD -u GEO360_PROBE_THREADS \
+  PYTHONPATH="$geo360_cv_dir${PYTHONPATH:+:$PYTHONPATH}" qgis
+```
+
+This selects the new OpenCV for this launch and its viewer child process. **A normal desktop launch may still use system OpenCV 4.6.** In a new terminal, define `geo360_cv_dir` again before using this launch command. Verify both processes with the [environment diagnostic](docs/environment_diagnostics.ja.md), then check the images in the panel and browser. See [decoder verification](docs/opencv_decoder_threads.ja.md) for details.
+
+Other Ubuntu releases may supply different OpenCV versions; check the version loaded by QGIS rather than assuming every Ubuntu installation uses 4.6.
 
 ## Input Data
 
@@ -228,6 +272,7 @@ krpano is not bundled. If you use the legacy krpano path locally, place your own
 
 ## Documentation
 
+- [docs/runtime_validation.ja.md](docs/runtime_validation.ja.md): environment-specific 0.5.6 validation results and remaining checks (Japanese).
 - [DESIGN.ja.md](DESIGN.ja.md): Japanese design notes.
 - [DESIGN.md](DESIGN.md): English design notes.
 - [CHANGELOG.md](CHANGELOG.md): release notes.

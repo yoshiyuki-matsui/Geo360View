@@ -101,8 +101,10 @@ Geo360 Viewは、ユーザのPC上でローカルに動作するQGISプラグイ
 ## 必要環境
 
 - QGIS 3.40以降の3.x系、またはQGIS 4.2.2までの4系（Qt6）
-- QGISが使用するPython環境でOpenCV、つまり`cv2`が利用できること
+- QGISが使用するPython環境でOpenCV（`cv2`）が利用できること。FFmpeg対応のOpenCV 4.8以上を推奨します
 - ローカルビューアを開けるブラウザ。EdgeまたはChromeを推奨します
+
+**Ubuntu 24.04では要確認:** 今回確認した標準の`python3-opencv`は4.6でした。デコードスレッド数を制限するには、4.8以上を別途導入してください。4.6でも動作する環境はありますが、動画と環境の組み合わせによってはシーク時に誤った画像が返ります。具体的な導入方法は以下の「Ubuntu 24.04でのOpenCVセットアップ」を参照してください。
 
 ## インストール
 
@@ -125,6 +127,10 @@ C:\Users\<user>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\Geo36
 ```
 
 ### OpenCV / cv2 のセットアップ
+
+不具合報告には[環境診断コマンド](docs/environment_diagnostics.ja.md)を使い、QGISとWebサーバそれぞれの実行環境を確認できます（開発版0.5.6）。
+
+開発版では、動画を開く際にFFmpegバックエンドと`CAP_PROP_N_THREADS`を指定し、デコードスレッド数を最大8に制限します。パネルのプレビュー、動画メタ情報取得、Webビューアで共通の設定を使います。OpenCV 4.6など、このAPIがない環境では警告を出して従来の読み出しを継続するため、制限は適用されません。[環境の確認と検証手順](docs/opencv_decoder_threads.ja.md)を参照してください。公開済み0.5.5にはこの変更は含まれません。
 
 QGISで`cv2`が見つからない場合は、通常のWindows PythonやCondaではなく、QGISが使っているPython環境にOpenCVを入れてください。
 
@@ -159,6 +165,38 @@ python -c "import cv2; print('opencv', cv2.__version__)"
 ```bash
 python -m pip freeze > qgis_python_packages_before.txt
 ```
+
+### Ubuntu 24.04でのOpenCVセットアップ
+
+QGIS 3.44.7、Python 3.12、NumPy 1.26.4、Geo360View 0.5.6で確認した手順です。Ubuntu標準のOpenCVとNumPyを残し、専用のユーザディレクトリへOpenCV 4.8.1を配置します。8スレッド制限は0.5.6側の機能であり、OpenCVの更新だけで公開済み0.5.5に追加されるわけではありません。
+
+まず現在の環境を確認します。
+
+```bash
+/usr/bin/python3 -c "import cv2, numpy; print(cv2.__version__, cv2.__file__); print('NumPy:', numpy.__version__)"
+apt-cache policy python3-opencv
+```
+
+`/usr/bin/python3 -m pip --version`でpip未導入と表示される場合は、`sudo apt install python3-pip`で追加してください。その後、次を実行します。
+
+```bash
+geo360_cv_dir="$HOME/.local/share/Geo360View/opencv-4.8.1"
+/usr/bin/python3 -m pip install --target "$geo360_cv_dir" \
+  --no-deps --only-binary=:all: "opencv-python-headless==4.8.1.78"
+PYTHONPATH="$geo360_cv_dir${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -c \
+  "import cv2, numpy; print(cv2.__version__, cv2.__file__); print('NumPy:', numpy.__version__); print('Thread API:', hasattr(cv2, 'CAP_PROP_N_THREADS'))"
+```
+
+専用ディレクトリからのOpenCV 4.8.1、NumPy 1.26.4、`Thread API: True`が確認できれば、QGISと既存のWebサーバを終了してから、同じ端末で起動します。NumPyが別の版なら、この特定ビルドの互換性は検証していないため、組み合わせを確認してください。
+
+```bash
+env -u LD_PRELOAD -u GEO360_PROBE_THREADS \
+  PYTHONPATH="$geo360_cv_dir${PYTHONPATH:+:$PYTHONPATH}" qgis
+```
+
+この起動に限り、QGISとそのWebサーバで新しいOpenCVを選びます。**通常のデスクトップランチャーから起動すると、標準の4.6に戻る場合があります。** 新しい端末では`geo360_cv_dir`も再定義してください。[環境診断](docs/environment_diagnostics.ja.md)で両プロセスの読み込み元を確認し、パネルとブラウザの画像内容を検証します。詳しくは[デコード設定と検証手順](docs/opencv_decoder_threads.ja.md)を参照してください。
+
+Ubuntuのリリースが違えば標準OpenCVの版も異なります。「Ubuntuはすべて4.6」とは扱わず、QGISが実際に読み込む版を確認してください。
 
 ## 入力データ
 
@@ -219,6 +257,7 @@ krpanoは同梱しません。ローカルで旧krpano経路を使う場合は�
 
 ## ドキュメント
 
+- [docs/runtime_validation.ja.md](docs/runtime_validation.ja.md): 0.5.6の環境別動作検証結果と未確認項目
 - [DESIGN.ja.md](DESIGN.ja.md): 日本語設計メモ
 - [DESIGN.md](DESIGN.md): 英語設計メモ
 - [CHANGELOG.md](CHANGELOG.md): 変更履歴

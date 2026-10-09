@@ -83,6 +83,7 @@ from .qt_compat import (
 )
 from .radar import RadarMixin
 from .viewer_controller import ViewerControllerMixin
+from .video_frames import open_video_capture
 
 QAction = getattr(QtWidgets, "QAction", None) or QtGui.QAction
 
@@ -191,6 +192,9 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.exit_action = None
         self.viewer_process = None
         self.viewer_browser_opened = False
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.stopViewerProcess)
         self.viewer_host = "127.0.0.1"
         self.viewer_port = 8181
         self.viewer_jpeg_quality = 90
@@ -238,7 +242,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.frame_position_by_frame = {}
         self.toolbar = None
         self._gui_initialized = False
-        self._keyboard_filter_installed = False
 
     def uiMessage(self, key, **params):
         """現在localeでユーザ向けメッセージを組み立てる。"""
@@ -842,24 +845,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         self.toolbar.addAction(self.exit_action)
         self._gui_initialized = True
 
-    def installKeyboardFilter(self):
-        """クリックモード中のフレーム移動キーをQGISアプリ全体で拾えるようにする。"""
-        if self._keyboard_filter_installed:
-            return
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
-            self._keyboard_filter_installed = True
-
-    def removeKeyboardFilter(self):
-        """アンロード時にQGISアプリケーションイベントフィルタを外す。"""
-        if not self._keyboard_filter_installed:
-            return
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
-        self._keyboard_filter_installed = False
-
     def frameKeyboardNavigationActive(self):
         """現在のQGIS状態でキーボードフレーム移動を有効にしてよいかを返す。"""
         if self.panelHasKeyboardFocus():
@@ -889,7 +874,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         return isinstance(focus, ignored_types)
 
     def eventFilter(self, watched, event):
-        """MapToolへ届かないキー操作も、クリックモード中だけ補助的に処理する。"""
+        """パネルから渡されたナビゲーションキーだけを処理する。"""
         if event.type() == QT_EVENT_KEY_PRESS and self.frameKeyboardNavigationActive():
             if self.shouldIgnoreNavigationKeyTarget():
                 return False
@@ -909,7 +894,18 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 self.deactivateClickMode()
                 return True
 
-        return super().eventFilter(watched, event)
+        return False
+
+    def keyPressEvent(self, event):
+        """Handle panel keys without installing an application event filter.
+
+        The map tool handles canvas keys independently. Avoid wrapping arbitrary
+        QGIS timer/dialog receivers in SIP just to intercept navigation keys.
+        """
+        if self.eventFilter(None, event):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def applyPanelWindowFlags(self):
         """操作パネルをQGIS操作中も前面へ出しやすいウィンドウにする。"""
@@ -929,7 +925,6 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """Startメニューからパネルを開き、ビューア状態監視を開始する。"""
         self.showWindow()
         self.startViewerSessionPolling()
-        self.installKeyboardFilter()
         self.reportViewerStatus()
 
     def makePathLabel(self, text):
@@ -1176,6 +1171,8 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         if frame_num < 0:
             self.notifyWarning("frame_number_nonnegative")
             return
+        if not self.validateVideoFrame(frame_num):
+            return
 
         self.setCurrentFrame(frame_num)
         try:
@@ -1393,7 +1390,7 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         cap = None
         try:
             import cv2
-            cap = cv2.VideoCapture(video_path)
+            cap = open_video_capture(video_path, cv2)
             if not cap.isOpened():
                 return None
             width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0))
@@ -4371,6 +4368,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
     def frameStepNavigationTarget(self, current_frame, direction, step_count):
         """Frame stepモードとして次フレームを決める。"""
         target = max(0, int(current_frame) + int(direction) * int(step_count))
+        count = self.videoFrameCount()
+        if count is not None:
+            target = min(target, count - 1)
+            if direction > 0 and int(current_frame) >= count - 1:
+                self.notifyWarning("video_end_reached", last=count - 1)
+                return None, None
         return target, self.findFeatureByFrame(target)
 
     def frameStepEdgeTarget(self, direction):
@@ -5155,7 +5158,12 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
 
     def unload(self):
         """QGISがプラグインをアンロードする際に、メニューとツールバーを片付ける。"""
-        self.removeKeyboardFilter()
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.aboutToQuit.disconnect(self.stopViewerProcess)
+            except (TypeError, RuntimeError):
+                pass
         self.cleanupSession(close_panel=True, remove_layers=True, show_message=False)
 
         # アクションをメニューから削除

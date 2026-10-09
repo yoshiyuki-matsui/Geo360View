@@ -5,7 +5,9 @@ import base64
 import json
 import os
 import struct
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -92,6 +94,97 @@ class ViewerAppValidationTests(unittest.TestCase):
     def tearDown(self):
         """一時ディレクトリを破棄する。"""
         self.temp_context.cleanup()
+
+    def test_diagnostic_endpoint_collects_the_viewer_process_environment(self):
+        handler = object.__new__(self.app.ViewerHandler)
+        handler.path = "/api/diagnostics"
+        handler.send_json = mock.Mock()
+        with mock.patch.object(self.app, "collect_environment", return_value={"pid": 123}) as collect:
+            handler.do_GET()
+        collect.assert_called_once_with()
+        handler.send_json.assert_called_once_with({"pid": 123})
+
+    def test_viewer_failed_thread_limited_open_reports_422_without_retry(self):
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        (video_dir / "sample.mp4").write_bytes(b"video")
+        cap = mock.Mock()
+        cap.isOpened.return_value = False
+        cv2 = SimpleNamespace(VideoCapture=mock.Mock(return_value=cap),
+                              CAP_FFMPEG=1900, CAP_PROP_N_THREADS=70)
+        with mock.patch.dict(sys.modules, {"cv2": cv2}):
+            with self.assertRaises(self.app.ApiError) as caught:
+                self.app.extract_frame_jpeg("sample.mp4", 9571)
+        self.assertEqual(caught.exception.status, 422)
+        self.assertIn("8 decoder threads", caught.exception.message)
+        cv2.VideoCapture.assert_called_once_with(str(video_dir / "sample.mp4"), 1900, [70, 8])
+        cap.read.assert_not_called()
+        cap.release.assert_called_once()
+
+    def test_extract_frame_beyond_video_end_reports_range_without_decoding(self):
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        (video_dir / "sample.mp4").write_bytes(b"video")
+        cap = mock.Mock()
+        cap.isOpened.return_value = True
+        cap.get.return_value = 53497.0
+        cv2 = SimpleNamespace(VideoCapture=mock.Mock(return_value=cap), CAP_PROP_FRAME_COUNT=7,
+                              CAP_PROP_POS_FRAMES=1)
+        with mock.patch.dict(sys.modules, {"cv2": cv2}):
+            with self.assertRaises(self.app.ApiError) as caught:
+                self.app.extract_frame_jpeg("sample.mp4", 53671)
+        self.assertEqual(caught.exception.status, 422)
+        self.assertIn("0-53496", caught.exception.message)
+        cap.set.assert_not_called()
+        cap.read.assert_not_called()
+        cap.release.assert_called_once()
+
+    def test_valid_last_frame_read_failure_remains_a_decode_error(self):
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        (video_dir / "sample.mp4").write_bytes(b"video")
+        cap = mock.Mock()
+        cap.isOpened.return_value = True
+        cap.get.return_value = 53497.0
+        cap.read.return_value = (False, None)
+        cap.get.side_effect = lambda prop: {7: 53497.0, 1: 53496.0, 5: 29.97}[prop]
+        cv2 = SimpleNamespace(VideoCapture=mock.Mock(return_value=cap), CAP_PROP_FRAME_COUNT=7,
+                              CAP_PROP_POS_FRAMES=1, CAP_PROP_FPS=5)
+        with mock.patch.dict(sys.modules, {"cv2": cv2}), mock.patch("video_frames.shutil.which", return_value=None):
+            with self.assertRaises(self.app.ApiError) as caught:
+                self.app.extract_frame_jpeg("sample.mp4", 53496)
+        self.assertEqual(caught.exception.status, 422)
+        self.assertIn("Failed to read frame_index=53496", caught.exception.message)
+        cap.set.assert_called_once_with(1, 53496)
+        cap.read.assert_called_once()
+        self.assertEqual(cap.release.call_count, 1)
+
+    def test_viewer_cache_uses_validated_reader_generation(self):
+        cfg = self.app.load_config()
+        cache = self.app.viewer_cache_path("sample.mp4", 9571, cfg)
+        self.assertIn("frame_009571_seek-v2_view_", cache.name)
+
+    def test_viewer_rejects_bad_seek_without_ffmpeg_or_wrong_cache(self):
+        video_dir = self.temp_dir / "videos"
+        video_dir.mkdir()
+        (video_dir / "sample.mp4").write_bytes(b"video")
+        cap = mock.Mock()
+        cap.isOpened.return_value = True
+        cap.get.side_effect = lambda prop: {7: 53497.0, 1: -3071382977204209, 5: 29.97}[prop]
+        cv2 = SimpleNamespace(VideoCapture=mock.Mock(return_value=cap), CAP_PROP_FRAME_COUNT=7,
+                              CAP_PROP_POS_FRAMES=1, CAP_PROP_FPS=5, IMWRITE_JPEG_QUALITY=1,
+                              imencode=mock.Mock(return_value=(True, SimpleNamespace(tobytes=lambda: b"correct jpeg"))))
+        with mock.patch.dict(sys.modules, {"cv2": cv2}), \
+                mock.patch("video_frames._ffmpeg_frame") as fallback:
+            with self.assertRaises(self.app.ApiError) as caught:
+                self.app.extract_frame_jpeg("sample.mp4", 9571)
+            self.assertEqual(caught.exception.status, 422)
+            self.assertIn("OpenCV seek position", caught.exception.message)
+            fallback.assert_not_called()
+        cap.read.assert_not_called()
+        cv2.imencode.assert_not_called()
+        self.assertFalse(self.app.viewer_cache_path("sample.mp4", 9571, self.app.load_config()).exists())
+        cv2.VideoCapture.assert_called_once()
 
     def test_safe_video_name_rejects_paths_and_non_mp4(self):
         """動画名はvideo_dir直下のMP4ファイル名だけを許可する。"""

@@ -2,6 +2,39 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.6 - Unreleased
+
+### Added
+
+- Add a read-only Python-console environment report covering QGIS and the running Web viewer separately, including OpenCV/FFmpeg build information, CPU count, and library paths, formatted for issue reports. No video decoding or automatic server startup is performed.
+
+### Fixed
+
+- Open all plugin/viewer video captures through a shared FFmpeg opener with at most eight decoder threads on builds supporting `CAP_PROP_N_THREADS` (OpenCV 4.8+). Check the reported thread count and never retry without the limit. Legacy builds retain the existing path with a warning; OpenCV 4.8+ is recommended.
+- Identify running viewer servers by their loaded code and owning plugin instance; refuse stale or unrelated servers instead of silently reusing them.
+- Stop owned viewer servers on normal QGIS shutdown, with terminate/kill fallback and diagnostics if stopping fails. Parent-input EOF monitoring remains enabled on Linux and is disabled in the Windows comparison candidate.
+- Clamp frame-step navigation to the video's final frame and stop further forward navigation at the end.
+- Reject out-of-range frame display and extraction requests before changing the current frame.
+- Distinguish out-of-range viewer image requests from actual decoding failures.
+- Validate OpenCV seek/read positions using the same reader for QGIS previews and the browser viewer. Invalid reads fail explicitly without creating mislabeled images.
+- Disable automatic FFmpeg CLI fallback in interactive paths to preserve on-demand navigation latency. FFmpeg extraction remains available only through an explicit diagnostic reader call; it is not a runtime requirement.
+- Regenerate preview images created before position validation, and use a new viewer cache generation to avoid reusing incorrectly extracted frames.
+- Remove the application-wide keyboard event filter. Handle panel keys in the panel and canvas keys in the existing map tool, avoiding unrelated QGIS receiver conversions through SIP. The user reported that plugin operations and opening the plugin manager no longer crashed with the removal candidate; child-widget keyboard behavior still needs explicit verification.
+
+### Validation
+
+- User confirmed normal 0.5.6 operation on home Ubuntu / QGIS 3.44.7 with OpenCV 4.8.1 and NumPy 1.26.4, without the diagnostic LD_PRELOAD shim. Both QGIS and the viewer load the dedicated headless wheel, which also changes the bundled FFmpeg libraries; this is not an isolated thread-setting comparison.
+- User confirmed 0.5.6 operation on Windows QGIS 3.40 and 4.2.2, plus viewer-server shutdown on plugin Exit and normal QGIS exit. The precise cause of the earlier Windows startup problem remains unconfirmed.
+- Company Ubuntu / QGIS 3.44.7 with eight CPUs and system OpenCV 4.6.0 works without the diagnostic shim or an FFmpeg CLI installation. This legacy API path cannot enforce the decoder thread limit.
+- On company Ubuntu, the user also confirmed that the viewer server stops on plugin Exit and normal QGIS exit.
+- On home Ubuntu with OpenCV 4.8.1, the user confirmed viewer-server shutdown on both plugin Exit and normal QGIS exit.
+- A subsequent normal launch on home Ubuntu loads system OpenCV 4.6.0 in both processes without the diagnostic shim. Existing cached images display, but a different frame (3933) fails with HTTP 422; cached display must not be treated as successful fresh decoding. The response body for this failure has not yet been captured.
+- On Ubuntu / QGIS 3.44, the user confirmed that the failing frame 53671 exceeds the video's reported 53497 frames (valid range 0–53496). OpenCV 4.6.0 uses the FFmpeg backend.
+- The user confirmed correct preview and browser frame extraction after restarting a stale viewer server. The published 0.5.5 ZIP is unchanged.
+- On the affected Ubuntu machine, a standalone OpenCV seek to 9571 reported a huge negative position and returned the starting scene. FFmpeg CLI extraction at the corresponding time returned the expected scene.
+- 115 Python regression tests pass, including startup diagnostics, platform-specific parent-pipe monitoring selection, thread-limited opens, invalid-frame rejection, server identity, and cleanup. Parent-pipe EOF is tested in a subprocess with a substitute network listener; forced-exit recovery remains unverified.
+- See the [environment validation record](docs/runtime_validation.ja.md) for evidence and unverified items. Tested ZIP hashes have not yet been captured per environment; final artifact verification and feature-by-feature 0.5.6 checks remain outstanding.
+
 ## 0.5.5 - 2026-10-08
 
 ### Changed
@@ -24,6 +57,7 @@ This file records user-visible changes for Geo360 View.
 - The user confirmed that tmp.gpkg is created and saved when closing the plugin after video/track alignment.
 - After the numeric/GPS fixes, the user confirmed that neither the NaN warning nor the misleading codec message appears during the tested operations.
 - The user confirmed operation on QGIS 3.40 with no apparent regressions.
+- The user also confirmed 0.5.5 operation on another Ubuntu bare-metal machine; the exact QGIS version and tested operations were not recorded.
 
 ## 0.5.4 - 2026-10-06
 

@@ -55,6 +55,10 @@ Targets` memo layer.
 
 Install dependencies in the Python environment that will run the viewer. The HTTP server uses the Python standard library; OpenCV is the only runtime dependency for frame extraction.
 
+OpenCV 4.8 or newer with FFmpeg support is recommended. The development version opens videos with `CAP_PROP_N_THREADS=8` and checks the reported decoder thread count. It does not retry a rejected open without the limit. OpenCV 4.6 uses the legacy read path with a warning and cannot enforce this setting. Restart any existing viewer server after changing the Python environment or plugin code.
+
+Ubuntu 24.04 supplied OpenCV 4.6 in our tested environment. For QGIS integration, follow the [dedicated-directory Ubuntu setup](../README.md#opencv-setup-for-ubuntu-2404) and verify both the QGIS and viewer processes load OpenCV 4.8 or newer. A standard desktop launch may continue to load Ubuntu's system package.
+
 ```bash
 python -m pip install -r requirements.txt
 ```

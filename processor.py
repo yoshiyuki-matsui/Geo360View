@@ -1,6 +1,7 @@
 """GPXと動画メタ情報から、動画フレーム単位の撮影位置を生成するworker。"""
 
 from qgis.PyQt.QtCore import QThread, pyqtSignal
+from .video_frames import open_video_capture
 
 from .TenkakuNinja.geo_util import (
     interpolate_gpx_to_frames,
@@ -47,7 +48,7 @@ class Geo360View(QThread):
                 self.error.emit(message)
                 return
 
-            cap = cv2.VideoCapture(self.video_path)
+            cap = open_video_capture(self.video_path, cv2)
             if not cap.isOpened():
                 self.error.emit("Failed to open video file")
                 return

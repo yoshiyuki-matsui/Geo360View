@@ -1,6 +1,6 @@
 [general]
 name=Geo360 View
-version=0.5.5
+version=0.5.6
 qgisMinimumVersion=3.40
 qgisMaximumVersion=4.2.2
 description=Review GPX-synchronized videos and save 360-space Markings in QGIS.

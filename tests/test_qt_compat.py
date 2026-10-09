@@ -64,6 +64,13 @@ def load_compat(scoped):
 
 
 class QtCompatibilityTests(unittest.TestCase):
+    def test_keyboard_navigation_does_not_install_global_event_filter(self):
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        calls = [node.func.attr for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)]
+        self.assertNotIn("installEventFilter", calls)
+        self.assertIn("keyPressEvent", calls)
+
     def test_event_filter_handles_mouse_and_key_events_on_qt6(self):
         module, _, _ = load_compat(True)
         tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
@@ -74,7 +81,7 @@ class QtCompatibilityTests(unittest.TestCase):
 
         class BaseFilter:
             def eventFilter(self, watched, event):
-                return False
+                raise AssertionError("Global filter must not reconvert unrelated receivers through SIP")
 
         extracted = ast.Module(body=[ast.ClassDef(
             name="FilterUnderTest", bases=[ast.Name(id="BaseFilter", ctx=ast.Load())],

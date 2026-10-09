@@ -11,6 +11,8 @@ import mimetypes
 import os
 import re
 import struct
+import sys
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -23,6 +25,17 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR.parent))
+from video_frames import FRAME_READER_VERSION, open_video_capture, read_video_frame
+from environment_diagnostics import collect_environment
+from viewer_runtime import server_build
+
+# Capture the loaded generation once. An older process must not advertise
+# newly installed code by recomputing this after files have been replaced.
+SERVER_BUILD = server_build(__file__)
+OWNER_TOKEN = os.environ.get("VIEWER_OWNER_TOKEN", "")
+
 CONFIG_PATH = Path(os.environ.get("VIEWER_CONFIG", BASE_DIR / "viewer_config.json"))
 STATIC_DIR = BASE_DIR / "static"
 KRPANO_JS_PATH = STATIC_DIR / "vendor" / "krpano" / "krpano.js"
@@ -1364,6 +1377,7 @@ def viewer_cache_path(video: str, frame_index: int, cfg: dict[str, Any], *, snap
     cache_name = (
         f"{safe_cache_stem(video)}_"
         f"frame_{frame_index:06d}_"
+        f"{FRAME_READER_VERSION}_"
         f"{purpose}_"
         f"w{max_width}_"
         f"q{quality}_"
@@ -1399,17 +1413,24 @@ def extract_frame_jpeg(video: str, frame_index: int, *, snapshot: bool = False) 
     if not path.is_file():
         raise ApiError(404, f"Video not found: {video}")
 
-    cap = cv2.VideoCapture(str(path))
+    try:
+        cap = open_video_capture(path, cv2)
+    except RuntimeError as error:
+        raise ApiError(422, str(error)) from error
     if not cap.isOpened():
+        cap.release()
         raise ApiError(422, f"Failed to open video: {video}")
     try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ok, frame = cap.read()
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if math.isfinite(frame_count) and frame_count >= 1 and frame_index >= int(frame_count):
+            raise ApiError(422, f"Frame {frame_index} is outside the video range (0-{int(frame_count) - 1}): {video}")
+        try:
+            frame, frame_source = read_video_frame(cap, str(path), frame_index, cv2,
+                                                  max_width=cfg["viewer_snapshot_max_width"] if snapshot else cfg["viewer_max_width"])
+        except (RuntimeError, ValueError) as error:
+            raise ApiError(422, str(error)) from error
     finally:
         cap.release()
-
-    if not ok or frame is None:
-        raise ApiError(422, f"Failed to read frame_index={frame_index} from {video}")
 
     max_width = cfg["viewer_snapshot_max_width"] if snapshot else cfg["viewer_max_width"]
     quality = cfg["viewer_snapshot_jpeg_quality"] if snapshot else cfg["viewer_jpeg_quality"]
@@ -1436,7 +1457,7 @@ def extract_frame_jpeg(video: str, frame_index: int, *, snapshot: bool = False) 
     except OSError as e:
         print(f"360Viewer cache write failed: {e}")
 
-    return jpeg_bytes, "decode"
+    return jpeg_bytes, frame_source
 
 
 class ViewerHandler(BaseHTTPRequestHandler):
@@ -1457,11 +1478,20 @@ class ViewerHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query, keep_blank_values=True)
 
+            if parsed.path == "/api/diagnostics":
+                self.send_json(collect_environment())
+                return
+
             if parsed.path == "/api/health":
                 self.send_json({
                     "app": "360viewer",
                     "status": "ok",
                     "config": str(CONFIG_PATH),
+                    "app_path": str(Path(__file__).resolve()),
+                    "pid": os.getpid(),
+                    "server_build": SERVER_BUILD,
+                    "frame_reader": FRAME_READER_VERSION,
+                    "owner_token": OWNER_TOKEN,
                 })
                 return
 
@@ -1780,12 +1810,24 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.send_bytes(body, "text/plain; charset=utf-8", status=status)
 
 
+def stop_on_parent_pipe_close(server, stream):
+    """QProcess keeps stdin open; EOF means the owner stopped or disappeared."""
+    while stream.read(1):
+        pass
+    print("360Viewer stopping: owner input pipe closed", flush=True)
+    server.shutdown()
+
+
 def main() -> None:
     """設定を読み、ThreadingHTTPServerで360Viewerを起動する。"""
     config = load_config()
     ViewerHandler.debug_log_enabled = bool(config.get("viewer_debug_log_enabled"))
     server = ThreadingHTTPServer((config["host"], config["port"]), ViewerHandler)
-    print(f"360Viewer serving on http://{config['host']}:{config['port']}")
+    if os.environ.get("VIEWER_WATCH_STDIN") == "1":
+        threading.Thread(target=stop_on_parent_pipe_close,
+                         args=(server, sys.stdin.buffer), daemon=True).start()
+    print(f"360Viewer serving on http://{config['host']}:{config['port']} "
+          f"pid={os.getpid()} build={SERVER_BUILD}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt as e:

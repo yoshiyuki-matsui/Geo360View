@@ -13,10 +13,53 @@ from .common import _parse_float
 from .constants import PLUGIN_TITLE
 from .exif_utils import _insert_exif, _minimal_exif_payload, _valid_gps
 from .qt_compat import QT_KEEP_ASPECT_RATIO, QT_SMOOTH_TRANSFORMATION
+from .video_frames import FRAME_READER_VERSION, open_video_capture, read_video_frame
 
 
 class FrameExtractMixin:
     """選択フレームをOpenCVで抽出し、QGISパネルへ表示するMixin。"""
+
+    def videoFrameCount(self):
+        """動画メタ情報のフレーム数を取得し、ファイル変更まで再利用する。"""
+        video_file = getattr(self, "video_file", "")
+        if not video_file:
+            return None
+        try:
+            stat = os.stat(video_file)
+            key = (os.path.abspath(video_file), stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+        cached = getattr(self, "_video_frame_count_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        cap = None
+        try:
+            import cv2
+            cap = open_video_capture(video_file, cv2)
+            if not cap.isOpened():
+                return None
+            count = _parse_float(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if count is None or count < 1:
+                return None
+            count = int(count)
+            self._video_frame_count_cache = (key, count)
+            return count
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            debug = getattr(self, "notifyDebugText", None)
+            if callable(debug):
+                debug(f"Video frame count unavailable: {error}")
+            return None
+        finally:
+            if cap is not None:
+                cap.release()
+
+    def validateVideoFrame(self, frame_num):
+        """既知の動画終端を越える表示・抽出要求を止める。"""
+        count = self.videoFrameCount()
+        if count is not None and frame_num >= count:
+            self.notifyWarning("frame_out_of_range", frame=frame_num, last=count - 1)
+            return False
+        return True
 
     def compactPreviewInfo(self, info):
         """長い抽出ログを2行程度のプレビュー表示へ変換する。"""
@@ -150,6 +193,7 @@ class FrameExtractMixin:
         description = (
             f"{PLUGIN_TITLE} frame={frame_num}; "
             f"frame_index_base=0; "
+            f"frame_reader={FRAME_READER_VERSION}; "
             f"video={self.video_file}; "
             f"extract_total_sec={elapsed:.3f}"
         )
@@ -181,6 +225,8 @@ class FrameExtractMixin:
 
         frame_num = int(config.frame_number)
         video_file = config.video_file
+        if not self.validateVideoFrame(frame_num):
+            return
         self.setCurrentFrame(frame_num)
         image_dir = self.imagesDir()
         image_path = self.frameImagePath(frame_num)
@@ -194,7 +240,11 @@ class FrameExtractMixin:
             return
 
         start = time.perf_counter()
+        cache_current = False
         if os.path.exists(image_path):
+            with open(image_path, "rb") as cached_image:
+                cache_current = f"frame_reader={FRAME_READER_VERSION};".encode() in cached_image.read(65536)
+        if cache_current:
             # クリックのたびに再エンコードしない。フレーム番号は不変キーなので抽出済み画像を再利用できる。
             elapsed = time.perf_counter() - start
             info = self.framePreviewInfo(
@@ -217,7 +267,7 @@ class FrameExtractMixin:
         stage = self.uiText("ui.preview.stage.open")
         try:
             open_start = time.perf_counter()
-            cap = cv2.VideoCapture(video_file)
+            cap = open_video_capture(video_file, cv2)
             if not cap.isOpened():
                 self.notifyWarning("video_open_failed")
                 return
@@ -225,12 +275,8 @@ class FrameExtractMixin:
 
             stage = self.uiText("ui.preview.stage.read")
             seek_start = time.perf_counter()
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-            ok, frame = cap.read()
+            frame, _source = read_video_frame(cap, video_file, frame_num, cv2)
             decode_elapsed = time.perf_counter() - seek_start
-            if not ok or frame is None:
-                self.notifyWarning("frame_read_failed", frame=frame_num)
-                return
 
             stage = self.uiText("ui.preview.stage.save")
             save_start = time.perf_counter()
