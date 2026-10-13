@@ -20,6 +20,65 @@ spec.loader.exec_module(diagnostics)
 
 
 class EnvironmentDiagnosticTests(unittest.TestCase):
+    def test_diagnostics_reject_nonlocal_or_non_http_urls_before_connecting(self):
+        urls = (
+            "file:///tmp/report", "ftp://127.0.0.1:8182", "https://127.0.0.1:8182",
+            "http://example.com:8182", "http://192.168.0.1:8182",
+            "http://user:password@127.0.0.1:8182", "http://127.0.0.1:8182/path",
+            "http://127.0.0.1:8182?redirect=example.com", "http://127.0.0.1:8182#fragment",
+            "http://127.0.0.1:0", "http://127.0.0.1:65536",
+        )
+        with patch.object(diagnostics, "HTTPConnection") as connect:
+            for url in urls:
+                with self.subTest(url=url):
+                    report = diagnostics.collect_viewer_environment(url)
+                    self.assertIn("unavailable", report["identity"])
+                    self.assertIn("unavailable", report["environment"])
+            connect.assert_not_called()
+
+    def connection(self, status=200, data=b'{"pid": 42}'):
+        connection = Mock()
+        response = connection.getresponse.return_value
+        response.status = status
+        response.read.return_value = data
+        return connection
+
+    def test_local_http_uses_fixed_endpoint_and_closes_connection(self):
+        for url, host in (("http://127.0.0.1:8182", "127.0.0.1"),
+                          ("http://localhost:8182/", "127.0.0.1"),
+                          ("http://[::1]:8182", "::1")):
+            with self.subTest(url=url):
+                connection = self.connection()
+                with patch.object(diagnostics, "HTTPConnection", return_value=connection) as connect:
+                    self.assertEqual(diagnostics._read_local_viewer_json(url, "health"), {"pid": 42})
+                connect.assert_called_once_with(host, 8182, timeout=1)
+                connection.request.assert_called_once_with("GET", "/api/health")
+                connection.close.assert_called_once()
+
+    def test_http_redirect_is_rejected_without_following_location(self):
+        connection = self.connection(status=302)
+        connection.getresponse.return_value.getheader.return_value = "http://example.com"
+        with patch.object(diagnostics, "HTTPConnection", return_value=connection) as connect:
+            with self.assertRaisesRegex(ValueError, "redirects are not followed"):
+                diagnostics._read_local_viewer_json("http://127.0.0.1:8182", "health")
+        connect.assert_called_once()
+        connection.getresponse.return_value.read.assert_not_called()
+        connection.close.assert_called_once()
+
+    def test_oversized_or_non_object_diagnostics_are_rejected(self):
+        for data in (b"x" * (diagnostics.DIAGNOSTIC_RESPONSE_LIMIT + 1), b"[]"):
+            connection = self.connection(data=data)
+            with patch.object(diagnostics, "HTTPConnection", return_value=connection):
+                with self.assertRaises(ValueError):
+                    diagnostics._read_local_viewer_json("http://127.0.0.1:8182", "diagnostics")
+            connection.close.assert_called_once()
+
+    def test_arbitrary_endpoint_is_rejected_before_connecting(self):
+        with patch.object(diagnostics, "HTTPConnection") as connect:
+            with self.assertRaises(ValueError):
+                diagnostics._read_local_viewer_json("http://127.0.0.1:8182", "../secret")
+            connect.assert_not_called()
+
     def fake_cv2(self):
         return SimpleNamespace(
             __version__="4.8.0", __file__="/example/cv2.so", CAP_PROP_N_THREADS=70,
@@ -69,22 +128,16 @@ class EnvironmentDiagnosticTests(unittest.TestCase):
         self.assertEqual(data["environment"]["GEO360_PROBE_THREADS"], "8")
 
     def test_viewer_identity_excludes_owner_token_and_config(self):
-        responses = []
-        for payload in ({"app": "360viewer", "pid": 42, "owner_token": "private", "config": "job.json"},
-                        {"pid": 42, "opencv": {"version": "4.6.0"}}):
-            response = Mock()
-            response.__enter__ = Mock(return_value=response)
-            response.__exit__ = Mock(return_value=False)
-            response.read.return_value = json.dumps(payload).encode()
-            responses.append(response)
-        with patch.object(diagnostics, "urlopen", side_effect=responses):
+        responses = [{"app": "360viewer", "pid": 42, "owner_token": "private", "config": "job.json"},
+                     {"pid": 42, "opencv": {"version": "4.6.0"}}]
+        with patch.object(diagnostics, "_read_local_viewer_json", side_effect=responses):
             data = diagnostics.collect_viewer_environment("http://127.0.0.1:8182")
         self.assertEqual(data["environment"]["opencv"]["version"], "4.6.0")
         self.assertNotIn("owner_token", data["identity"])
         self.assertNotIn("config", data["identity"])
 
     def test_unreachable_viewer_is_reported_without_aborting(self):
-        with patch.object(diagnostics, "urlopen", side_effect=OSError("connection refused")):
+        with patch.object(diagnostics, "_read_local_viewer_json", side_effect=OSError("connection refused")):
             data = diagnostics.collect_viewer_environment("http://127.0.0.1:8182")
         self.assertIn("connection refused", data["environment"]["unavailable"])
 
@@ -115,12 +168,8 @@ class EnvironmentDiagnosticTests(unittest.TestCase):
                                  viewerPythonCommand=lambda: ("python.exe", [], "python.exe"),
                                  viewerHealth=lambda: False,
                                  viewerBaseUrl=lambda: "http://127.0.0.1:8182")
-        response = Mock()
-        response.__enter__ = Mock(return_value=response)
-        response.__exit__ = Mock(return_value=False)
-        response.read.return_value = json.dumps({"app": "360viewer", "status": "ok",
-                                                "pid": 34404, "owner_token": "private"}).encode()
-        with patch.object(diagnostics, "build_opener", return_value=SimpleNamespace(open=lambda *args, **kw: response)):
+        payload = {"app": "360viewer", "status": "ok", "pid": 34404, "owner_token": "private"}
+        with patch.object(diagnostics, "_read_local_viewer_json", return_value=payload):
             data = diagnostics.collect_viewer_startup(plugin)
         self.assertEqual(data["managed_pid"], 34404)
         self.assertFalse(data["plugin_health_check"])
@@ -132,8 +181,7 @@ class EnvironmentDiagnosticTests(unittest.TestCase):
                                  viewerPythonCommand=lambda: ("python.exe", [], "python.exe"),
                                  viewerHealth=lambda: False,
                                  viewerBaseUrl=lambda: "http://127.0.0.1:8182")
-        opener = SimpleNamespace(open=Mock(side_effect=OSError("connection refused")))
-        with patch.object(diagnostics, "build_opener", return_value=opener):
+        with patch.object(diagnostics, "_read_local_viewer_json", side_effect=OSError("connection refused")):
             data = diagnostics.collect_viewer_startup(plugin)
         self.assertFalse(data["managed_process_running"])
         self.assertIn("connection refused", data["direct_health"]["unavailable"])

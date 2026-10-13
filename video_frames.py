@@ -61,6 +61,10 @@ def _ffmpeg_frame(video_path, frame_index, fps, cv2, max_width):
     program = shutil.which("ffmpeg")
     if not program:
         raise RuntimeError("FFmpeg executable is unavailable; install FFmpeg to use the fallback")
+    program = os.path.abspath(program)
+    video_path = os.path.abspath(os.fspath(video_path))
+    if not os.path.isfile(video_path):
+        raise RuntimeError("FFmpeg diagnostics require an existing local video file")
     fps = _number(fps)
     if fps is None or fps <= 0:
         raise RuntimeError("A valid video FPS is required for FFmpeg time seeking")
@@ -68,13 +72,17 @@ def _ffmpeg_frame(video_path, frame_index, fps, cv2, max_width):
     # frame of a constant-rate video. FFmpeg discards earlier decoded frames.
     seconds = max(0.0, (frame_index - 0.25) / fps)
     command = [program, "-nostdin", "-hide_banner", "-loglevel", "error",
-               "-ss", f"{seconds:.9f}", "-i", os.path.abspath(video_path),
+               "-protocol_whitelist", "file,pipe",
+               "-ss", f"{seconds:.9f}", "-i", video_path,
                "-map", "0:v:0", "-frames:v", "1"]
     if max_width > 0:
         command += ["-vf", f"scale=min({int(max_width)}\\,iw):-2"]
     command += ["-threads", "1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "2", "pipe:1"]
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=60, check=False)
+    # Explicit diagnostics only. The executable is resolved from local PATH;
+    # the input is an existing absolute local file, and numeric options are
+    # converted above. argv is passed directly and FFmpeg networking is disabled.
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,  # nosec B603 - validated local FFmpeg diagnostic argv; no shell
+                            timeout=60, check=False, shell=False)
     if result.returncode or not result.stdout:
         detail = result.stderr.decode("utf-8", "replace").strip()[-2000:]
         raise RuntimeError(f"FFmpeg frame extraction failed: {detail or 'no image returned'}")

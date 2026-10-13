@@ -25,6 +25,18 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Build and validate installation ZIP
         run: python3 scripts/build_plugin_zip.py -o dist
+      - name: Check diagnostic URL and subprocess audit rules
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/geo360view-security"
+          "$RUNNER_TEMP/geo360view-security/bin/pip" install bandit==1.9.4
+          python3 - <<'PY'
+          import pathlib, zipfile
+          archive = next(pathlib.Path("dist").glob("Geo360View-*.zip"))
+          with zipfile.ZipFile(archive) as plugin:
+              plugin.extractall("dist/security-scan")
+          PY
+          "$RUNNER_TEMP/geo360view-security/bin/bandit" -r dist/security-scan -t B310,B603
       - name: Publish or update regular release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,11 +47,12 @@ jobs:
           version=$(python3 -c 'import configparser; p=configparser.ConfigParser(); p.read("metadata.txt"); print(p["general"]["version"])')
           tag="v${version}"
           python3 - "$version" <<'PY'
-          import pathlib, sys
+          import os, pathlib, sys
           version = sys.argv[1]
           notes = pathlib.Path(f"docs/releases/v{version}.md").read_text()
           checksum = pathlib.Path(f"dist/Geo360View-{version}.zip.sha256").read_text().strip()
-          pathlib.Path("dist/release-notes.md").write_text(notes + "\n\nOfficial ZIP SHA256:\n```text\n" + checksum + "\n```\n")
+          source = f"\n\nZIP build commit: [{os.environ['RELEASE_COMMIT']}](https://github.com/{os.environ['RELEASE_REPOSITORY']}/commit/{os.environ['RELEASE_COMMIT']})\n"
+          pathlib.Path("dist/release-notes.md").write_text(notes + source + "\nOfficial ZIP SHA256:\n```text\n" + checksum + "\n```\n")
           PY
           if gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" \

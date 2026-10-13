@@ -2,6 +2,7 @@
 
 import configparser
 from datetime import datetime, timezone
+from http.client import HTTPConnection
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import platform
 import re
 import shutil
 import sys
-from urllib.request import ProxyHandler, build_opener, urlopen
+from urllib.parse import urlsplit
 
 
 ENVIRONMENT_KEYS = (
@@ -18,6 +19,38 @@ ENVIRONMENT_KEYS = (
     "GEO360_PROBE_THREADS", "DISPLAY", "XDG_SESSION_TYPE",
 )
 LIBRARY_NAMES = ("libopencv_videoio", "libavcodec", "libavformat", "libavutil", "libswscale")
+DIAGNOSTIC_RESPONSE_LIMIT = 512 * 1024
+
+
+def _read_local_viewer_json(base_url, endpoint):
+    """Use direct loopback HTTP only: no file/custom schemes, proxies or redirects."""
+    parsed = urlsplit(base_url)
+    if (parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1")
+            or parsed.username is not None or parsed.password is not None
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("Viewer diagnostics require a loopback HTTP base URL")
+    if endpoint not in ("health", "diagnostics"):
+        raise ValueError("Unsupported viewer diagnostic endpoint")
+    port = parsed.port if parsed.port is not None else 80
+    if not 1 <= port <= 65535:
+        raise ValueError("Invalid viewer diagnostic port")
+    # Avoid hostname resolution for localhost, including hosts-file overrides.
+    host = "127.0.0.1" if parsed.hostname == "localhost" else parsed.hostname
+    connection = HTTPConnection(host, port, timeout=1)
+    try:
+        connection.request("GET", f"/api/{endpoint}")
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ValueError(f"Viewer diagnostics returned HTTP {response.status}; redirects are not followed")
+        data = response.read(DIAGNOSTIC_RESPONSE_LIMIT + 1)
+        if len(data) > DIAGNOSTIC_RESPONSE_LIMIT:
+            raise ValueError("Diagnostic response exceeds size limit")
+        payload = json.loads(data)
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a JSON object")
+        return payload
+    finally:
+        connection.close()
 
 
 def collect_environment():
@@ -87,13 +120,7 @@ def collect_viewer_environment(base_url):
     report = {"url": base_url}
     for endpoint, key in (("health", "identity"), ("diagnostics", "environment")):
         try:
-            with urlopen(f"{base_url}/api/{endpoint}", timeout=1) as response:
-                data = response.read(512 * 1024 + 1)
-            if len(data) > 512 * 1024:
-                raise ValueError("Diagnostic response exceeds size limit")
-            payload = json.loads(data)
-            if not isinstance(payload, dict):
-                raise ValueError("Expected a JSON object")
+            payload = _read_local_viewer_json(base_url, endpoint)
             if key == "identity":
                 # Do not include the process ownership token in public reports.
                 payload = {name: payload.get(name) for name in
@@ -118,14 +145,7 @@ def collect_viewer_startup(plugin):
     except Exception as error:
         report["process_check_error"] = str(error)
     try:
-        opener = build_opener(ProxyHandler({}))
-        with opener.open(f"{plugin.viewerBaseUrl()}/api/health", timeout=1) as response:
-            data = response.read(512 * 1024 + 1)
-        if len(data) > 512 * 1024:
-            raise ValueError("Health response exceeds size limit")
-        payload = json.loads(data)
-        if not isinstance(payload, dict):
-            raise ValueError("Expected a JSON object")
+        payload = _read_local_viewer_json(plugin.viewerBaseUrl(), "health")
         report["direct_health"] = {name: payload.get(name) for name in
                                    ("app", "status", "pid", "app_path", "server_build", "frame_reader")}
         report["direct_owner_matches"] = bool(getattr(plugin, "_viewer_owner_token", None)) and (

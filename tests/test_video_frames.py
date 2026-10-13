@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -147,7 +148,8 @@ class VideoFrameTests(unittest.TestCase):
         fake_numpy = SimpleNamespace(frombuffer=lambda data, dtype: data, uint8=object())
         with patch.object(frames.shutil, "which", return_value="/usr/bin/ffmpeg"), \
                 patch.object(frames.subprocess, "run", return_value=result) as run, \
-                patch.dict(sys.modules, {"numpy": fake_numpy}):
+                patch.dict(sys.modules, {"numpy": fake_numpy}), \
+                patch.object(frames.os.path, "isfile", return_value=True):
             actual = frames._ffmpeg_frame("video with spaces.mp4", 9571, 30000 / 1001, self.cv2, 1536)
         self.assertIs(actual, self.image)
         args, kwargs = run.call_args
@@ -156,14 +158,41 @@ class VideoFrameTests(unittest.TestCase):
         self.assertIn("scale=min(1536\\,iw):-2", command)
         self.assertLess(float(command[command.index("-ss") + 1]), 9571 / (30000 / 1001))
         self.assertEqual(kwargs["timeout"], 60)
-        self.assertNotIn("shell", kwargs)
+        self.assertIs(kwargs["shell"], False)
+        self.assertEqual(command[command.index("-protocol_whitelist") + 1], "file,pipe")
 
     def test_failed_ffmpeg_output_is_reported(self):
         result = SimpleNamespace(returncode=1, stdout=b"", stderr=b"decoder error")
         with patch.object(frames.shutil, "which", return_value="ffmpeg"), \
-                patch.object(frames.subprocess, "run", return_value=result):
+                patch.object(frames.subprocess, "run", return_value=result), \
+                patch.object(frames.os.path, "isfile", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "decoder error"):
                 frames._ffmpeg_frame("video.mp4", 9571, 29.97, self.cv2, 1536)
+
+    def test_ffmpeg_rejects_missing_files_and_urls_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = str(Path(directory) / "missing.mp4")
+            with patch.object(frames.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                    patch.object(frames.subprocess, "run") as run:
+                for path in (missing, "https://example.com/video.mp4", "file:///tmp/video.mp4"):
+                    with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, "existing local"):
+                        frames._ffmpeg_frame(path, 42, 30, self.cv2, 1536)
+                run.assert_not_called()
+
+    def test_ffmpeg_keeps_shell_metacharacters_in_local_filename_as_one_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "video; $command.mp4"
+            video.write_bytes(b"video")
+            result = SimpleNamespace(returncode=0, stdout=b"jpeg", stderr=b"")
+            fake_numpy = SimpleNamespace(frombuffer=lambda data, dtype: data, uint8=object())
+            with patch.object(frames.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                    patch.object(frames.subprocess, "run", return_value=result) as run, \
+                    patch.dict(sys.modules, {"numpy": fake_numpy}):
+                frames._ffmpeg_frame(video, 42, 30, self.cv2, 1536)
+            args, kwargs = run.call_args
+            self.assertEqual(args[0][args[0].index("-i") + 1], str(video))
+            self.assertIs(kwargs["shell"], False)
+            self.assertEqual(args[0][args[0].index("-protocol_whitelist") + 1], "file,pipe")
 
 
 if __name__ == "__main__":
