@@ -5,7 +5,7 @@ QGIS非依存にしておき、通常Pythonのユニットテストで文言キ�
 """
 
 
-DEFAULT_LOCALE = "ja"
+DEFAULT_LOCALE = "en"
 SUPPORTED_LOCALES = ("en", "ja")
 
 

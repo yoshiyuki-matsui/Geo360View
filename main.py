@@ -55,7 +55,7 @@ from .constants import (
 from .frame_extract import FrameExtractMixin
 from .kp import build_kp_matches
 from .map_tools import FrameIdentifyTool
-from .messages import message_text, ui_text
+from .messages import DEFAULT_LOCALE, message_text, normalize_locale, ui_text
 from .processor import Geo360View
 from .qt_compat import (
     QT_FIELD_DATETIME,
@@ -174,7 +174,11 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
         """QGIS ifaceと、セッション中に共有する状態を初期化する。"""
         super().__init__(parent)
         self.iface = iface
-        self.message_locale = os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", "ja")
+        self.message_locale = normalize_locale(QSettings().value(
+            f"{PLUGIN_TITLE}/display_locale",
+            os.environ.get("GEO360VIEW_LOCALE",
+                           os.environ.get("GPX_VIDEO_PROCESSOR_LOCALE", DEFAULT_LOCALE)),
+        ))
         self.gpx_file = ""
         self.video_file = ""
         self.kp_file = ""

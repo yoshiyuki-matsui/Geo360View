@@ -1,0 +1,57 @@
+name: Build Geo360View release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - metadata.txt
+      - scripts/build_plugin_zip.py
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: geo360view-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Run regression tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Build and validate installation ZIP
+        run: python3 scripts/build_plugin_zip.py -o dist
+      - name: Publish or update regular release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          version=$(python3 -c 'import configparser; p=configparser.ConfigParser(); p.read("metadata.txt"); print(p["general"]["version"])')
+          tag="v${version}"
+          python3 - "$version" <<'PY'
+          import pathlib, sys
+          version = sys.argv[1]
+          notes = pathlib.Path(f"docs/releases/v{version}.md").read_text()
+          checksum = pathlib.Path(f"dist/Geo360View-{version}.zip.sha256").read_text().strip()
+          pathlib.Path("dist/release-notes.md").write_text(notes + "\n\nOfficial ZIP SHA256:\n```text\n" + checksum + "\n```\n")
+          PY
+          if gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              "dist/Geo360View-${version}.zip" "dist/Geo360View-${version}.zip.sha256" \
+              --repo "$RELEASE_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$RELEASE_REPOSITORY" \
+              --title "Geo360View ${version}" --notes-file dist/release-notes.md \
+              --draft=false --prerelease=false
+          else
+            gh release create "$tag" \
+              "dist/Geo360View-${version}.zip" "dist/Geo360View-${version}.zip.sha256" \
+              --repo "$RELEASE_REPOSITORY" --target "$RELEASE_COMMIT" \
+              --title "Geo360View ${version}" --notes-file dist/release-notes.md \
+              --draft=false --prerelease=false
+          fi

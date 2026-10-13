@@ -113,7 +113,10 @@ def create_zip(stage_root: Path, zip_path: Path) -> None:
     ) as archive:
         for path in sorted((stage_root / PLUGIN_DIR_NAME).rglob("*")):
             if path.is_file():
-                archive.write(path, path.relative_to(stage_root).as_posix())
+                info = zipfile.ZipInfo(path.relative_to(stage_root).as_posix(), (2020, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, path.read_bytes(), compresslevel=9)
 
 
 def validate_zip(zip_path: Path) -> None:
@@ -179,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copytree(stage_root / PLUGIN_DIR_NAME, kept_stage)
             print(f"stage: {kept_stage}")
 
+    import hashlib
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    checksum_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
+    checksum_path.write_text(f"{digest}  {zip_path.name}\n", encoding="utf-8")
+    print(f"SHA256: {digest}")
     print(f"created: {zip_path}")
     print(f"files: {len(package_files)}")
     print(f"size: {zip_path.stat().st_size} bytes")

@@ -2,7 +2,11 @@
 
 This file records user-visible changes for Geo360 View.
 
-## 0.5.6 - Unreleased
+## 0.5.6 - 2026-10-13
+
+### Changed
+
+- Default the QGIS plugin panel and messages to English. Save an explicit English/Japanese preference per QGIS profile; document the Python-console commands and restart requirement in both READMEs. Existing explicit environment overrides remain supported.
 
 ### Added
 

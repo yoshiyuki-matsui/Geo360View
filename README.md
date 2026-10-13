@@ -4,13 +4,36 @@
 
 Geo360 View is a QGIS plugin for reviewing GPX-synchronized 360-degree and normal field videos on a map, with viewer-side Markings that can restore bookmarked directions later.
 
-Version **0.5.5** adds QGIS **4 / Qt6** support up to **4.2.2** and fixes map-click frame selection on Qt6. QGIS 3.40 and later 3.x versions remain supported.
+Version **0.5.6** adds English-default UI, environment diagnostics, validated video reads, and viewer-server ownership/cleanup. Version **0.5.5** introduced QGIS **4 / Qt6** support up to **4.2.2** and fixes map-click frame selection on Qt6. QGIS 3.40 and later 3.x versions remain supported.
 
-## Japanese-first support
+## Interface language (0.5.6 and later)
 
-Version 0.5.5 is prepared as a regular release, with operation confirmed by the user on QGIS 3.40 and 4.2.2. The primary support language is Japanese.
+The QGIS plugin defaults to **English**. To use Japanese, open
+**Plugins → Python Console**, run this command, then restart QGIS:
 
-For installation, usage, operation reports, bug reports, and discussions, please start with the Japanese README:
+```python
+from qgis.PyQt.QtCore import QSettings; QSettings().setValue("Geo360View/display_locale", "ja")
+```
+
+To switch back to English:
+
+```python
+from qgis.PyQt.QtCore import QSettings; QSettings().setValue("Geo360View/display_locale", "en")
+```
+
+The choice is saved in the current QGIS profile. There is no language selector
+in the panel yet. This setting controls the plugin panel and messages; browser
+viewer labels are separate. These commands apply to 0.5.6+, not the published 0.5.5.
+
+For command-line launches, `GEO360VIEW_LOCALE=en` or `ja` selects the language
+when no saved preference exists. The legacy `GPX_VIDEO_PROCESSOR_LOCALE` variable
+is still supported. A saved preference takes priority over either variable.
+
+## Support and reports
+
+Geo360View is distributed as a regular release. User validation on QGIS 3.40 and 4.2.2 is recorded in the repository. The primary support language is Japanese.
+
+For installation, usage, operation reports, bug reports, and discussions:
 
 - [README_ja.md](README_ja.md)
 - [Operation report form](https://github.com/yoshiyuki-matsui/Geo360View/issues/new?template=operation-report.yml)
