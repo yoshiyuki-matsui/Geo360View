@@ -2,6 +2,10 @@
 
 This file records user-visible changes for Geo360 View.
 
+## 0.5.7 - 2026-11-01
+
+- GPX/MP4の再処理で新しいVideo GPX Pointsを追加した際、管理中の以前の撮影点レイヤを自動削除。POI・マーキングは保持し、生成失敗時は以前のレイヤを保持する。古い撮影点のクリックツールと終了時保存の参照も解除する。
+
 ## 0.5.6 - 2026-10-13
 
 ### Changed

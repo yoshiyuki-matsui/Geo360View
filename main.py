@@ -4547,6 +4547,36 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
             self.notifyWarning("processing_still_running")
         return False
 
+    def removePreviousFrameLayers(self):
+        """新しい撮影点の追加成功後、管理中の古い撮影点レイヤだけを削除する。"""
+        project = QgsProject.instance()
+        previous_ids = set()
+        for layer_id in self.created_layer_ids:
+            layer = project.mapLayer(layer_id)
+            if layer is not None and (
+                layer_id == self.frame_layer_id
+                or (layer.name() == "Video GPX Points" and self.isFrameReferenceLayer(layer))
+            ):
+                previous_ids.add(layer_id)
+
+        if self.frame_layer_id and project.mapLayer(self.frame_layer_id) is not None:
+            previous_ids.add(self.frame_layer_id)
+        if not previous_ids:
+            return
+
+        tool = self.frame_click_tool
+        if tool is not None and tool.layer is not None and tool.layer.id() in previous_ids:
+            self.deactivateClickMode(show_message=False)
+        # レイヤ削除でQGIS側のオブジェクトが破棄される前に参照を解除する。
+        self.frame_layer_id = None
+        self.created_layer_ids = [
+            layer_id for layer_id in self.created_layer_ids if layer_id not in previous_ids
+        ]
+        self.save_on_exit_layer_ids.difference_update(previous_ids)
+        for layer_id in previous_ids:
+            self.loaded_layer_feature_counts.pop(layer_id, None)
+        project.removeMapLayers(list(previous_ids))
+
     def removeGeneratedLayers(self):
         """このプラグインが生成したメモリレイヤだけをQGISプロジェクトから削除する。"""
         project = QgsProject.instance()
@@ -4955,10 +4985,16 @@ class GPXVideoPlugin(ViewerControllerMixin, RadarMixin, FrameExtractMixin, QWidg
                 ])
                 features.append(feat)
 
-            pr.addFeatures(features)
+            added, _ = pr.addFeatures(features)
+            if not added:
+                self.showError("Failed to create Video GPX Points features.")
+                return
             layer.updateExtents()
             self.createLayerSpatialIndex(layer)
-            QgsProject.instance().addMapLayer(layer)
+            if QgsProject.instance().addMapLayer(layer) is None:
+                self.showError("Failed to add Video GPX Points to the project.")
+                return
+            self.removePreviousFrameLayers()
             self.created_layer_ids.append(layer.id())
             self.markLayerSaveOnExit(layer)
             self.frame_layer_id = layer.id()
