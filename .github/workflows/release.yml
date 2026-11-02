@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - metadata.txt
+      - docs/releases/**
       - scripts/build_plugin_zip.py
       - .github/workflows/release.yml
   workflow_dispatch:
@@ -21,6 +22,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate versioned release notes
+        run: |
+          python3 - <<'PYTHON'
+          import configparser
+          from pathlib import Path
+          metadata = configparser.ConfigParser()
+          metadata.read("metadata.txt", encoding="utf-8")
+          version = metadata["general"]["version"].strip()
+          notes = Path(f"docs/releases/v{version}.md")
+          if not notes.is_file() or not notes.read_text(encoding="utf-8").strip():
+              raise SystemExit(f"Missing or empty release notes: {notes}")
+          print(f"Release notes OK: {notes}")
+          PYTHON
       - name: Run regression tests
         run: python3 -m unittest discover -s tests -v
       - name: Build and validate installation ZIP
@@ -37,7 +51,7 @@ jobs:
               plugin.extractall("dist/security-scan")
           PY
           "$RUNNER_TEMP/geo360view-security/bin/bandit" -r dist/security-scan -t B310,B603
-      - name: Publish or update regular release
+      - name: Publish regular release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
@@ -46,6 +60,10 @@ jobs:
         run: |
           version=$(python3 -c 'import configparser; p=configparser.ConfigParser(); p.read("metadata.txt"); print(p["general"]["version"])')
           tag="v${version}"
+          if gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; no files will be replaced."
+            exit 0
+          fi
           python3 - "$version" <<'PY'
           import os, pathlib, sys
           version = sys.argv[1]
@@ -54,17 +72,8 @@ jobs:
           source = f"\n\nZIP build commit: [{os.environ['RELEASE_COMMIT']}](https://github.com/{os.environ['RELEASE_REPOSITORY']}/commit/{os.environ['RELEASE_COMMIT']})\n"
           pathlib.Path("dist/release-notes.md").write_text(notes + source + "\nOfficial ZIP SHA256:\n```text\n" + checksum + "\n```\n")
           PY
-          if gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" \
-              "dist/Geo360View-${version}.zip" "dist/Geo360View-${version}.zip.sha256" \
-              --repo "$RELEASE_REPOSITORY" --clobber
-            gh release edit "$tag" --repo "$RELEASE_REPOSITORY" \
-              --title "Geo360View ${version}" --notes-file dist/release-notes.md \
-              --draft=false --prerelease=false
-          else
-            gh release create "$tag" \
-              "dist/Geo360View-${version}.zip" "dist/Geo360View-${version}.zip.sha256" \
-              --repo "$RELEASE_REPOSITORY" --target "$RELEASE_COMMIT" \
-              --title "Geo360View ${version}" --notes-file dist/release-notes.md \
-              --draft=false --prerelease=false
-          fi
+          gh release create "$tag" \
+            "dist/Geo360View-${version}.zip" "dist/Geo360View-${version}.zip.sha256" \
+            --repo "$RELEASE_REPOSITORY" --target "$RELEASE_COMMIT" \
+            --title "Geo360View ${version}" --notes-file dist/release-notes.md \
+            --draft=false --prerelease=false
